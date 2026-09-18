@@ -1603,12 +1603,18 @@ final class SceneGraph {
                }
 
                boolean localFlag = false;
+               // Upper-plane floors can be falsely rejected by the legacy occlusion
+               // clusters as the camera rotates around tall buildings. The roof/draw
+               // level checks have already decided whether this tile belongs in the
+               // current scene, so always submit upper-floor surfaces and retain the
+               // old occlusion shortcut for the ground plane.
+               boolean floorOccluded = sourceTileHeightIndex == 0 && this.isTileOccluded(sourceTileHeightIndex, tileX, tileY);
                if (sceneTile.plainTile != null) {
-                  if (!this.isTileOccluded(sourceTileHeightIndex, tileX, tileY)) {
+                  if (!floorOccluded) {
                      localFlag = true;
                      this.renderPlainTile(sceneTile.plainTile, sourceTileHeightIndex, pitchSin, pitchCos, yawSin, yawCos, tileX, tileY);
                   }
-               } else if (sceneTile.shapedTile != null && !this.isTileOccluded(sourceTileHeightIndex, tileX, tileY)) {
+               } else if (sceneTile.shapedTile != null && !floorOccluded) {
                   localFlag = true;
                   this.renderShapedTile(tileX, pitchSin, yawSin, sceneTile.shapedTile, pitchCos, tileY, yawCos);
                }
