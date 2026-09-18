@@ -92,7 +92,13 @@ final class LanServerDiscoveryListener extends Thread {
 
       InetAddress globalBroadcast = this.requestPacket.getAddress();
       broadcastAddresses.add(globalBroadcast.getHostAddress());
-      socket.send(this.requestPacket);
+      try {
+         socket.send(this.requestPacket);
+      } catch (Exception exception) {
+         if (LanServerDiscovery.debug) {
+            exception.printStackTrace();
+         }
+      }
 
       Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
       if (interfaces == null) {
