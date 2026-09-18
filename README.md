@@ -10,7 +10,7 @@ running on the same computer. The normal game port is `43594`.
 ## Requirements
 
 - Windows (the included build and run scripts are batch files)
-- A Java Development Kit (JDK), preferably **JDK 8**
+- JDK 1.8.0_101 (Java SE Development Kit 8u101) - [Oracle Java SE 8 Archive Downloads](https://www.oracle.com/java/technologies/javase/javase8-archive-downloads.html)
 - `java`, `javac`, and `jar` available on `PATH`
 - The matching `2006sp-Server` project if you want to play locally
 
