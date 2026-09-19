@@ -14897,10 +14897,37 @@ public class Client extends GameShell {
       return 16777215;
    }
 
-   private void drawCastleWarsStatusLine(String label, int widgetId, int x, int y) {
+   private int drawCastleWarsStatusIcon(int widgetId, int x, int baselineY) {
+      if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length) {
+         return 0;
+      }
+
+      Widget widget = Widget.widgets[widgetId];
+      if (widget == null) {
+         return 0;
+      }
+
+      Sprite sprite = this.interfaceIsSelected(widget)
+            ? widget.enabledSprite : widget.disabledSprite;
+      if (sprite == null) {
+         sprite = widget.disabledSprite != null
+               ? widget.disabledSprite : widget.enabledSprite;
+      }
+      if (sprite == null) {
+         return 0;
+      }
+
+      sprite.drawSprite(x, baselineY - sprite.spriteHeight + 4);
+      return sprite.spriteWidth;
+   }
+
+   private void drawCastleWarsStatusLine(String label, int widgetId,
+                                         int iconWidgetId, int x, int y) {
       String status = this.getCastleWarsInterfaceText(widgetId);
-      this.richPlainFont.drawBasicString(label + ":", x, y, 16777215, 0);
-      int statusX = x + this.richPlainFont.getTextWidth(label + ":") + 6;
+      int iconWidth = this.drawCastleWarsStatusIcon(iconWidgetId, x, y);
+      int textX = x + Math.max(24, iconWidth) + 8;
+      this.richPlainFont.drawBasicString(label + ":", textX, y, 16777215, 0);
+      int statusX = textX + this.richPlainFont.getTextWidth(label + ":") + 6;
       this.richBoldFont.drawBasicString(status, statusX, y,
             this.getCastleWarsStatusColor(status), 0);
    }
@@ -14919,15 +14946,15 @@ public class Client extends GameShell {
       // Keep the team/objective state together at the left edge of the game
       // viewport. The cache interface was authored for fixed mode and its
       // absolute child coordinates otherwise float around the middle in resizable.
-      int statusX = 12;
+      int statusX = 10;
       int statusY = Math.max(120, clientHeight / 2 - 100);
-      this.drawCastleWarsStatusLine("Zamorak flag", 11349, statusX, statusY);
-      this.drawCastleWarsStatusLine("Saradomin flag", 11350, statusX, statusY + 20);
-      this.drawCastleWarsStatusLine("Main door", 11352, statusX, statusY + 50);
-      this.drawCastleWarsStatusLine("Side door", 11356, statusX, statusY + 70);
-      this.drawCastleWarsStatusLine("Tunnel 1", 11358, statusX, statusY + 90);
-      this.drawCastleWarsStatusLine("Tunnel 2", 11360, statusX, statusY + 110);
-      this.drawCastleWarsStatusLine("Catapult", 11362, statusX, statusY + 130);
+      this.drawCastleWarsStatusLine("Zamorak flag", 11349, 11347, statusX, statusY);
+      this.drawCastleWarsStatusLine("Saradomin flag", 11350, 11348, statusX, statusY + 20);
+      this.drawCastleWarsStatusLine("Main door", 11352, 11351, statusX, statusY + 50);
+      this.drawCastleWarsStatusLine("Side door", 11356, 11355, statusX, statusY + 70);
+      this.drawCastleWarsStatusLine("Tunnel 1", 11358, 11357, statusX, statusY + 90);
+      this.drawCastleWarsStatusLine("Tunnel 2", 11360, 11359, statusX, statusY + 110);
+      this.drawCastleWarsStatusLine("Catapult", 11362, 11361, statusX, statusY + 130);
 
       // Put the clock immediately to the left of the resizable tab panel.
       int timerX = this.resizableTabPanelVisible ? clientWidth - 250 : clientWidth - 55;
