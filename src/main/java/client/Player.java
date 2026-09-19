@@ -364,10 +364,16 @@ public final class Player extends Actor {
                this.npcTransformActive = false;
             }
 
-            if (this.equipment[equipmentIndex2] >= 512
-               && this.equipment[equipmentIndex2] - 512 < ItemDefinition.definitionCount
-               && (teamOrReadUnsignedByte = ItemDefinition.lookup(this.equipment[equipmentIndex2] - 512).teamIndex) != 0) {
-               this.team = teamOrReadUnsignedByte;
+            if (this.equipment[equipmentIndex2] >= 512) {
+               int itemId = this.equipment[equipmentIndex2] - 512;
+               if (itemId == 4513 || itemId == 4514) {
+                  this.team = 1;
+               } else if (itemId == 4515 || itemId == 4516) {
+                  this.team = 2;
+               } else if (itemId < ItemDefinition.definitionCount
+                  && (teamOrReadUnsignedByte = ItemDefinition.lookup(itemId).teamIndex) != 0) {
+                  this.team = teamOrReadUnsignedByte;
+               }
             }
          }
       }
