@@ -14945,7 +14945,11 @@ public class Client extends GameShell {
 
          this.animateInterface(this.animationCycleDelta, this.openWalkableInterface);
          this.centeredWalkableInterface = false;
-         if (screenMode != 0 && shouldCenterInterface(Widget.widgets[this.openWalkableInterface])) {
+         if (screenMode != 0 && this.openWalkableInterface == 6673) {
+            int left = clientWidth / 2 - 256;
+            this.centeredWalkableInterface = true;
+            this.drawInterface(0, left, Widget.widgets[this.openWalkableInterface], 20);
+         } else if (screenMode != 0 && shouldCenterInterface(Widget.widgets[this.openWalkableInterface])) {
             int top = screenMode == 0 ? 0 : clientWidth / 2 - 256;
             int screenMode2 = screenMode == 0 ? 0 : clientHeight / 2 - 167;
             this.centeredWalkableInterface = true;
