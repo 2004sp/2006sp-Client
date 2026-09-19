@@ -15880,8 +15880,15 @@ public class Client extends GameShell {
                   flag2 = true;
                }
 
+               boolean castleWarsPlayer = localPlayer.castleWarsTeam && player.castleWarsTeam;
                if (!localFlag) {
-                  if (flag) {
+                  if (castleWarsPlayer) {
+                     if (localPlayer.team == player.team) {
+                        this.drawMinimapIcon(this.mapDotPlayer, scalar, localWorldX);
+                     } else {
+                        this.drawMinimapIcon(this.mapDotNPC, scalar, localWorldX);
+                     }
+                  } else if (flag) {
                      this.drawMinimapIcon(this.mapDotPlayer, scalar, localWorldX);
                   } else if (flag2) {
                      this.drawMinimapIcon(this.mapDotFriend, scalar, localWorldX);
