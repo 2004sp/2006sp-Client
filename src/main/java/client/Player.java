@@ -8,6 +8,7 @@ public final class Player extends Actor {
    boolean unanimated = false;
    final int[] appearanceColors = new int[5];
    public int team;
+   public boolean castleWarsTeam;
    private int gender;
    public String name;
    static LruCache appearanceModelCache = new LruCache(260);
@@ -337,6 +338,7 @@ public final class Player extends Actor {
       this.skullIcon = buffer.readUnsignedByte();
       this.npcDefinition = null;
       this.team = 0;
+      this.castleWarsTeam = false;
 
       for (int equipmentIndex2 = 0; equipmentIndex2 < 12; equipmentIndex2++) {
          int teamOrReadUnsignedByte;
@@ -368,9 +370,12 @@ public final class Player extends Actor {
                int itemId = this.equipment[equipmentIndex2] - 512;
                if (itemId == 4513 || itemId == 4514) {
                   this.team = 1;
+                  this.castleWarsTeam = true;
                } else if (itemId == 4515 || itemId == 4516) {
                   this.team = 2;
-               } else if (itemId < ItemDefinition.definitionCount
+                  this.castleWarsTeam = true;
+               } else if (!this.castleWarsTeam
+                  && itemId < ItemDefinition.definitionCount
                   && (teamOrReadUnsignedByte = ItemDefinition.lookup(itemId).teamIndex) != 0) {
                   this.team = teamOrReadUnsignedByte;
                }
