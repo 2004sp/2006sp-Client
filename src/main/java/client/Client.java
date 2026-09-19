@@ -15884,7 +15884,7 @@ public class Client extends GameShell {
                if (!localFlag) {
                   if (castleWarsPlayer) {
                      if (localPlayer.team == player.team) {
-                        this.drawMinimapIcon(this.mapDotPlayer, scalar, localWorldX);
+                        this.drawMinimapIcon(this.mapDotFriend, scalar, localWorldX);
                      } else {
                         this.drawMinimapIcon(this.mapDotNPC, scalar, localWorldX);
                      }
