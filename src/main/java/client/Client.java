@@ -11556,9 +11556,17 @@ public class Client extends GameShell {
          } else {
             for (int atPlayerActionIndex = 4; atPlayerActionIndex >= 0; atPlayerActionIndex--) {
                if (this.atPlayerActions[atPlayerActionIndex] != null) {
+                  boolean attackAction = this.atPlayerActions[atPlayerActionIndex].equalsIgnoreCase("attack");
+                  if (attackAction
+                     && localPlayer.team != 0
+                     && player.team != 0
+                     && localPlayer.team == player.team) {
+                     continue;
+                  }
+
                   this.menuActionNames[this.menuActionCount] = this.atPlayerActions[atPlayerActionIndex] + " @whi@" + text;
                   short menuActionId = 0;
-                  if (this.atPlayerActions[atPlayerActionIndex].equalsIgnoreCase("attack")) {
+                  if (attackAction) {
                      if (player.combatLevel > localPlayer.combatLevel) {
                         menuActionId = 2000;
                      }
