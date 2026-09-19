@@ -14990,18 +14990,19 @@ public class Client extends GameShell {
       String zamorakScore = this.getCastleWarsInterfaceText(11345);
       String saradominScore = this.getCastleWarsInterfaceText(11346);
       String timer = this.getCastleWarsInterfaceText(11353);
+      int overlayWidth = screenMode == 0 ? 512 : clientWidth;
+      int overlayHeight = screenMode == 0 ? 334 : clientHeight;
 
-      // Keep the score high and centered so it remains readable at any
-      // resizable resolution instead of drifting into the middle of the scene.
+      // Keep the score high and centered inside the actual game viewport in
+      // both fixed and resizable modes.
       this.richBoldFont.drawCenteredString(
             zamorakScore + "     " + saradominScore,
-            clientWidth / 2, 32, 16777215, 0);
+            overlayWidth / 2, 32, 16777215, 0);
 
       // Keep the team/objective state together at the left edge of the game
-      // viewport. The cache interface was authored for fixed mode and its
-      // absolute child coordinates otherwise float around the middle in resizable.
+      // viewport without depending on the cache-authored child coordinates.
       int statusX = 10;
-      int statusY = Math.max(120, clientHeight / 2 - 100);
+      int statusY = Math.max(120, overlayHeight / 2 - 100);
       this.drawCastleWarsStatusLine("Zamorak flag", 11349, 0, false, statusX, statusY);
       this.drawCastleWarsStatusLine("Saradomin flag", 11350, 0, true, statusX, statusY + 20);
       this.drawCastleWarsStatusLine("Main door", 11352, 1, false, statusX, statusY + 50);
@@ -15010,10 +15011,14 @@ public class Client extends GameShell {
       this.drawCastleWarsStatusLine("Tunnel 2", 11360, 2, false, statusX, statusY + 110);
       this.drawCastleWarsStatusLine("Catapult", 11362, 3, false, statusX, statusY + 130);
 
-      // Put the clock immediately to the left of the resizable tab panel.
-      int timerX = this.resizableTabPanelVisible ? clientWidth - 250 : clientWidth - 55;
-      int timerY = this.resizableTabPanelVisible
-            ? Math.max(80, clientHeight - 290) : 50;
+      // Keep the clock inside the game viewport. In resizable mode it stays
+      // left of the tab panel; in fixed mode it sits near the viewport's right edge.
+      int timerX = screenMode == 0
+            ? overlayWidth - 42
+            : (this.resizableTabPanelVisible ? overlayWidth - 250 : overlayWidth - 55);
+      int timerY = screenMode == 0
+            ? 50
+            : (this.resizableTabPanelVisible ? Math.max(80, overlayHeight - 290) : 50);
       this.richBoldFont.drawCenteredString(timer, timerX, timerY, 16777215, 0);
    }
 
