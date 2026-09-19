@@ -274,7 +274,9 @@ public final class Widget {
                widget.childIds[childIdIndex] = buffer.readUnsignedShort();
                widget.childX[childIdIndex] = buffer.readShort();
                widget.childY[childIdIndex] = buffer.readShort();
-               if (Client.getClient().graphicsEnabled) {
+               configureCastleWarsWaitingInterface(newFont);
+
+      if (Client.getClient().graphicsEnabled) {
                   boolean flag = false;
                   if (widget.parentId == 638) {
                      Iterator iterator = QuestEntry.entries.iterator();
@@ -589,6 +591,48 @@ public final class Widget {
 
       spriteCache = null;
    }
+   private static void configureCastleWarsWaitingInterface(RichTextFont[] fonts) {
+      if (widgets == null || fonts == null || fonts.length < 3) {
+         return;
+      }
+
+      final int parentId = 6673;
+      final int timerId = 6570;
+      final int zamorakCountId = 6572;
+      final int saradominCountId = 6664;
+
+      if (timerId < widgets.length && widgets[timerId] != null) {
+         Widget timer = widgets[timerId];
+         timer.font = fonts[2];
+         timer.textAlignment = 1;
+         timer.textShadow = true;
+         timer.width = 512;
+      }
+
+      if (zamorakCountId < widgets.length && widgets[zamorakCountId] != null) {
+         widgets[zamorakCountId].message = "";
+      }
+      if (saradominCountId < widgets.length && widgets[saradominCountId] != null) {
+         widgets[saradominCountId].message = "";
+      }
+
+      if (parentId < widgets.length && widgets[parentId] != null) {
+         Widget parent = widgets[parentId];
+         if (parent.childIds != null) {
+            for (int i = 0; i < parent.childIds.length; i++) {
+               if (parent.childIds[i] == timerId) {
+                  parent.childX[i] = 0;
+                  parent.childY[i] = 24;
+               } else if (parent.childIds[i] == zamorakCountId
+                     || parent.childIds[i] == saradominCountId) {
+                  parent.childX[i] = -1000;
+                  parent.childY[i] = -1000;
+               }
+            }
+         }
+      }
+   }
+
    private static Model getMediaModel(int scalarArgument, int modelHeaderIndex) {
       Model model;
       if ((model = (Model)modelCache.get((scalarArgument << 16) + modelHeaderIndex)) != null) {
