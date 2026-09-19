@@ -14855,6 +14855,87 @@ public class Client extends GameShell {
          return clientWidth >= 900 && clientHeight >= 650 ? true : widget != null && (widget.spriteXOffset != -1 || widget.spriteYOffset != -1);
       }
    }
+   private String getCastleWarsInterfaceText(int widgetId) {
+      if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
+            || Widget.widgets[widgetId] == null || Widget.widgets[widgetId].message == null) {
+         return "";
+      }
+      return Widget.widgets[widgetId].message;
+   }
+
+   private int getCastleWarsStatusColor(String status) {
+      if (status == null) {
+         return 16777215;
+      }
+
+      String lower = status.toLowerCase();
+      if (lower.contains("safe") || lower.contains("cleared")
+            || lower.contains("operational") || lower.contains("locked")) {
+         return 65280;
+      }
+      if (lower.contains("taken") || lower.contains("destroyed")
+            || lower.contains("collapsed") || lower.equals("health 0%")) {
+         return 16724787;
+      }
+      if (lower.contains("dropped") || lower.contains("unlocked")) {
+         return 16776960;
+      }
+      if (lower.startsWith("health ")) {
+         try {
+            int percentIndex = lower.indexOf('%');
+            int health = Integer.parseInt(lower.substring(7, percentIndex).trim());
+            if (health <= 25) {
+               return 16724787;
+            }
+            if (health <= 60) {
+               return 16776960;
+            }
+            return 65280;
+         } catch (Exception ignored) {
+         }
+      }
+      return 16777215;
+   }
+
+   private void drawCastleWarsStatusLine(String label, int widgetId, int x, int y) {
+      String status = this.getCastleWarsInterfaceText(widgetId);
+      this.richPlainFont.drawBasicString(label + ":", x, y, 16777215, 0);
+      int statusX = x + this.richPlainFont.getTextWidth(label + ":") + 6;
+      this.richBoldFont.drawBasicString(status, statusX, y,
+            this.getCastleWarsStatusColor(status), 0);
+   }
+
+   private void drawCastleWarsGameOverlay() {
+      String zamorakScore = this.getCastleWarsInterfaceText(11345);
+      String saradominScore = this.getCastleWarsInterfaceText(11346);
+      String timer = this.getCastleWarsInterfaceText(11353);
+
+      // Keep the score high and centered so it remains readable at any
+      // resizable resolution instead of drifting into the middle of the scene.
+      this.richBoldFont.drawCenteredString(
+            zamorakScore + "     " + saradominScore,
+            clientWidth / 2, 32, 16777215, 0);
+
+      // Keep the team/objective state together at the left edge of the game
+      // viewport. The cache interface was authored for fixed mode and its
+      // absolute child coordinates otherwise float around the middle in resizable.
+      int statusX = 12;
+      int statusY = Math.max(120, clientHeight / 2 - 100);
+      this.drawCastleWarsStatusLine("Zamorak flag", 11349, statusX, statusY);
+      this.drawCastleWarsStatusLine("Saradomin flag", 11350, statusX, statusY + 20);
+      this.drawCastleWarsStatusLine("Main door", 11352, statusX, statusY + 50);
+      this.drawCastleWarsStatusLine("Side door", 11356, statusX, statusY + 70);
+      this.drawCastleWarsStatusLine("Tunnel 1", 11358, statusX, statusY + 90);
+      this.drawCastleWarsStatusLine("Tunnel 2", 11360, statusX, statusY + 110);
+      this.drawCastleWarsStatusLine("Catapult", 11362, statusX, statusY + 130);
+
+      // Put the clock immediately to the left of the resizable tab panel.
+      int timerX = this.resizableTabPanelVisible ? clientWidth - 250 : clientWidth - 55;
+      int timerY = this.resizableTabPanelVisible
+            ? Math.max(80, clientHeight - 290) : 50;
+      this.richBoldFont.drawCenteredString(timer, timerX, timerY, 16777215, 0);
+   }
+
    private void draw3dScreen() {
       Client client = this;
       if (this.splitpublicChat != 0) {
@@ -14953,7 +15034,9 @@ public class Client extends GameShell {
 
          this.animateInterface(this.animationCycleDelta, this.openWalkableInterface);
          this.centeredWalkableInterface = false;
-         if (screenMode != 0 && this.openWalkableInterface == 6673) {
+         if (screenMode != 0 && this.openWalkableInterface == 11344) {
+            this.drawCastleWarsGameOverlay();
+         } else if (screenMode != 0 && this.openWalkableInterface == 6673) {
             int left = clientWidth / 2 - 256;
             this.centeredWalkableInterface = true;
             this.drawInterface(0, left, Widget.widgets[this.openWalkableInterface], 20);
