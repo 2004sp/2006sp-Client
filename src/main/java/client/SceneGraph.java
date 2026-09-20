@@ -1511,6 +1511,7 @@ final class SceneGraph {
          int tileY;
          int tileIndex;
          int sourceTileHeightIndex;
+         boolean useLegacyOcclusion;
          SceneTile[][] sceneTile8;
          while (true) {
             if ((sceneTile = (SceneTile)tileQueue.removeFirst()) == null) {
@@ -1522,6 +1523,12 @@ final class SceneGraph {
                tileY = sceneTile.y;
                tileIndex = sceneTile.plane;
                sourceTileHeightIndex = sceneTile.originalPlane;
+               // The legacy occluder clusters are reliable for the ground plane but
+               // can falsely reject upper-floor geometry as the camera rotates around
+               // multi-level buildings. Keep the normal visibility-map, roof/draw
+               // level and wall-facing checks, but only use cluster occlusion for
+               // original plane 0. This also covers bridge-shifted upper-plane tiles.
+               useLegacyOcclusion = sourceTileHeightIndex == 0;
                sceneTile8 = this.tiles[tileIndex];
                if (!sceneTile.draw) {
                   break;
@@ -1603,13 +1610,6 @@ final class SceneGraph {
                }
 
                boolean localFlag = false;
-               // The legacy occluder clusters are reliable for the ground plane but
-               // can falsely reject upper-floor geometry as the camera rotates around
-               // multi-level buildings. Keep the normal visibility-map, roof/draw
-               // level and wall-facing checks, but only use cluster occlusion for
-               // original plane 0. This also covers bridge-shifted upper-plane tiles
-               // because sourceTileHeightIndex is the tile's original plane.
-               boolean useLegacyOcclusion = sourceTileHeightIndex == 0;
                boolean floorOccluded = useLegacyOcclusion && this.isTileOccluded(sourceTileHeightIndex, tileX, tileY);
                if (sceneTile.plainTile != null) {
                   if (!floorOccluded) {
