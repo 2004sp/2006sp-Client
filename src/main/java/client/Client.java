@@ -14969,13 +14969,16 @@ public class Client extends GameShell {
             11356, 11358, 11360, 11362, 11363, 11364, 11365, 11366
       };
       String[] messages = new String[textWidgetIds.length];
+      String[] secondaryTexts = new String[textWidgetIds.length];
 
       for (int i = 0; i < textWidgetIds.length; i++) {
          int widgetId = textWidgetIds[i];
          if (widgetId >= 0 && widgetId < Widget.widgets.length
                && Widget.widgets[widgetId] != null) {
             messages[i] = Widget.widgets[widgetId].message;
+            secondaryTexts[i] = Widget.widgets[widgetId].secondaryText;
             Widget.widgets[widgetId].message = "";
+            Widget.widgets[widgetId].secondaryText = "";
          }
       }
 
@@ -14987,6 +14990,7 @@ public class Client extends GameShell {
             if (widgetId >= 0 && widgetId < Widget.widgets.length
                   && Widget.widgets[widgetId] != null) {
                Widget.widgets[widgetId].message = messages[i];
+               Widget.widgets[widgetId].secondaryText = secondaryTexts[i];
             }
          }
       }
