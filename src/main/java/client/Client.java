@@ -54,6 +54,15 @@ public class Client extends GameShell {
    public static int screenMode = 0;
    public static int clientWidth = 765;
    public static int clientHeight = 503;
+   public static int uiScalePercent = 100;
+   private static final int MIN_UI_SCALE_PERCENT = 50;
+   private static final int MAX_UI_SCALE_PERCENT = 200;
+   private static final int RESIZABLE_CHAT_UI_WIDTH = 520;
+   private static final int RESIZABLE_CHAT_UI_HEIGHT = 165;
+   private static final int RESIZABLE_TAB_UI_WIDTH = 241;
+   private static final int RESIZABLE_TAB_UI_HEIGHT = 335;
+   private static final int RESIZABLE_MINIMAP_UI_WIDTH = 241;
+   private static final int RESIZABLE_MINIMAP_UI_HEIGHT = 177;
    public static int logoStyle = 0;
    public static boolean customSettingVisiblePlayerNames = false;
    public static String version = "v1.0";
@@ -641,6 +650,12 @@ public class Client extends GameShell {
    private int lastViewportTooltipWidgetId = 0;
    private int tooltipDelayTicks = 50;
    BufferedImageGraphicsBuffer frameBuffer;
+   private int[] uiChatBackground;
+   private int[] uiChatComposite;
+   private int[] uiTabBackground;
+   private int[] uiTabComposite;
+   private int[] uiMinimapBackground;
+   private int[] uiMinimapComposite;
    private static int[][] bankTabItemIds;
    private int[][] bankTabItemAmounts;
    private String bankTitle = "";
@@ -991,6 +1006,245 @@ public class Client extends GameShell {
       Rasterizer2D.clear();
       this.setupGameScreenBuffers();
    }
+   public static int clampUiScalePercent(int percent) {
+      if (percent < MIN_UI_SCALE_PERCENT) {
+         return MIN_UI_SCALE_PERCENT;
+      }
+      if (percent > MAX_UI_SCALE_PERCENT) {
+         return MAX_UI_SCALE_PERCENT;
+      }
+      return percent;
+   }
+
+   private static int scaledUiDimension(int baseSize) {
+      return Math.max(1, (baseSize * clampUiScalePercent(uiScalePercent) + 50) / 100);
+   }
+
+   private static boolean isInsideRectangle(int x, int y, int left, int top, int width, int height) {
+      return x >= left && y >= top && x < left + width && y < top + height;
+   }
+
+   /**
+    * Converts physical mouse coordinates over a scaled resizable/fullscreen UI
+    * panel back into the original 2006 UI coordinate space. World/viewport
+    * coordinates are returned unchanged.
+    */
+   public static long translateUiInputCoordinates(int x, int y) {
+      if (screenMode == 0 || clampUiScalePercent(uiScalePercent) == 100) {
+         return ((long)x << 32) | (y & 0xffffffffL);
+      }
+
+      int minimapWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
+      int minimapHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
+      int minimapLeft = clientWidth - minimapWidth;
+      if (isInsideRectangle(x, y, minimapLeft, 0, minimapWidth, minimapHeight)) {
+         int logicalX = clientWidth - RESIZABLE_MINIMAP_UI_WIDTH
+            + (x - minimapLeft) * RESIZABLE_MINIMAP_UI_WIDTH / minimapWidth;
+         int logicalY = y * RESIZABLE_MINIMAP_UI_HEIGHT / minimapHeight;
+         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+      }
+
+      int tabWidth = scaledUiDimension(RESIZABLE_TAB_UI_WIDTH);
+      int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
+      int tabLeft = clientWidth - tabWidth;
+      int tabTop = clientHeight - tabHeight;
+      if (isInsideRectangle(x, y, tabLeft, tabTop, tabWidth, tabHeight)) {
+         int logicalX = clientWidth - RESIZABLE_TAB_UI_WIDTH
+            + (x - tabLeft) * RESIZABLE_TAB_UI_WIDTH / tabWidth;
+         int logicalY = clientHeight - RESIZABLE_TAB_UI_HEIGHT
+            + (y - tabTop) * RESIZABLE_TAB_UI_HEIGHT / tabHeight;
+         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+      }
+
+      int chatWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
+      int chatHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+      int chatTop = clientHeight - chatHeight;
+      if (isInsideRectangle(x, y, 0, chatTop, chatWidth, chatHeight)) {
+         int logicalX = x * RESIZABLE_CHAT_UI_WIDTH / chatWidth;
+         int logicalY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT
+            + (y - chatTop) * RESIZABLE_CHAT_UI_HEIGHT / chatHeight;
+         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+      }
+
+      return ((long)x << 32) | (y & 0xffffffffL);
+   }
+
+   private void ensureResizableUiScaleBuffers() {
+      int chatSize = RESIZABLE_CHAT_UI_WIDTH * RESIZABLE_CHAT_UI_HEIGHT;
+      int tabSize = RESIZABLE_TAB_UI_WIDTH * RESIZABLE_TAB_UI_HEIGHT;
+      int minimapSize = RESIZABLE_MINIMAP_UI_WIDTH * RESIZABLE_MINIMAP_UI_HEIGHT;
+      if (this.uiChatBackground == null || this.uiChatBackground.length != chatSize) {
+         this.uiChatBackground = new int[chatSize];
+         this.uiChatComposite = new int[chatSize];
+      }
+      if (this.uiTabBackground == null || this.uiTabBackground.length != tabSize) {
+         this.uiTabBackground = new int[tabSize];
+         this.uiTabComposite = new int[tabSize];
+      }
+      if (this.uiMinimapBackground == null || this.uiMinimapBackground.length != minimapSize) {
+         this.uiMinimapBackground = new int[minimapSize];
+         this.uiMinimapComposite = new int[minimapSize];
+      }
+   }
+
+   private void copyUiRegion(int[] sourcePixels, int sourceX, int sourceY, int width, int height, int[] destination) {
+      int destinationOffset = 0;
+      int sourceOffset = sourceY * clientWidth + sourceX;
+      for (int row = 0; row < height; ++row) {
+         System.arraycopy(sourcePixels, sourceOffset, destination, destinationOffset, width);
+         sourceOffset += clientWidth;
+         destinationOffset += width;
+      }
+   }
+
+   private void restoreUiRegion(int[] destinationPixels, int destinationX, int destinationY, int width, int height, int[] source) {
+      int sourceOffset = 0;
+      int destinationOffset = destinationY * clientWidth + destinationX;
+      for (int row = 0; row < height; ++row) {
+         System.arraycopy(source, sourceOffset, destinationPixels, destinationOffset, width);
+         sourceOffset += width;
+         destinationOffset += clientWidth;
+      }
+   }
+
+   private void drawScaledUiRegion(
+      int[] source,
+      int sourceWidth,
+      int sourceHeight,
+      int destinationX,
+      int destinationY,
+      int destinationWidth,
+      int destinationHeight
+   ) {
+      int[] destination = this.gameScreenImageProducer.pixels;
+      for (int y = 0; y < destinationHeight; ++y) {
+         int screenY = destinationY + y;
+         if (screenY < 0 || screenY >= clientHeight) {
+            continue;
+         }
+         int sourceY = y * sourceHeight / destinationHeight;
+         int sourceRow = sourceY * sourceWidth;
+         int destinationRow = screenY * clientWidth;
+         for (int x = 0; x < destinationWidth; ++x) {
+            int screenX = destinationX + x;
+            if (screenX < 0 || screenX >= clientWidth) {
+               continue;
+            }
+            int sourceX = x * sourceWidth / destinationWidth;
+            destination[destinationRow + screenX] = source[sourceRow + sourceX];
+         }
+      }
+   }
+
+   private boolean shouldScaleResizableUi() {
+      return screenMode != 0 && clampUiScalePercent(uiScalePercent) != 100
+         && clientWidth >= RESIZABLE_CHAT_UI_WIDTH
+         && clientHeight >= RESIZABLE_TAB_UI_HEIGHT;
+   }
+
+   private void captureResizableUiBackground() {
+      if (!this.shouldScaleResizableUi()) {
+         return;
+      }
+      this.ensureResizableUiScaleBuffers();
+      int[] pixels = this.gameScreenImageProducer.pixels;
+      this.copyUiRegion(
+         pixels,
+         0,
+         clientHeight - RESIZABLE_CHAT_UI_HEIGHT,
+         RESIZABLE_CHAT_UI_WIDTH,
+         RESIZABLE_CHAT_UI_HEIGHT,
+         this.uiChatBackground
+      );
+      this.copyUiRegion(
+         pixels,
+         clientWidth - RESIZABLE_TAB_UI_WIDTH,
+         clientHeight - RESIZABLE_TAB_UI_HEIGHT,
+         RESIZABLE_TAB_UI_WIDTH,
+         RESIZABLE_TAB_UI_HEIGHT,
+         this.uiTabBackground
+      );
+      this.copyUiRegion(
+         pixels,
+         clientWidth - RESIZABLE_MINIMAP_UI_WIDTH,
+         0,
+         RESIZABLE_MINIMAP_UI_WIDTH,
+         RESIZABLE_MINIMAP_UI_HEIGHT,
+         this.uiMinimapBackground
+      );
+   }
+
+   private void scaleResizableUiAfterRender() {
+      if (!this.shouldScaleResizableUi()) {
+         return;
+      }
+
+      int[] pixels = this.gameScreenImageProducer.pixels;
+      int chatY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT;
+      int tabX = clientWidth - RESIZABLE_TAB_UI_WIDTH;
+      int tabY = clientHeight - RESIZABLE_TAB_UI_HEIGHT;
+      int minimapX = clientWidth - RESIZABLE_MINIMAP_UI_WIDTH;
+
+      this.copyUiRegion(
+         pixels, 0, chatY, RESIZABLE_CHAT_UI_WIDTH, RESIZABLE_CHAT_UI_HEIGHT, this.uiChatComposite
+      );
+      this.copyUiRegion(
+         pixels, tabX, tabY, RESIZABLE_TAB_UI_WIDTH, RESIZABLE_TAB_UI_HEIGHT, this.uiTabComposite
+      );
+      this.copyUiRegion(
+         pixels, minimapX, 0, RESIZABLE_MINIMAP_UI_WIDTH, RESIZABLE_MINIMAP_UI_HEIGHT, this.uiMinimapComposite
+      );
+
+      // Remove the normal-size panels before placing their scaled versions.
+      this.restoreUiRegion(
+         pixels, 0, chatY, RESIZABLE_CHAT_UI_WIDTH, RESIZABLE_CHAT_UI_HEIGHT, this.uiChatBackground
+      );
+      this.restoreUiRegion(
+         pixels, tabX, tabY, RESIZABLE_TAB_UI_WIDTH, RESIZABLE_TAB_UI_HEIGHT, this.uiTabBackground
+      );
+      this.restoreUiRegion(
+         pixels, minimapX, 0, RESIZABLE_MINIMAP_UI_WIDTH, RESIZABLE_MINIMAP_UI_HEIGHT, this.uiMinimapBackground
+      );
+
+      int chatWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
+      int chatHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+      int tabWidth = scaledUiDimension(RESIZABLE_TAB_UI_WIDTH);
+      int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
+      int minimapWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
+      int minimapHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
+
+      // Preserve the same anchor points as the unscaled resizable UI.
+      this.drawScaledUiRegion(
+         this.uiChatComposite,
+         RESIZABLE_CHAT_UI_WIDTH,
+         RESIZABLE_CHAT_UI_HEIGHT,
+         0,
+         clientHeight - chatHeight,
+         chatWidth,
+         chatHeight
+      );
+      this.drawScaledUiRegion(
+         this.uiTabComposite,
+         RESIZABLE_TAB_UI_WIDTH,
+         RESIZABLE_TAB_UI_HEIGHT,
+         clientWidth - tabWidth,
+         clientHeight - tabHeight,
+         tabWidth,
+         tabHeight
+      );
+      this.drawScaledUiRegion(
+         this.uiMinimapComposite,
+         RESIZABLE_MINIMAP_UI_WIDTH,
+         RESIZABLE_MINIMAP_UI_HEIGHT,
+         clientWidth - minimapWidth,
+         0,
+         minimapWidth,
+         minimapHeight
+      );
+
+      this.gameScreenImageProducer.initDrawingArea();
+   }
+
    @Override
    public final void handleMouseWheel(MouseWheelEvent mouseWheelEvent) {
       int wheelRotation = mouseWheelEvent.getWheelRotation();
@@ -15301,6 +15555,7 @@ public class Client extends GameShell {
       }
 
       if (screenMode != 0) {
+         this.captureResizableUiBackground();
          if (this.fullscreenInterfaceBackdropVisible) {
             int localClientWidth = 0;
             int localClientHeight = 0;
@@ -15325,6 +15580,7 @@ public class Client extends GameShell {
          this.drawChatArea();
          this.drawTabArea();
          this.drawMinimap();
+         this.scaleResizableUiAfterRender();
       }
 
       client = this;
