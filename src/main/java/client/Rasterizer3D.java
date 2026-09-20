@@ -1444,7 +1444,7 @@ final class Rasterizer3D extends Rasterizer2D {
          textureX2 -= textureX0;
          textureY2 -= textureY0;
          textureZ2 -= textureZ0;
-         textureId = Client.getProjectionScaleShift() == 9 ? 14 : 15;
+         textureId = Client.getProjectionScaleShift() + 5;
          if (!renderModeFlag) {
             textureId = 14;
          }
@@ -4168,7 +4168,7 @@ final class Rasterizer3D extends Rasterizer2D {
             textureX2 -= textureX0;
             textureY2 -= textureY0;
             textureZ2 -= textureZ0;
-            textureId = Client.getProjectionScaleShift() == 9 ? 14 : 15;
+            textureId = Client.getProjectionScaleShift() + 5;
             if (!renderModeFlag) {
                textureId = 14;
             }
@@ -5932,7 +5932,7 @@ final class Rasterizer3D extends Rasterizer2D {
          textureX2 -= textureX0;
          textureY2 -= textureY0;
          textureZ2 -= textureZ0;
-         textureId = Client.getProjectionScaleShift() == 9 ? 14 : 15;
+         textureId = Client.getProjectionScaleShift() + 5;
          if (!renderModeFlag) {
             textureId = 14;
          }
