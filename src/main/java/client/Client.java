@@ -1892,9 +1892,15 @@ public class Client extends GameShell {
       this.smallFont.textLeftShadow(true, localScreenMode + 212, 16777215, "Private", screenMode2 + 14);
       this.smallFont.textLeftShadow(true, localScreenMode + 286, 16777215, "Clan", screenMode2 + 14);
       this.smallFont.textLeftShadow(true, localScreenMode + 349, 16777215, "Trade", screenMode2 + 14);
-      this.smallFont.textCenterShadow(values[this.publicChatMode], localScreenMode + 164, text[this.publicChatMode], screenMode2 + 25, true);
-      this.smallFont.textCenterShadow(values[this.privateChatMode], localScreenMode + 230, text[this.privateChatMode], screenMode2 + 25, true);
-      this.smallFont.textCenterShadow(values[this.tradeMode], localScreenMode + 362, text[this.tradeMode], screenMode2 + 25, true);
+      // Keep the second-line channel status text inside the source HUD
+      // rectangle. In resizable/fullscreen mode these buttons sit flush with
+      // the bottom edge; rendering at +25 clips the bottom row of the glyphs
+      // before the UI-scaling pass captures them, and scaling magnifies that
+      // clipping. Lift only the resizable status baselines slightly.
+      int channelStatusTextY = screenMode2 + (screenMode != 0 ? 23 : 25);
+      this.smallFont.textCenterShadow(values[this.publicChatMode], localScreenMode + 164, text[this.publicChatMode], channelStatusTextY, true);
+      this.smallFont.textCenterShadow(values[this.privateChatMode], localScreenMode + 230, text[this.privateChatMode], channelStatusTextY, true);
+      this.smallFont.textCenterShadow(values[this.tradeMode], localScreenMode + 362, text[this.tradeMode], channelStatusTextY, true);
    }
    private void drawChatArea() {
       int localScreenMode = screenMode != 0 ? 7 : 0;
