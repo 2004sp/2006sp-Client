@@ -659,6 +659,8 @@ public class Client extends GameShell {
    private int[] uiMinimapPreFrame;
    private int[] uiMinimapPostFrame;
    private int[] uiMinimapComposite;
+   private int[] uiMenuBackground;
+   private int[] uiMenuComposite;
    private static int[][] bankTabItemIds;
    private int[][] bankTabItemAmounts;
    private String bankTitle = "";
@@ -1295,6 +1297,53 @@ public class Client extends GameShell {
 
    private int getMenuClickY() {
       return this.shouldUseRawMenuCoordinates() ? super.rawClickY : super.clickY;
+   }
+
+   private boolean shouldScaleContextMenu() {
+      return this.menuOpen
+         && this.menuScreenArea == 0
+         && screenMode != 0
+         && clampUiScalePercent(uiScalePercent) != 100;
+   }
+
+   private int translateContextMenuX(int x) {
+      if (!this.shouldScaleContextMenu()) {
+         return x;
+      }
+
+      int scaledWidth = scaledUiDimension(this.menuWidth);
+      if (scaledWidth <= 0) {
+         return x;
+      }
+      return this.menuOffsetX + (x - this.menuOffsetX) * this.menuWidth / scaledWidth;
+   }
+
+   private int translateContextMenuY(int y) {
+      if (!this.shouldScaleContextMenu()) {
+         return y;
+      }
+
+      int scaledHeight = scaledUiDimension(this.menuHeight);
+      if (scaledHeight <= 0) {
+         return y;
+      }
+      return this.menuOffsetY + (y - this.menuOffsetY) * this.menuHeight / scaledHeight;
+   }
+
+   private int getContextMenuMouseX() {
+      return this.translateContextMenuX(this.getMenuMouseX());
+   }
+
+   private int getContextMenuMouseY() {
+      return this.translateContextMenuY(this.getMenuMouseY());
+   }
+
+   private int getContextMenuClickX() {
+      return this.translateContextMenuX(this.getMenuClickX());
+   }
+
+   private int getContextMenuClickY() {
+      return this.translateContextMenuY(this.getMenuClickY());
    }
 
    private void captureResizableUiBackground() {
@@ -2516,8 +2565,8 @@ public class Client extends GameShell {
 
       if (this.menuOpen) {
          if (clickButton != 1) {
-            int mouseX = this.getMenuMouseX();
-            int mouseY = this.getMenuMouseY();
+            int mouseX = this.getContextMenuMouseX();
+            int mouseY = this.getContextMenuMouseY();
             if (this.menuScreenArea == 0) {
                mouseX -= screenMode == 0 ? 4 : 0;
                mouseY -= screenMode == 0 ? 4 : 0;
@@ -2560,8 +2609,8 @@ public class Client extends GameShell {
             int menuOffsetX = this.menuOffsetX;
             int menuOffsetY = this.menuOffsetY;
             int menuWidth = this.menuWidth;
-            int clickX = this.getMenuClickX();
-            int clickY = this.getMenuClickY();
+            int clickX = this.getContextMenuClickX();
+            int clickY = this.getContextMenuClickY();
             if (this.menuScreenArea == 0) {
                clickX -= screenMode == 0 ? 4 : 0;
                clickY -= screenMode == 0 ? 4 : 0;
@@ -4939,7 +4988,88 @@ public class Client extends GameShell {
          this.yCameraPos = sourceCameraPositionX;
       }
    }
+   private void ensureContextMenuScaleBuffers() {
+      int size = Math.max(1, this.menuWidth * this.menuHeight);
+      if (this.uiMenuBackground == null || this.uiMenuBackground.length != size) {
+         this.uiMenuBackground = new int[size];
+         this.uiMenuComposite = new int[size];
+      }
+   }
+
+   private void copyRasterRegion(int[] source, int sourceX, int sourceY, int width, int height, int[] destination) {
+      int sourceOffset = sourceY * Rasterizer2D.width + sourceX;
+      int destinationOffset = 0;
+      for (int row = 0; row < height; ++row) {
+         System.arraycopy(source, sourceOffset, destination, destinationOffset, width);
+         sourceOffset += Rasterizer2D.width;
+         destinationOffset += width;
+      }
+   }
+
+   private void restoreRasterRegion(int[] destination, int destinationX, int destinationY, int width, int height, int[] source) {
+      int destinationOffset = destinationY * Rasterizer2D.width + destinationX;
+      int sourceOffset = 0;
+      for (int row = 0; row < height; ++row) {
+         System.arraycopy(source, sourceOffset, destination, destinationOffset, width);
+         destinationOffset += Rasterizer2D.width;
+         sourceOffset += width;
+      }
+   }
+
+   private void drawScaledContextMenuPixels(int[] source, int sourceWidth, int sourceHeight, int destinationX, int destinationY) {
+      int destinationWidth = scaledUiDimension(sourceWidth);
+      int destinationHeight = scaledUiDimension(sourceHeight);
+      int[] destination = Rasterizer2D.pixels;
+
+      for (int y = 0; y < destinationHeight; ++y) {
+         int screenY = destinationY + y;
+         if (screenY < 0 || screenY >= Rasterizer2D.height) {
+            continue;
+         }
+
+         int sourceY = y * sourceHeight / destinationHeight;
+         int sourceRow = sourceY * sourceWidth;
+         int destinationRow = screenY * Rasterizer2D.width;
+         for (int x = 0; x < destinationWidth; ++x) {
+            int screenX = destinationX + x;
+            if (screenX < 0 || screenX >= Rasterizer2D.width) {
+               continue;
+            }
+
+            int sourceX = x * sourceWidth / destinationWidth;
+            destination[destinationRow + screenX] = source[sourceRow + sourceX];
+         }
+      }
+   }
+
    private void drawMenu() {
+      if (!this.shouldScaleContextMenu()) {
+         this.drawMenuUnscaled();
+         return;
+      }
+
+      int menuOffsetX = this.menuOffsetX;
+      int menuOffsetY = this.menuOffsetY;
+      int menuWidth = this.menuWidth;
+      int menuHeight = this.menuHeight;
+      if (menuOffsetX < 0
+         || menuOffsetY < 0
+         || menuOffsetX + menuWidth > Rasterizer2D.width
+         || menuOffsetY + menuHeight > Rasterizer2D.height) {
+         this.drawMenuUnscaled();
+         return;
+      }
+
+      this.ensureContextMenuScaleBuffers();
+      int[] rasterPixels = Rasterizer2D.pixels;
+      this.copyRasterRegion(rasterPixels, menuOffsetX, menuOffsetY, menuWidth, menuHeight, this.uiMenuBackground);
+      this.drawMenuUnscaled();
+      this.copyRasterRegion(rasterPixels, menuOffsetX, menuOffsetY, menuWidth, menuHeight, this.uiMenuComposite);
+      this.restoreRasterRegion(rasterPixels, menuOffsetX, menuOffsetY, menuWidth, menuHeight, this.uiMenuBackground);
+      this.drawScaledContextMenuPixels(this.uiMenuComposite, menuWidth, menuHeight, menuOffsetX, menuOffsetY);
+   }
+
+   private void drawMenuUnscaled() {
       int menuOffsetX = this.menuOffsetX;
       int menuOffsetY = this.menuOffsetY;
       int menuWidth = this.menuWidth;
@@ -4948,8 +5078,8 @@ public class Client extends GameShell {
       Rasterizer2D.fillRectangle(16, menuOffsetY + 1, menuOffsetX + 1, 0, menuWidth - 2);
       Rasterizer2D.drawRectangle(menuOffsetX + 1, menuWidth - 2, menuHeight - 19, 0, menuOffsetY + 18);
       this.boldFont.textLeft(6116423, "Choose Option", menuOffsetY + 14, menuOffsetX + 3);
-      menuHeight = this.getMenuMouseX();
-      int mouseY = this.getMenuMouseY();
+      menuHeight = this.getContextMenuMouseX();
+      int mouseY = this.getContextMenuMouseY();
       if (this.menuScreenArea == 0) {
          menuHeight -= screenMode == 0 ? 4 : 0;
          mouseY -= screenMode == 0 ? 4 : 0;
@@ -16097,9 +16227,15 @@ public class Client extends GameShell {
             return;
          }
 
-         int menuOffsetXOrClickX5;
-         if ((menuOffsetXOrClickX5 = menuClickX - menuWidthOrBoldFont / 2) + menuWidthOrBoldFont > clientWidth) {
-            menuOffsetXOrClickX5 = clientWidth - menuWidthOrBoldFont;
+         int logicalMenuHeight = 15 * this.menuActionCount + 22;
+         int visualMenuWidth = scaledUiDimension(menuWidthOrBoldFont);
+         int visualMenuHeight = scaledUiDimension(logicalMenuHeight);
+         int requiredMenuWidth = Math.max(menuWidthOrBoldFont, visualMenuWidth);
+         int requiredMenuHeight = Math.max(logicalMenuHeight, visualMenuHeight);
+
+         int menuOffsetXOrClickX5 = menuClickX - visualMenuWidth / 2;
+         if (menuOffsetXOrClickX5 + requiredMenuWidth > clientWidth) {
+            menuOffsetXOrClickX5 = clientWidth - requiredMenuWidth;
          }
 
          if (menuOffsetXOrClickX5 < 0) {
@@ -16107,8 +16243,8 @@ public class Client extends GameShell {
          }
 
          int menuOffsetYOrClickY5 = menuClickY;
-         if (menuClickY + scalar > clientHeight) {
-            menuOffsetYOrClickY5 = clientHeight - scalar;
+         if (menuOffsetYOrClickY5 + requiredMenuHeight > clientHeight) {
+            menuOffsetYOrClickY5 = clientHeight - requiredMenuHeight;
          }
 
          if (menuOffsetYOrClickY5 < 0) {
@@ -16120,7 +16256,7 @@ public class Client extends GameShell {
          this.menuOffsetX = menuOffsetXOrClickX5;
          this.menuOffsetY = menuOffsetYOrClickY5;
          this.menuWidth = menuWidthOrBoldFont;
-         this.menuHeight = 15 * this.menuActionCount + 22;
+         this.menuHeight = logicalMenuHeight;
       }
    }
    private void unloadTitleScreen() {
