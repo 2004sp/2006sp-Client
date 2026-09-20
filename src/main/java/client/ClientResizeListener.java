@@ -12,16 +12,19 @@ final class ClientResizeListener extends ComponentAdapter {
 
    @Override
    public final void componentResized(ComponentEvent componentEvent) {
+      // Do not call setSize() for every resize event. In particular, doing so
+      // while the JFrame is transitioning to MAXIMIZED_BOTH can cancel the
+      // native maximize operation after returning from fullscreen.
+      if ((this.clientWindow.frame.getExtendedState() & this.clientWindow.frame.MAXIMIZED_BOTH) != 0) {
+         return;
+      }
+
       Dimension dimension = this.clientWindow.frame.getSize();
       Dimension minimumSize = this.clientWindow.frame.getMinimumSize();
-      if (dimension.width < minimumSize.width) {
-         dimension.width = minimumSize.width;
+      int width = Math.max(dimension.width, minimumSize.width);
+      int height = Math.max(dimension.height, minimumSize.height);
+      if (width != dimension.width || height != dimension.height) {
+         this.clientWindow.frame.setSize(width, height);
       }
-
-      if (dimension.height < minimumSize.height) {
-         dimension.height = minimumSize.height;
-      }
-
-      this.clientWindow.frame.setSize(dimension);
    }
 }
