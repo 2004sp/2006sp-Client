@@ -1603,11 +1603,10 @@ final class SceneGraph {
                }
 
                boolean localFlag = false;
-               // Upper-plane floors can be falsely rejected by the legacy occlusion
-               // clusters as the camera rotates around tall buildings. The roof/draw
-               // level checks have already decided whether this tile belongs in the
-               // current scene, so always submit upper-floor surfaces and retain the
-               // old occlusion shortcut for the ground plane.
+               // Match the original scene renderer: occlusion is evaluated on every
+               // plane. originalPlane is intentionally used here because bridge tiles
+               // can be shifted to a lower scene plane while their height/occlusion
+               // data still belongs to the source plane.
                boolean floorOccluded = this.isTileOccluded(sourceTileHeightIndex, tileX, tileY);
                if (sceneTile.plainTile != null) {
                   if (!floorOccluded) {
