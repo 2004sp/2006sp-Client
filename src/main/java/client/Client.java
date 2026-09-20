@@ -15555,7 +15555,6 @@ public class Client extends GameShell {
       }
 
       if (screenMode != 0) {
-         this.captureResizableUiBackground();
          if (this.fullscreenInterfaceBackdropVisible) {
             int localClientWidth = 0;
             int localClientHeight = 0;
@@ -15577,6 +15576,7 @@ public class Client extends GameShell {
             }
          }
 
+         this.captureResizableUiBackground();
          this.drawChatArea();
          this.drawTabArea();
          this.drawMinimap();
