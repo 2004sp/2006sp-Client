@@ -1610,11 +1610,13 @@ final class SceneGraph {
                }
 
                boolean localFlag = false;
-               // Match the original scene renderer: occlusion is evaluated on every
-               // plane. originalPlane is intentionally used here because bridge tiles
-               // can be shifted to a lower scene plane while their height/occlusion
-               // data still belongs to the source plane.
-               boolean floorOccluded = this.isTileOccluded(sourceTileHeightIndex, tileX, tileY);
+               // The recovered upper-plane occluder clusters can falsely classify
+               // large floor regions as hidden when the camera crosses tall walls or
+               // towers. Keep cluster occlusion for plane 0, but always submit upper
+               // floor surfaces. A floor tile is only two triangles, so this avoids
+               // catastrophic black cut-outs without disabling expensive wall/object
+               // occlusion for the rest of the scene.
+               boolean floorOccluded = sourceTileHeightIndex == 0 && this.isTileOccluded(sourceTileHeightIndex, tileX, tileY);
                if (sceneTile.plainTile != null) {
                   if (!floorOccluded) {
                      localFlag = true;
@@ -1966,6 +1968,12 @@ final class SceneGraph {
                      int tileLeft2 = interactiveObject3.tileLeft;
                      tileHeightIndex = sourceTileHeightIndex;
                      SceneGraph sceneGraph = this;
+                     boolean dynamicUpperPlaneObject = tileHeightIndex > 0 && (interactiveObject3.hash >> 29 & 3) != 2;
+                     if (dynamicUpperPlaneObject) {
+                        objectOccluded = false;
+                        break testObjectOcclusion;
+                     }
+
                      if (tileLeft2 == tileRight2 && tileTop2 == tileBottom2) {
                         if (sceneGraph.isTileOccluded(tileHeightIndex, tileLeft2, tileTop2)) {
                            interactiveObjectCount = tileLeft2 << 7;
