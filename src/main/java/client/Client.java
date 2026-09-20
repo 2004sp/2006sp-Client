@@ -16228,8 +16228,8 @@ public class Client extends GameShell {
          }
 
          int logicalMenuHeight = 15 * this.menuActionCount + 22;
-         int visualMenuWidth = scaledUiDimension(menuWidthOrBoldFont);
-         int visualMenuHeight = scaledUiDimension(logicalMenuHeight);
+         int visualMenuWidth = screenMode != 0 ? scaledUiDimension(menuWidthOrBoldFont) : menuWidthOrBoldFont;
+         int visualMenuHeight = screenMode != 0 ? scaledUiDimension(logicalMenuHeight) : logicalMenuHeight;
          int requiredMenuWidth = Math.max(menuWidthOrBoldFont, visualMenuWidth);
          int requiredMenuHeight = Math.max(logicalMenuHeight, visualMenuHeight);
 
