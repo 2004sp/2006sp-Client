@@ -202,12 +202,29 @@ public final class ClientWindow extends Client implements ActionListener {
    }
    public final void enterFullscreenMode() {
       try {
+         // Fullscreen should use the whole display. The Swing menu bar is part
+         // of the frame content rather than the native title bar, so hide it
+         // explicitly before entering exclusive fullscreen.
+         menuBar.setVisible(false);
+         this.frame.revalidate();
          this.fullscreenManager = new FullscreenManager();
          this.fullscreenManager.enterFullscreen(Client.fullscreenDisplayMode, this.frame);
          super.fullscreenActive = true;
+         this.requestFocus();
       } catch (Exception exception) {
          exception.printStackTrace();
       }
+   }
+
+   public final void toggleFullscreenMenuBar() {
+      if (!super.fullscreenActive) {
+         return;
+      }
+
+      menuBar.setVisible(!menuBar.isVisible());
+      this.frame.revalidate();
+      this.frame.repaint();
+      this.requestFocus();
    }
    public final void restoreWindowedMode(int scalarArgument, int scalarArgument2) {
       try {
@@ -217,6 +234,10 @@ public final class ClientWindow extends Client implements ActionListener {
             }
             super.fullscreenActive = false;
          }
+
+         // The menu is hidden automatically in fullscreen. Always bring it
+         // back when returning to a normal window.
+         menuBar.setVisible(true);
 
          // Recreate a normal window peer only after exclusive fullscreen has
          // been released. This restores the normal maximize/minimize behavior.
