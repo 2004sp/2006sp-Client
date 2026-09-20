@@ -242,12 +242,12 @@ public final class ClientWindow extends Client implements ActionListener {
          // back when returning to a normal window.
          menuBar.setVisible(true);
 
-         // Recreate a normal decorated window peer only after exclusive
-         // fullscreen has been released. Fullscreen leaves the JFrame
-         // undecorated; restoring that flag is required for native maximize to
-         // work correctly again.
+         // Recreate the same Substance-decorated window used at startup.
+         // The look-and-feel title bar is drawn by the root pane and therefore
+         // requires an undecorated JFrame. Enabling native decoration here as
+         // well produces two title bars after leaving fullscreen.
          this.frame.dispose();
-         this.frame.setUndecorated(!showTitleBar);
+         this.frame.setUndecorated(true);
          this.frame.getRootPane().setWindowDecorationStyle(showTitleBar ? JRootPane.FRAME : JRootPane.NONE);
          this.frame.setTitle("Progressive 2006 singleplayer [v1.0]");
          this.frame.setExtendedState(JFrame.NORMAL);
