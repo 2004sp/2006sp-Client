@@ -24,6 +24,7 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JRootPane;
 import javax.swing.JPopupMenu;
 import javax.swing.UIManager;
 public final class ClientWindow extends Client implements ActionListener {
@@ -202,10 +203,12 @@ public final class ClientWindow extends Client implements ActionListener {
    }
    public final void enterFullscreenMode() {
       try {
-         // Fullscreen should use the whole display. The Swing menu bar is part
-         // of the frame content rather than the native title bar, so hide it
-         // explicitly before entering exclusive fullscreen.
+         // Fullscreen should be true borderless exclusive mode. Substance can
+         // draw its own title bar inside an undecorated JFrame, so disable both
+         // the native decoration and the root-pane decoration before entering.
          menuBar.setVisible(false);
+         this.frame.setUndecorated(true);
+         this.frame.getRootPane().setWindowDecorationStyle(JRootPane.NONE);
          this.frame.revalidate();
          this.fullscreenManager = new FullscreenManager();
          this.fullscreenManager.enterFullscreen(Client.fullscreenDisplayMode, this.frame);
@@ -239,9 +242,13 @@ public final class ClientWindow extends Client implements ActionListener {
          // back when returning to a normal window.
          menuBar.setVisible(true);
 
-         // Recreate a normal window peer only after exclusive fullscreen has
-         // been released. This restores the normal maximize/minimize behavior.
+         // Recreate a normal decorated window peer only after exclusive
+         // fullscreen has been released. Fullscreen leaves the JFrame
+         // undecorated; restoring that flag is required for native maximize to
+         // work correctly again.
          this.frame.dispose();
+         this.frame.setUndecorated(!showTitleBar);
+         this.frame.getRootPane().setWindowDecorationStyle(showTitleBar ? JRootPane.FRAME : JRootPane.NONE);
          this.frame.setTitle("Progressive 2006 singleplayer [v1.0]");
          this.frame.setExtendedState(JFrame.NORMAL);
          this.frame.setResizable(true);
