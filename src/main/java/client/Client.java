@@ -168,6 +168,8 @@ public class Client extends GameShell {
    private static int textureAnimationNoiseCounter;
    private int hintIconDrawType;
    public int openInterfaceId;
+   private int castleWarsCatapultAimX = 15;
+   private int castleWarsCatapultAimY = 15;
    private int cameraPositionX;
    private int cameraPositionZ;
    private int xCameraPos;
@@ -14897,6 +14899,68 @@ public class Client extends GameShell {
       return 16777215;
    }
 
+   private int parseCastleWarsCatapultAim(String text, int fallback) {
+      try {
+         int value = Integer.parseInt(text == null ? "" : text.trim());
+         return Math.max(0, Math.min(30, value));
+      } catch (Exception ignored) {
+         return fallback;
+      }
+   }
+
+   private void drawCastleWarsCatapultAimOverlay() {
+      if (Widget.widgets == null || 11169 >= Widget.widgets.length
+            || Widget.widgets[11169] == null) {
+         return;
+      }
+
+      Widget root = Widget.widgets[11169];
+      int baseX = 0;
+      int baseY = 0;
+      if (screenMode != 0 && shouldCenterInterface(root)) {
+         baseX = clientWidth / 2 - 256;
+         baseY = clientHeight / 2 - 167;
+      }
+
+      this.drawCastleWarsCatapultCoordinate(
+            11301, this.castleWarsCatapultAimX, baseX, baseY);
+      this.drawCastleWarsCatapultCoordinate(
+            11302, this.castleWarsCatapultAimY, baseX, baseY);
+   }
+
+   private void drawCastleWarsCatapultCoordinate(
+         int widgetId, int value, int baseX, int baseY) {
+      if (widgetId < 0 || widgetId >= Widget.widgets.length
+            || Widget.widgets[widgetId] == null) {
+         return;
+      }
+
+      int[] position = this.findCastleWarsWidgetPosition(
+            Widget.widgets[11169], widgetId, baseX, baseY, 0);
+      if (position == null) {
+         return;
+      }
+
+      Widget widget = Widget.widgets[widgetId];
+      int width = widget.width > 0 ? widget.width : 86;
+      int height = widget.height > 0 ? widget.height : 58;
+
+      // The cache contains static sample digits (12 / 34). Cover only the
+      // inside of their panel, keeping the native border, then draw the live
+      // server-authoritative coordinate over it.
+      int inset = 5;
+      int drawWidth = Math.max(24, Math.min(92, width) - inset * 2);
+      int drawHeight = Math.max(20, Math.min(62, height) - inset * 2);
+      Rasterizer2D.fillRectangleAlternate(
+            position[0] + inset, position[1] + inset,
+            drawWidth, drawHeight, 0x8b7b59);
+
+      String coordinate = value < 10 ? "0" + value : Integer.toString(value);
+      int textX = position[0] + inset + drawWidth / 2;
+      int textY = position[1] + inset + drawHeight / 2 + 5;
+      this.boldFont.textCenter(0x302719, coordinate, textY, textX);
+   }
+
    private int[] findCastleWarsWidgetPosition(int targetWidgetId) {
       if (Widget.widgets == null || 11344 >= Widget.widgets.length) {
          return null;
@@ -15193,6 +15257,9 @@ public class Client extends GameShell {
             this.drawInterface(0, screenMode == 0 ? 0 : clientWidth / 2 - 256, Widget.widgets[this.openInterfaceId], screenMode == 0 ? 0 : clientHeight / 2 - 167);
          } else {
             this.drawInterface(0, 0, Widget.widgets[this.openInterfaceId], 0);
+         }
+         if (this.openInterfaceId == 11169) {
+            this.drawCastleWarsCatapultAimOverlay();
          }
       }
 
@@ -17997,6 +18064,18 @@ public class Client extends GameShell {
             int inStream18;
             if ((inStream18 = this.inStream.readUnsignedShortAdded()) == 19045 || inStream18 == 19054 || inStream18 == 19063 || inStream18 == 19072 || inStream18 == 19081 || inStream18 == 19090) {
                text12 = wrapText(text12, 85, this.smallFont);
+            }
+
+            if (inStream18 == 11301) {
+               this.castleWarsCatapultAimX =
+                     this.parseCastleWarsCatapultAim(text12, this.castleWarsCatapultAimX);
+               Widget.updateCastleWarsCatapultAimMarker(
+                     this.castleWarsCatapultAimX, this.castleWarsCatapultAimY);
+            } else if (inStream18 == 11302) {
+               this.castleWarsCatapultAimY =
+                     this.parseCastleWarsCatapultAim(text12, this.castleWarsCatapultAimY);
+               Widget.updateCastleWarsCatapultAimMarker(
+                     this.castleWarsCatapultAimX, this.castleWarsCatapultAimY);
             }
 
             if (inStream18 == 5383) {
