@@ -44,17 +44,20 @@ final class GameFrame extends Frame {
    public final void restoreWindowedMode(int scalarArgument, int scalarArgument2) {
       try {
          if (this.gameShell.fullscreenActive) {
-            this.fullscreenManager = new FullscreenManager();
-            this.fullscreenManager.exitFullscreen();
+            if (this.fullscreenManager != null) {
+               this.fullscreenManager.exitFullscreen();
+            }
             this.gameShell.fullscreenActive = false;
          }
 
+         this.dispose();
+         this.setUndecorated(false);
          this.setTitle("Jagex");
          this.setResizable(false);
-         this.setVisible(true);
-         this.toFront();
          this.setSize(808, 628);
          this.setLocationRelativeTo(null);
+         this.setVisible(true);
+         this.toFront();
       } catch (Exception exception) {
          exception.printStackTrace();
       }
