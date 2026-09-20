@@ -50,22 +50,37 @@ final class Rasterizer3D extends Rasterizer2D {
       long textureWSlope,
       long textureWStep
    ) {
-      long max = 0L;
-      max = Math.max(max, Math.abs(textureU));
-      max = Math.max(max, Math.abs(textureUSlope));
-      max = Math.max(max, Math.abs(textureUStep));
-      max = Math.max(max, Math.abs(textureV));
-      max = Math.max(max, Math.abs(textureVSlope));
-      max = Math.max(max, Math.abs(textureVStep));
-      max = Math.max(max, Math.abs(textureW));
-      max = Math.max(max, Math.abs(textureWSlope));
-      max = Math.max(max, Math.abs(textureWStep));
+      // The texture coefficients are homogeneous, so they may all be shifted by
+      // the same amount to keep the legacy int rasterizer safe.  Do not scale
+      // every coefficient by the full viewport span though: the horizontal
+      // slopes advance once per eight pixels and the vertical steps advance
+      // once per scanline.  Treating the bases and slopes identically destroys
+      // too much fixed-point precision in resizable/fullscreen mode and makes
+      // textures collapse into streaks or transparent/black patches.
+      long horizontalSpan = Math.max(
+         Math.abs((long)viewportCenterX),
+         Math.abs((long)Rasterizer2D.bottomX - viewportCenterX)
+      ) + 8L;
+      long verticalSpan = Math.max(
+         Math.abs((long)viewportCenterY),
+         Math.abs((long)Rasterizer2D.bottomY - viewportCenterY)
+      ) + 1L;
 
-      long viewportSpan = Math.max(Rasterizer2D.width, Rasterizer2D.height);
-      long safeLimit = Integer.MAX_VALUE / Math.max(1L, viewportSpan + 8L);
+      long maxU = Math.abs(textureU)
+         + ((Math.abs(textureUSlope) + 7L) >> 3) * horizontalSpan
+         + Math.abs(textureUStep) * verticalSpan;
+      long maxV = Math.abs(textureV)
+         + ((Math.abs(textureVSlope) + 7L) >> 3) * horizontalSpan
+         + Math.abs(textureVStep) * verticalSpan;
+      long maxW = Math.abs(textureW)
+         + ((Math.abs(textureWSlope) + 7L) >> 3) * horizontalSpan
+         + Math.abs(textureWStep) * verticalSpan;
+
+      long max = Math.max(maxU, Math.max(maxV, maxW));
+      long safeLimit = Integer.MAX_VALUE - (1L << 20);
       int shift = 0;
       while (max > safeLimit) {
-         max >>= 1;
+         max = (max + 1L) >> 1;
          shift++;
       }
 
