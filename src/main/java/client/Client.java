@@ -1154,7 +1154,10 @@ public class Client extends GameShell {
    private boolean shouldScaleResizableUi() {
       return screenMode != 0 && clampUiScalePercent(uiScalePercent) != 100
          && clientWidth >= RESIZABLE_CHAT_UI_WIDTH
-         && clientHeight >= RESIZABLE_TAB_UI_HEIGHT;
+         && clientHeight >= RESIZABLE_TAB_UI_HEIGHT
+         && this.gameScreenImageProducer != null
+         && this.gameScreenImageProducer.getWidth() == clientWidth
+         && this.gameScreenImageProducer.getHeight() == clientHeight;
    }
 
    private void captureResizableUiBackground() {
@@ -12564,7 +12567,9 @@ public class Client extends GameShell {
       }
 
       client.getGameComponent();
-      client.gameScreenImageProducer = new BufferedImageGraphicsBuffer(512, 334);
+      int gameRasterWidth = screenMode == 0 ? 512 : clientWidth;
+      int gameRasterHeight = screenMode == 0 ? 334 : clientHeight;
+      client.gameScreenImageProducer = new BufferedImageGraphicsBuffer(gameRasterWidth, gameRasterHeight);
       calculateMinimapMasks();
       updateRasterizerBounds();
 
@@ -13023,7 +13028,20 @@ public class Client extends GameShell {
          pcmBacklogMicros = 0;
       }
    }
+   private void ensureGameScreenBufferMatchesViewport() {
+      if (screenMode == 0) {
+         return;
+      }
+
+      if (this.gameScreenImageProducer == null
+         || this.gameScreenImageProducer.getWidth() != clientWidth
+         || this.gameScreenImageProducer.getHeight() != clientHeight) {
+         this.rebuildViewportBuffers();
+      }
+   }
+
    private void drawGameScreen() {
+      this.ensureGameScreenBufferMatchesViewport();
       if (this.fullscreenInterfaceId == -1 || this.loadingStage != 2 && super.graphicsBuffer == null) {
          if (this.interfaceRedrawCounter != 0) {
             this.setupGameScreenBuffers();
