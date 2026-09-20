@@ -15,7 +15,7 @@ final class ClientResizeListener extends ComponentAdapter {
       // Do not call setSize() for every resize event. In particular, doing so
       // while the JFrame is transitioning to MAXIMIZED_BOTH can cancel the
       // native maximize operation after returning from fullscreen.
-      if ((this.clientWindow.frame.getExtendedState() & this.clientWindow.frame.MAXIMIZED_BOTH) != 0) {
+      if ((this.clientWindow.frame.getExtendedState() & java.awt.Frame.MAXIMIZED_BOTH) != 0) {
          return;
       }
 
