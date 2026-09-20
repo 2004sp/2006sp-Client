@@ -9,6 +9,7 @@ import java.awt.DisplayMode;
 import java.awt.Font;
 import java.awt.Frame;
 import java.awt.Graphics;
+import java.awt.Rectangle;
 import java.awt.event.MouseWheelEvent;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -891,11 +892,13 @@ public class Client extends GameShell {
 
       if (newScreenMode == 2) {
          screenMode = 1;
-         // Exclusive fullscreen is borderless and the top menu is hidden, so
-         // the game component can use the full display rather than reserving
-         // space for window chrome.
-         clientWidth = fullscreenDisplayMode.getWidth();
-         clientHeight = fullscreenDisplayMode.getHeight();
+         // Borderless windowed fullscreen uses the desktop bounds of the
+         // monitor containing the client. Do not switch the monitor's display
+         // mode; keeping the desktop mode is what allows focus to move to a
+         // second monitor without the game going black/minimizing.
+         Rectangle fullscreenBounds = gameFrame.getGraphicsConfiguration().getBounds();
+         clientWidth = fullscreenBounds.width;
+         clientHeight = fullscreenBounds.height;
          cameraZoom = 600;
          Client client = this;
          if (super.clientWindow != null) {
