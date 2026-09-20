@@ -14897,89 +14897,46 @@ public class Client extends GameShell {
       return 16777215;
    }
 
-   private void drawCastleWarsPixel(int x, int y, int color) {
-      Rasterizer2D.fillRectangle(1, y, x, color, 1);
-   }
-
-   private void drawCastleWarsStatusBadge(String status, int x, int y) {
-      int color = this.getCastleWarsStatusColor(status);
-      Rasterizer2D.fillRectangle(8, y, x, 0, 8);
-      Rasterizer2D.fillRectangle(6, y + 1, x + 1, color, 6);
-
-      if (color == 65280) {
-         this.drawCastleWarsPixel(x + 2, y + 4, 16777215);
-         this.drawCastleWarsPixel(x + 3, y + 5, 16777215);
-         this.drawCastleWarsPixel(x + 4, y + 4, 16777215);
-         this.drawCastleWarsPixel(x + 5, y + 3, 16777215);
-         this.drawCastleWarsPixel(x + 6, y + 2, 16777215);
-      } else if (color == 16724787) {
-         for (int i = 2; i <= 5; i++) {
-            this.drawCastleWarsPixel(x + i, y + i - 1, 16777215);
-            this.drawCastleWarsPixel(x + i, y + 6 - i, 16777215);
-         }
-      } else if (color == 16776960) {
-         Rasterizer2D.fillRectangle(2, y + 3, x + 3, 16777215, 2);
+   private Sprite getCastleWarsStatusSprite(int iconWidgetId, String status) {
+      if (Widget.widgets == null || iconWidgetId < 0 || iconWidgetId >= Widget.widgets.length) {
+         return null;
       }
+
+      Widget widget = Widget.widgets[iconWidgetId];
+      if (widget == null) {
+         return null;
+      }
+
+      String lower = status == null ? "" : status.toLowerCase();
+      boolean alternateState = lower.contains("taken")
+            || lower.contains("destroyed")
+            || lower.contains("collapsed")
+            || lower.contains("unlocked")
+            || lower.equals("health 0%");
+
+      Sprite sprite = alternateState ? widget.enabledSprite : widget.disabledSprite;
+      if (sprite == null) {
+         sprite = alternateState ? widget.disabledSprite : widget.enabledSprite;
+      }
+      return sprite;
    }
 
-   private void drawCastleWarsFlagIcon(boolean saradomin, String status, int x, int y) {
-      int teamColor = saradomin ? 3381759 : 13382451;
-      Rasterizer2D.fillRectangle(18, y, x, 0, 22);
-      Rasterizer2D.fillRectangle(16, y + 1, x + 1, 2368548, 20);
-      Rasterizer2D.fillRectangle(14, y + 2, x + 4, 11184810, 2);
-      Rasterizer2D.fillRectangle(7, y + 3, x + 6, teamColor, 11);
-      Rasterizer2D.fillRectangle(2, y + 8, x + 6, teamColor, 7);
-      Rasterizer2D.fillRectangle(2, y + 16, x + 2, 11184810, 7);
-      this.drawCastleWarsStatusBadge(status, x + 13, y + 10);
-   }
+   private int drawCastleWarsStatusIcon(int iconWidgetId, String status,
+                                        int x, int baselineY) {
+      Sprite sprite = this.getCastleWarsStatusSprite(iconWidgetId, status);
+      if (sprite == null) {
+         return 0;
+      }
 
-   private void drawCastleWarsDoorIcon(String status, int x, int y) {
-      Rasterizer2D.fillRectangle(18, y, x, 0, 22);
-      Rasterizer2D.fillRectangle(16, y + 1, x + 1, 2368548, 20);
-      Rasterizer2D.fillRectangle(13, y + 3, x + 5, 7554840, 12);
-      Rasterizer2D.fillRectangle(11, y + 4, x + 6, 3618615, 10);
-      Rasterizer2D.fillRectangle(2, y + 10, x + 13, 13421772, 2);
-      this.drawCastleWarsStatusBadge(status, x + 13, y + 10);
-   }
-
-   private void drawCastleWarsTunnelIcon(String status, int x, int y) {
-      Rasterizer2D.fillRectangle(18, y, x, 0, 22);
-      Rasterizer2D.fillRectangle(16, y + 1, x + 1, 2368548, 20);
-      Rasterizer2D.fillRectangle(3, y + 5, x + 4, 7368816, 14);
-      Rasterizer2D.fillRectangle(8, y + 8, x + 4, 7368816, 3);
-      Rasterizer2D.fillRectangle(8, y + 8, x + 15, 7368816, 3);
-      Rasterizer2D.fillRectangle(8, y + 8, x + 7, 657930, 8);
-      this.drawCastleWarsStatusBadge(status, x + 13, y + 10);
-   }
-
-   private void drawCastleWarsCatapultIcon(String status, int x, int y) {
-      Rasterizer2D.fillRectangle(18, y, x, 0, 22);
-      Rasterizer2D.fillRectangle(16, y + 1, x + 1, 2368548, 20);
-      Rasterizer2D.fillRectangle(3, y + 12, x + 4, 7554840, 13);
-      Rasterizer2D.fillRectangle(2, y + 15, x + 5, 11184810, 4);
-      Rasterizer2D.fillRectangle(2, y + 15, x + 13, 11184810, 4);
-      Rasterizer2D.fillRectangle(2, y + 5, x + 10, 7554840, 2);
-      Rasterizer2D.fillRectangle(8, y + 4, x + 11, 7554840, 2);
-      Rasterizer2D.fillRectangle(2, y + 3, x + 9, 13421772, 4);
-      this.drawCastleWarsStatusBadge(status, x + 13, y + 10);
+      sprite.drawSprite(x, baselineY - sprite.spriteHeight + 4);
+      return sprite.spriteWidth;
    }
 
    private void drawCastleWarsStatusLine(String label, int widgetId,
-                                         int iconType, boolean saradomin,
-                                         int x, int y) {
+                                         int iconWidgetId, int x, int y) {
       String status = this.getCastleWarsInterfaceText(widgetId);
-      int iconY = y - 14;
-      if (iconType == 0) {
-         this.drawCastleWarsFlagIcon(saradomin, status, x, iconY);
-      } else if (iconType == 1) {
-         this.drawCastleWarsDoorIcon(status, x, iconY);
-      } else if (iconType == 2) {
-         this.drawCastleWarsTunnelIcon(status, x, iconY);
-      } else {
-         this.drawCastleWarsCatapultIcon(status, x, iconY);
-      }
-
-      int textX = x + 28;
+      int iconWidth = this.drawCastleWarsStatusIcon(iconWidgetId, status, x, y);
+      int textX = x + Math.max(24, iconWidth) + 8;
       this.richPlainFont.drawBasicString(label + ":", textX, y, 16777215, 0);
       int statusX = textX + this.richPlainFont.getTextWidth(label + ":") + 6;
       this.richBoldFont.drawBasicString(status, statusX, y,
@@ -15003,13 +14960,13 @@ public class Client extends GameShell {
       // viewport without depending on the cache-authored child coordinates.
       int statusX = 10;
       int statusY = Math.max(120, overlayHeight / 2 - 100);
-      this.drawCastleWarsStatusLine("Zamorak flag", 11349, 0, false, statusX, statusY);
-      this.drawCastleWarsStatusLine("Saradomin flag", 11350, 0, true, statusX, statusY + 20);
-      this.drawCastleWarsStatusLine("Main door", 11352, 1, false, statusX, statusY + 50);
-      this.drawCastleWarsStatusLine("Side door", 11356, 1, false, statusX, statusY + 70);
-      this.drawCastleWarsStatusLine("Tunnel 1", 11358, 2, false, statusX, statusY + 90);
-      this.drawCastleWarsStatusLine("Tunnel 2", 11360, 2, false, statusX, statusY + 110);
-      this.drawCastleWarsStatusLine("Catapult", 11362, 3, false, statusX, statusY + 130);
+      this.drawCastleWarsStatusLine("Zamorak flag", 11349, 11347, statusX, statusY);
+      this.drawCastleWarsStatusLine("Saradomin flag", 11350, 11348, statusX, statusY + 20);
+      this.drawCastleWarsStatusLine("Main door", 11352, 11351, statusX, statusY + 50);
+      this.drawCastleWarsStatusLine("Side door", 11356, 11355, statusX, statusY + 70);
+      this.drawCastleWarsStatusLine("Tunnel 1", 11358, 11357, statusX, statusY + 90);
+      this.drawCastleWarsStatusLine("Tunnel 2", 11360, 11359, statusX, statusY + 110);
+      this.drawCastleWarsStatusLine("Catapult", 11362, 11361, statusX, statusY + 130);
 
       // Keep the clock inside the game viewport. In resizable mode it stays
       // left of the tab panel; in fixed mode it sits near the viewport's right edge.
