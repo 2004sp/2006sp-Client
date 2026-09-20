@@ -13487,16 +13487,20 @@ public class Client extends GameShell {
             client.yCameraPos = yCameraPos;
          }
 
-         if (this.loadingStage == 2) {
+         if (this.loadingStage == 2 && screenMode == 0) {
+            // Resizable/fullscreen already renders and scales the minimap in
+            // draw3dScreen(). Drawing it a second time here writes an unscaled
+            // minimap back into gameScreenImageProducer after the composed
+            // frame has been copied out. When a region packet then switches
+            // loadingStage to 1, the loading-message path reuses that buffer,
+            // making the minimap visibly snap back to 100% for one frame.
             this.drawMinimap();
-            if (screenMode == 0) {
-               if (gameframeVersion == 474 && orbsEnabled) {
-                  this.minimapImageProducer.drawToBuffer(4, this.frameBuffer, 516);
-               } else if (gameframeVersion == 474 && !orbsEnabled) {
-                  this.minimapImageProducer.drawToBuffer(4, this.frameBuffer, 545);
-               } else {
-                  this.minimapImageProducer.drawToBuffer(4, this.frameBuffer, 550);
-               }
+            if (gameframeVersion == 474 && orbsEnabled) {
+               this.minimapImageProducer.drawToBuffer(4, this.frameBuffer, 516);
+            } else if (gameframeVersion == 474 && !orbsEnabled) {
+               this.minimapImageProducer.drawToBuffer(4, this.frameBuffer, 545);
+            } else {
+               this.minimapImageProducer.drawToBuffer(4, this.frameBuffer, 550);
             }
          }
 
