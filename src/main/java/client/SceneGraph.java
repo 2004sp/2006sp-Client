@@ -1968,8 +1968,15 @@ final class SceneGraph {
                      int tileLeft2 = interactiveObject3.tileLeft;
                      tileHeightIndex = sourceTileHeightIndex;
                      SceneGraph sceneGraph = this;
-                     boolean dynamicUpperPlaneObject = tileHeightIndex > 0 && (interactiveObject3.hash >> 29 & 3) != 2;
-                     if (dynamicUpperPlaneObject) {
+                     // Upper-floor floor tiles are deliberately kept visible because
+                     // recovered culling clusters can become over-aggressive around tall
+                     // castle/tower walls. Interactive objects on those same tiles must
+                     // follow the same rule or scenery (dummies, carts, furniture, etc.)
+                     // pops out while the floor beneath it remains visible. Keep wall and
+                     // wall-decoration occlusion intact; only interactive objects bypass
+                     // cluster occlusion on source planes above ground.
+                     boolean upperPlaneInteractiveObject = tileHeightIndex > 0;
+                     if (upperPlaneInteractiveObject) {
                         objectOccluded = false;
                         break testObjectOcclusion;
                      }
