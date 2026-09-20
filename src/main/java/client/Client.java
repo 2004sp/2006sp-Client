@@ -1276,7 +1276,7 @@ public class Client extends GameShell {
                itemSearchLoop:
                for (int loopIndex2 = 0; loopIndex2 < ItemDefinition.getDefinitionCount(); loopIndex2++) {
                   ItemDefinition itemDefinition;
-                  if ((loopIndex2 < 7956 || loopIndex2 > 8118) && (itemDefinition = ItemDefinition.lookup(loopIndex2)) != null && itemDefinition.searchable) {
+                  if ((loopIndex2 < 7956 || loopIndex2 > 8118) && (itemDefinition = ItemDefinition.lookup(loopIndex2)) != null && (itemDefinition.searchable || loopIndex2 == 14484)) {
                      text = itemDefinition.name.toLowerCase();
 
                      for (int localTextIndex = 0; localTextIndex < loopIndex; localTextIndex++) {
@@ -11556,9 +11556,17 @@ public class Client extends GameShell {
          } else {
             for (int atPlayerActionIndex = 4; atPlayerActionIndex >= 0; atPlayerActionIndex--) {
                if (this.atPlayerActions[atPlayerActionIndex] != null) {
+                  boolean attackAction = this.atPlayerActions[atPlayerActionIndex].equalsIgnoreCase("attack");
+                  if (attackAction
+                     && localPlayer.team != 0
+                     && player.team != 0
+                     && localPlayer.team == player.team) {
+                     continue;
+                  }
+
                   this.menuActionNames[this.menuActionCount] = this.atPlayerActions[atPlayerActionIndex] + " @whi@" + text;
                   short menuActionId = 0;
-                  if (this.atPlayerActions[atPlayerActionIndex].equalsIgnoreCase("attack")) {
+                  if (attackAction) {
                      if (player.combatLevel > localPlayer.combatLevel) {
                         menuActionId = 2000;
                      }
@@ -14847,6 +14855,224 @@ public class Client extends GameShell {
          return clientWidth >= 900 && clientHeight >= 650 ? true : widget != null && (widget.spriteXOffset != -1 || widget.spriteYOffset != -1);
       }
    }
+   private String getCastleWarsInterfaceText(int widgetId) {
+      if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
+            || Widget.widgets[widgetId] == null || Widget.widgets[widgetId].message == null) {
+         return "";
+      }
+      return Widget.widgets[widgetId].message;
+   }
+
+   private int getCastleWarsStatusColor(String status) {
+      if (status == null) {
+         return 16777215;
+      }
+
+      String lower = status.toLowerCase();
+      if (lower.contains("safe") || lower.contains("cleared")
+            || lower.contains("operational") || lower.contains("locked")) {
+         return 65280;
+      }
+      if (lower.contains("taken") || lower.contains("destroyed")
+            || lower.contains("collapsed") || lower.equals("health 0%")) {
+         return 16724787;
+      }
+      if (lower.contains("dropped") || lower.contains("unlocked")) {
+         return 16776960;
+      }
+      if (lower.startsWith("health ")) {
+         try {
+            int percentIndex = lower.indexOf('%');
+            int health = Integer.parseInt(lower.substring(7, percentIndex).trim());
+            if (health <= 25) {
+               return 16724787;
+            }
+            if (health <= 60) {
+               return 16776960;
+            }
+            return 65280;
+         } catch (Exception ignored) {
+         }
+      }
+      return 16777215;
+   }
+
+   private int[] findCastleWarsWidgetPosition(int targetWidgetId) {
+      if (Widget.widgets == null || 11344 >= Widget.widgets.length) {
+         return null;
+      }
+      return this.findCastleWarsWidgetPosition(
+            Widget.widgets[11344], targetWidgetId, 0, 0, 0);
+   }
+
+   private int[] findCastleWarsWidgetPosition(Widget parent, int targetWidgetId,
+                                               int baseX, int baseY, int depth) {
+      if (parent == null || parent.childIds == null
+            || parent.childX == null || parent.childY == null || depth > 12) {
+         return null;
+      }
+
+      for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
+         int childId = parent.childIds[childIndex];
+         if (childId < 0 || childId >= Widget.widgets.length) {
+            continue;
+         }
+
+         Widget child = Widget.widgets[childId];
+         if (child == null) {
+            continue;
+         }
+
+         int childX = baseX + parent.childX[childIndex] + child.runtimeXOffset;
+         int childY = baseY + parent.childY[childIndex]
+               - parent.scrollPosition + child.runtimeYOffset;
+         if (childId == targetWidgetId) {
+            return new int[]{childX, childY};
+         }
+
+         if (child.type == 0) {
+            int[] nested = this.findCastleWarsWidgetPosition(
+                  child, targetWidgetId, childX, childY, depth + 1);
+            if (nested != null) {
+               return nested;
+            }
+         }
+      }
+      return null;
+   }
+
+   private void drawCastleWarsNativeIconLayer(int statusX, int statusY) {
+      if (Widget.widgets == null || 11344 >= Widget.widgets.length
+            || 11349 >= Widget.widgets.length) {
+         return;
+      }
+
+      Widget root = Widget.widgets[11344];
+      Widget anchorText = Widget.widgets[11349];
+      int[] anchorPosition = this.findCastleWarsWidgetPosition(11349);
+      if (root == null || anchorText == null || anchorPosition == null) {
+         return;
+      }
+
+      int lineHeight = anchorText.font == null ? 12 : anchorText.font.lineHeight;
+      int desiredTextX = statusX + 32;
+      int nativeTextBaselineY = anchorPosition[1] + lineHeight;
+      int drawX = desiredTextX - anchorPosition[0];
+      int drawY = statusY - nativeTextBaselineY;
+
+      // Draw the original cache-authored Castle Wars graphics, but suppress
+      // its text because the relocated overlay draws the status strings itself.
+      // The native widgets still evaluate configs 377/378, so the cache chooses
+      // the proper Safe/Taken/Dropped, door, tunnel and catapult artwork.
+      int[] textWidgetIds = new int[]{
+            11345, 11346, 11349, 11350, 11352, 11353,
+            11356, 11358, 11360, 11362, 11363, 11364, 11365, 11366
+      };
+      String[] messages = new String[textWidgetIds.length];
+      String[] secondaryTexts = new String[textWidgetIds.length];
+
+      for (int i = 0; i < textWidgetIds.length; i++) {
+         int widgetId = textWidgetIds[i];
+         if (widgetId >= 0 && widgetId < Widget.widgets.length
+               && Widget.widgets[widgetId] != null) {
+            messages[i] = Widget.widgets[widgetId].message;
+            secondaryTexts[i] = Widget.widgets[widgetId].secondaryText;
+            Widget.widgets[widgetId].message = "";
+            Widget.widgets[widgetId].secondaryText = "";
+         }
+      }
+
+      try {
+         this.drawInterface(0, drawX, root, drawY);
+      } finally {
+         for (int i = 0; i < textWidgetIds.length; i++) {
+            int widgetId = textWidgetIds[i];
+            if (widgetId >= 0 && widgetId < Widget.widgets.length
+                  && Widget.widgets[widgetId] != null) {
+               Widget.widgets[widgetId].message = messages[i];
+               Widget.widgets[widgetId].secondaryText = secondaryTexts[i];
+            }
+         }
+      }
+   }
+
+   private int getCastleWarsRelocatedTextBaselineY(int widgetId,
+                                                   int anchorBaselineY) {
+      if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
+            || 11349 >= Widget.widgets.length) {
+         return anchorBaselineY;
+      }
+
+      Widget widget = Widget.widgets[widgetId];
+      Widget anchor = Widget.widgets[11349];
+      int[] widgetPosition = this.findCastleWarsWidgetPosition(widgetId);
+      int[] anchorPosition = this.findCastleWarsWidgetPosition(11349);
+      if (widget == null || anchor == null
+            || widgetPosition == null || anchorPosition == null) {
+         return anchorBaselineY;
+      }
+
+      int widgetLineHeight = widget.font == null ? 12 : widget.font.lineHeight;
+      int anchorLineHeight = anchor.font == null ? 12 : anchor.font.lineHeight;
+      int nativeWidgetBaselineY = widgetPosition[1] + widgetLineHeight;
+      int nativeAnchorBaselineY = anchorPosition[1] + anchorLineHeight;
+      return anchorBaselineY + nativeWidgetBaselineY - nativeAnchorBaselineY;
+   }
+
+   private void drawCastleWarsStatusLine(String label, int widgetId,
+                                         int x, int y) {
+      String status = this.getCastleWarsInterfaceText(widgetId);
+      int textX = x + 32;
+      this.richPlainFont.drawBasicString(label + ":", textX, y, 16777215, 0);
+      int statusTextX = textX + this.richPlainFont.getTextWidth(label + ":") + 6;
+      this.richBoldFont.drawBasicString(status, statusTextX, y,
+            this.getCastleWarsStatusColor(status), 0);
+   }
+
+   private void drawCastleWarsGameOverlay() {
+      String zamorakScore = this.getCastleWarsInterfaceText(11345);
+      String saradominScore = this.getCastleWarsInterfaceText(11346);
+      String timer = this.getCastleWarsInterfaceText(11353);
+      int overlayWidth = screenMode == 0 ? 512 : clientWidth;
+      int overlayHeight = screenMode == 0 ? 334 : clientHeight;
+
+      // Keep the score high and centered inside the actual game viewport in
+      // both fixed and resizable modes.
+      this.richBoldFont.drawCenteredString(
+            zamorakScore + "     " + saradominScore,
+            overlayWidth / 2, 32, 16777215, 0);
+
+      // Keep the team/objective state together at the left edge of the game
+      // viewport without depending on the cache-authored child coordinates.
+      int statusX = 10;
+      int statusY = Math.max(120, overlayHeight / 2 - 100);
+      this.drawCastleWarsNativeIconLayer(statusX, statusY);
+      this.drawCastleWarsStatusLine("Zamorak flag", 11349, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11349, statusY));
+      this.drawCastleWarsStatusLine("Saradomin flag", 11350, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11350, statusY));
+      this.drawCastleWarsStatusLine("Main door", 11352, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11352, statusY));
+      this.drawCastleWarsStatusLine("Side door", 11356, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11356, statusY));
+      this.drawCastleWarsStatusLine("Tunnel 1", 11358, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11358, statusY));
+      this.drawCastleWarsStatusLine("Tunnel 2", 11360, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11360, statusY));
+      this.drawCastleWarsStatusLine("Catapult", 11362, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11362, statusY));
+
+      // Keep the clock inside the game viewport. In resizable mode it stays
+      // left of the tab panel; in fixed mode it sits near the viewport's right edge.
+      int timerX = screenMode == 0
+            ? overlayWidth - 42
+            : (this.resizableTabPanelVisible ? overlayWidth - 250 : overlayWidth - 55);
+      int timerY = screenMode == 0
+            ? 50
+            : (this.resizableTabPanelVisible ? Math.max(80, overlayHeight - 290) : 50);
+      this.richBoldFont.drawCenteredString(timer, timerX, timerY, 16777215, 0);
+   }
+
    private void draw3dScreen() {
       Client client = this;
       if (this.splitpublicChat != 0) {
@@ -14945,7 +15171,13 @@ public class Client extends GameShell {
 
          this.animateInterface(this.animationCycleDelta, this.openWalkableInterface);
          this.centeredWalkableInterface = false;
-         if (screenMode != 0 && shouldCenterInterface(Widget.widgets[this.openWalkableInterface])) {
+         if (this.openWalkableInterface == 11344) {
+            this.drawCastleWarsGameOverlay();
+         } else if (screenMode != 0 && this.openWalkableInterface == 6673) {
+            int left = clientWidth / 2 - 256;
+            this.centeredWalkableInterface = true;
+            this.drawInterface(0, left, Widget.widgets[this.openWalkableInterface], 20);
+         } else if (screenMode != 0 && shouldCenterInterface(Widget.widgets[this.openWalkableInterface])) {
             int top = screenMode == 0 ? 0 : clientWidth / 2 - 256;
             int screenMode2 = screenMode == 0 ? 0 : clientHeight / 2 - 167;
             this.centeredWalkableInterface = true;
@@ -15868,8 +16100,15 @@ public class Client extends GameShell {
                   flag2 = true;
                }
 
+               boolean castleWarsPlayer = localPlayer.castleWarsTeam && player.castleWarsTeam;
                if (!localFlag) {
-                  if (flag) {
+                  if (castleWarsPlayer) {
+                     if (localPlayer.team == player.team) {
+                        this.drawMinimapIcon(this.mapDotFriend, scalar, localWorldX);
+                     } else {
+                        this.drawMinimapIcon(this.mapDotNPC, scalar, localWorldX);
+                     }
+                  } else if (flag) {
                      this.drawMinimapIcon(this.mapDotPlayer, scalar, localWorldX);
                   } else if (flag2) {
                      this.drawMinimapIcon(this.mapDotFriend, scalar, localWorldX);
@@ -16761,6 +17000,19 @@ public class Client extends GameShell {
 
          if (widgetIndex2 < this.pktSize) {
             return false;
+         }
+
+         if (this.pktSize > this.inStream.buffer.length) {
+            int newCapacity = Math.max(1, this.inStream.buffer.length);
+            while (newCapacity < this.pktSize) {
+               int doubled = newCapacity << 1;
+               if (doubled <= newCapacity) {
+                  newCapacity = this.pktSize;
+                  break;
+               }
+               newCapacity = doubled;
+            }
+            this.inStream.buffer = new byte[newCapacity];
          }
 
          this.inStream.currentPosition = 0;

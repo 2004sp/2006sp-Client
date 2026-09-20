@@ -274,6 +274,8 @@ public final class Widget {
                widget.childIds[childIdIndex] = buffer.readUnsignedShort();
                widget.childX[childIdIndex] = buffer.readShort();
                widget.childY[childIdIndex] = buffer.readShort();
+               configureCastleWarsWaitingInterface(newFont);
+
                if (Client.getClient().graphicsEnabled) {
                   boolean flag = false;
                   if (widget.parentId == 638) {
@@ -568,6 +570,9 @@ public final class Widget {
          }
       }
 
+      configureCastleWarsCatapultInterface();
+      configureCastleWarsManualInterface();
+
       if (Client.getClient().graphicsEnabled) {
          QuestEntry.categorizeQuests();
          QuestEntry.sortAndLayoutQuests();
@@ -589,6 +594,248 @@ public final class Widget {
 
       spriteCache = null;
    }
+   private static void configureCastleWarsManualInterface() {
+      // Cache 377's Castle Wars manual uses the standard book interface.
+      // The arrow sprites are present, but this cache has them decoded without
+      // an actionable option type, so clicking them never sends packet 185.
+      makeInterfaceButton(840, "Previous Page");
+      makeInterfaceButton(842, "Next Page");
+   }
+
+   private static void makeInterfaceButton(int widgetId, String tooltip) {
+      if (widgets == null || widgetId < 0 || widgetId >= widgets.length
+            || widgets[widgetId] == null) {
+         return;
+      }
+
+      Widget widget = widgets[widgetId];
+      widget.optionType = 1;
+      widget.tooltip = tooltip;
+   }
+
+   private static void configureCastleWarsCatapultInterface() {
+      final int rootId = 11169;
+      final int closeId = 11259;
+      final int fireId = 11328;
+
+      if (widgets == null || rootId >= widgets.length || widgets[rootId] == null) {
+         return;
+      }
+
+      makeCastleWarsCatapultButton(closeId, "Close Window");
+      makeCastleWarsCatapultButton(fireId, "Fire Catapult");
+
+      java.util.ArrayList<Widget> controls = new java.util.ArrayList<Widget>();
+      for (int id = 0; id < widgets.length; id++) {
+         Widget candidate = widgets[id];
+         if (candidate == null || candidate.id == closeId || candidate.id == fireId
+               || !isCastleWarsCatapultDescendant(candidate, rootId)
+               || !isCastleWarsCatapultArrowCandidate(candidate)) {
+            continue;
+         }
+         controls.add(candidate);
+      }
+
+      if (controls.size() < 4) {
+         return;
+      }
+
+      java.util.ArrayList<Widget> verticalCandidates = new java.util.ArrayList<Widget>();
+      java.util.ArrayList<Widget> horizontalCandidates = new java.util.ArrayList<Widget>();
+
+      for (Widget candidate : controls) {
+         int x = castleWarsCatapultAbsoluteCoordinate(candidate, rootId, true);
+         int y = castleWarsCatapultAbsoluteCoordinate(candidate, rootId, false);
+         if (x == Integer.MIN_VALUE || y == Integer.MIN_VALUE) {
+            continue;
+         }
+
+         if (x >= 330 && y >= 15 && y <= 145) {
+            verticalCandidates.add(candidate);
+         }
+         if (x >= 230 && y >= 145 && y <= 245) {
+            horizontalCandidates.add(candidate);
+         }
+      }
+
+      Widget[] vertical = selectCastleWarsCatapultPair(
+            verticalCandidates.size() >= 2 ? verticalCandidates : controls,
+            rootId, true);
+      if (vertical == null) {
+         return;
+      }
+
+      Widget up = castleWarsCatapultAbsoluteCoordinate(vertical[0], rootId, false)
+            <= castleWarsCatapultAbsoluteCoordinate(vertical[1], rootId, false)
+            ? vertical[0] : vertical[1];
+      Widget down = up == vertical[0] ? vertical[1] : vertical[0];
+
+      java.util.ArrayList<Widget> horizontalPool = horizontalCandidates.size() >= 2
+            ? horizontalCandidates : controls;
+      java.util.ArrayList<Widget> withoutVertical = new java.util.ArrayList<Widget>();
+      for (Widget candidate : horizontalPool) {
+         if (candidate != up && candidate != down) {
+            withoutVertical.add(candidate);
+         }
+      }
+
+      Widget[] horizontal = selectCastleWarsCatapultPair(withoutVertical, rootId, false);
+      if (horizontal == null) {
+         return;
+      }
+
+      Widget left = castleWarsCatapultAbsoluteCoordinate(horizontal[0], rootId, true)
+            <= castleWarsCatapultAbsoluteCoordinate(horizontal[1], rootId, true)
+            ? horizontal[0] : horizontal[1];
+      Widget right = left == horizontal[0] ? horizontal[1] : horizontal[0];
+
+      makeCastleWarsCatapultButton(up.id, "Aim up");
+      makeCastleWarsCatapultButton(down.id, "Aim down");
+      makeCastleWarsCatapultButton(left.id, "Aim left");
+      makeCastleWarsCatapultButton(right.id, "Aim right");
+   }
+
+   private static void makeCastleWarsCatapultButton(int widgetId, String tooltip) {
+      makeInterfaceButton(widgetId, tooltip);
+   }
+
+   private static boolean isCastleWarsCatapultArrowCandidate(Widget widget) {
+      if (widget == null
+            || (widget.type != 5 && widget.type != 17
+            && widget.type != 18 && widget.type != 19)) {
+         return false;
+      }
+      return widget.width > 0 && widget.height > 0
+            && widget.width <= 64 && widget.height <= 64;
+   }
+
+   private static boolean isCastleWarsCatapultDescendant(Widget widget, int rootId) {
+      if (widget == null) {
+         return false;
+      }
+      int currentId = widget.id;
+      for (int depth = 0; depth < 16 && currentId != rootId; depth++) {
+         Widget current = currentId >= 0 && currentId < widgets.length
+               ? widgets[currentId] : null;
+         if (current == null || current.parentId < 0 || current.parentId == currentId) {
+            return false;
+         }
+         currentId = current.parentId;
+      }
+      return currentId == rootId;
+   }
+
+   private static Widget[] selectCastleWarsCatapultPair(
+         java.util.ArrayList<Widget> controls, int rootId, boolean useX) {
+      if (controls == null || controls.size() < 2) {
+         return null;
+      }
+
+      Widget first = null;
+      Widget second = null;
+      int firstValue = Integer.MIN_VALUE;
+      int secondValue = Integer.MIN_VALUE;
+
+      for (Widget candidate : controls) {
+         int value = castleWarsCatapultAbsoluteCoordinate(candidate, rootId, useX);
+         if (value == Integer.MIN_VALUE) {
+            continue;
+         }
+         if (first == null || value > firstValue) {
+            second = first;
+            secondValue = firstValue;
+            first = candidate;
+            firstValue = value;
+         } else if (candidate != first && (second == null || value > secondValue)) {
+            second = candidate;
+            secondValue = value;
+         }
+      }
+
+      return first == null || second == null ? null : new Widget[]{first, second};
+   }
+
+   private static int castleWarsCatapultAbsoluteCoordinate(
+         Widget widget, int rootId, boolean xAxis) {
+      if (widget == null) {
+         return Integer.MIN_VALUE;
+      }
+
+      int coordinate = 0;
+      int currentId = widget.id;
+      for (int depth = 0; depth < 16 && currentId != rootId; depth++) {
+         Widget current = currentId >= 0 && currentId < widgets.length
+               ? widgets[currentId] : null;
+         if (current == null || current.parentId < 0 || current.parentId >= widgets.length) {
+            return Integer.MIN_VALUE;
+         }
+
+         Widget parent = widgets[current.parentId];
+         if (parent == null || parent.childIds == null) {
+            return Integer.MIN_VALUE;
+         }
+
+         int childCoordinate = Integer.MIN_VALUE;
+         for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
+            if (parent.childIds[childIndex] == currentId) {
+               childCoordinate = xAxis
+                     ? parent.childX[childIndex] : parent.childY[childIndex];
+               break;
+            }
+         }
+         if (childCoordinate == Integer.MIN_VALUE) {
+            return Integer.MIN_VALUE;
+         }
+
+         coordinate += childCoordinate;
+         currentId = current.parentId;
+      }
+
+      return currentId == rootId ? coordinate : Integer.MIN_VALUE;
+   }
+
+   private static void configureCastleWarsWaitingInterface(RichTextFont[] fonts) {
+      if (widgets == null || fonts == null || fonts.length < 3) {
+         return;
+      }
+
+      final int parentId = 6673;
+      final int timerId = 6570;
+      final int zamorakCountId = 6572;
+      final int saradominCountId = 6664;
+
+      if (timerId < widgets.length && widgets[timerId] != null) {
+         Widget timer = widgets[timerId];
+         timer.font = fonts[2];
+         timer.textAlignment = 1;
+         timer.textShadow = true;
+         timer.width = 512;
+      }
+
+      if (zamorakCountId < widgets.length && widgets[zamorakCountId] != null) {
+         widgets[zamorakCountId].message = "";
+      }
+      if (saradominCountId < widgets.length && widgets[saradominCountId] != null) {
+         widgets[saradominCountId].message = "";
+      }
+
+      if (parentId < widgets.length && widgets[parentId] != null) {
+         Widget parent = widgets[parentId];
+         if (parent.childIds != null) {
+            for (int i = 0; i < parent.childIds.length; i++) {
+               if (parent.childIds[i] == timerId) {
+                  parent.childX[i] = 0;
+                  parent.childY[i] = 24;
+               } else if (parent.childIds[i] == zamorakCountId
+                     || parent.childIds[i] == saradominCountId) {
+                  parent.childX[i] = -1000;
+                  parent.childY[i] = -1000;
+               }
+            }
+         }
+      }
+   }
+
    private static Model getMediaModel(int scalarArgument, int modelHeaderIndex) {
       Model model;
       if ((model = (Model)modelCache.get((scalarArgument << 16) + modelHeaderIndex)) != null) {

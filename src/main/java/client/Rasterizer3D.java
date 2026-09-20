@@ -39,6 +39,39 @@ final class Rasterizer3D extends Rasterizer2D {
          COSINE[angleIndex] = (int)(65536.0 * Math.cos(angleIndex * 0.0030679615));
       }
    }
+   private static int textureCoefficientNormalizationShift(
+      long textureU,
+      long textureUSlope,
+      long textureUStep,
+      long textureV,
+      long textureVSlope,
+      long textureVStep,
+      long textureW,
+      long textureWSlope,
+      long textureWStep
+   ) {
+      long max = 0L;
+      max = Math.max(max, Math.abs(textureU));
+      max = Math.max(max, Math.abs(textureUSlope));
+      max = Math.max(max, Math.abs(textureUStep));
+      max = Math.max(max, Math.abs(textureV));
+      max = Math.max(max, Math.abs(textureVSlope));
+      max = Math.max(max, Math.abs(textureVStep));
+      max = Math.max(max, Math.abs(textureW));
+      max = Math.max(max, Math.abs(textureWSlope));
+      max = Math.max(max, Math.abs(textureWStep));
+
+      long viewportSpan = Math.max(Rasterizer2D.width, Rasterizer2D.height);
+      long safeLimit = Integer.MAX_VALUE / Math.max(1L, viewportSpan + 8L);
+      int shift = 0;
+      while (max > safeLimit) {
+         max >>= 1;
+         shift++;
+      }
+
+      return shift;
+   }
+
    public static void drawDepthTriangle(int y0, int y1, int y2, int x0, int x1, int x2, float depth0, float depth1, float depth2) {
       int ySlope10 = 0;
       if (x1 != x0) {
@@ -1409,15 +1442,35 @@ final class Rasterizer3D extends Rasterizer2D {
             textureId = 14;
          }
 
-         int textureU = textureX2 * textureY0 - textureY2 * textureX0 << textureId;
-         int textureUSlope = textureY2 * textureZ0 - textureZ2 * textureY0 << 8;
-         int scalar = textureZ2 * textureX0 - textureX2 * textureZ0 << 5;
-         int textureV = textureX1 * textureY0 - textureY1 * textureX0 << textureId;
-         textureY0 = textureY1 * textureZ0 - textureZ1 * textureY0 << 8;
-         textureX0 = textureZ1 * textureX0 - textureX1 * textureZ0 << 5;
-         textureZ0 = textureY1 * textureX2 - textureX1 * textureY2 << textureId;
-         textureY1 = textureZ1 * textureY2 - textureY1 * textureZ2 << 8;
-         textureX1 = textureX1 * textureZ2 - textureZ1 * textureX2 << 5;
+         long textureULong = ((long)textureX2 * textureY0 - (long)textureY2 * textureX0) << textureId;
+         long textureUSlopeLong = ((long)textureY2 * textureZ0 - (long)textureZ2 * textureY0) << 8;
+         long scalarLong = ((long)textureZ2 * textureX0 - (long)textureX2 * textureZ0) << 5;
+         long textureVLong = ((long)textureX1 * textureY0 - (long)textureY1 * textureX0) << textureId;
+         long textureVSlopeLong = ((long)textureY1 * textureZ0 - (long)textureZ1 * textureY0) << 8;
+         long textureVStepLong = ((long)textureZ1 * textureX0 - (long)textureX1 * textureZ0) << 5;
+         long textureWLong = ((long)textureY1 * textureX2 - (long)textureX1 * textureY2) << textureId;
+         long textureWSlopeLong = ((long)textureZ1 * textureY2 - (long)textureY1 * textureZ2) << 8;
+         long textureWStepLong = ((long)textureX1 * textureZ2 - (long)textureZ1 * textureX2) << 5;
+         int coefficientShift = textureCoefficientNormalizationShift(
+            textureULong,
+            textureUSlopeLong,
+            scalarLong,
+            textureVLong,
+            textureVSlopeLong,
+            textureVStepLong,
+            textureWLong,
+            textureWSlopeLong,
+            textureWStepLong
+         );
+         int textureU = (int)(textureULong >> coefficientShift);
+         int textureUSlope = (int)(textureUSlopeLong >> coefficientShift);
+         int scalar = (int)(scalarLong >> coefficientShift);
+         int textureV = (int)(textureVLong >> coefficientShift);
+         textureY0 = (int)(textureVSlopeLong >> coefficientShift);
+         textureX0 = (int)(textureVStepLong >> coefficientShift);
+         textureZ0 = (int)(textureWLong >> coefficientShift);
+         textureY1 = (int)(textureWSlopeLong >> coefficientShift);
+         textureX1 = (int)(textureWStepLong >> coefficientShift);
          textureX2 = 0;
          textureY2 = 0;
          if (y1 != y0) {
@@ -4708,15 +4761,35 @@ final class Rasterizer3D extends Rasterizer2D {
                textureId = 14;
             }
 
-            int textureU = textureX2 * textureY0 - textureY2 * textureX0 << textureId;
-            int textureUSlope = textureY2 * textureZ0 - textureZ2 * textureY0 << 8;
-            int scalar = textureZ2 * textureX0 - textureX2 * textureZ0 << 5;
-            int textureV = textureX1 * textureY0 - textureY1 * textureX0 << textureId;
-            textureY0 = textureY1 * textureZ0 - textureZ1 * textureY0 << 8;
-            textureX0 = textureZ1 * textureX0 - textureX1 * textureZ0 << 5;
-            textureZ0 = textureY1 * textureX2 - textureX1 * textureY2 << textureId;
-            textureY1 = textureZ1 * textureY2 - textureY1 * textureZ2 << 8;
-            textureX1 = textureX1 * textureZ2 - textureZ1 * textureX2 << 5;
+            long textureULong = ((long)textureX2 * textureY0 - (long)textureY2 * textureX0) << textureId;
+            long textureUSlopeLong = ((long)textureY2 * textureZ0 - (long)textureZ2 * textureY0) << 8;
+            long scalarLong = ((long)textureZ2 * textureX0 - (long)textureX2 * textureZ0) << 5;
+            long textureVLong = ((long)textureX1 * textureY0 - (long)textureY1 * textureX0) << textureId;
+            long textureVSlopeLong = ((long)textureY1 * textureZ0 - (long)textureZ1 * textureY0) << 8;
+            long textureVStepLong = ((long)textureZ1 * textureX0 - (long)textureX1 * textureZ0) << 5;
+            long textureWLong = ((long)textureY1 * textureX2 - (long)textureX1 * textureY2) << textureId;
+            long textureWSlopeLong = ((long)textureZ1 * textureY2 - (long)textureY1 * textureZ2) << 8;
+            long textureWStepLong = ((long)textureX1 * textureZ2 - (long)textureZ1 * textureX2) << 5;
+            int coefficientShift = textureCoefficientNormalizationShift(
+               textureULong,
+               textureUSlopeLong,
+               scalarLong,
+               textureVLong,
+               textureVSlopeLong,
+               textureVStepLong,
+               textureWLong,
+               textureWSlopeLong,
+               textureWStepLong
+            );
+            int textureU = (int)(textureULong >> coefficientShift);
+            int textureUSlope = (int)(textureUSlopeLong >> coefficientShift);
+            int scalar = (int)(scalarLong >> coefficientShift);
+            int textureV = (int)(textureVLong >> coefficientShift);
+            textureY0 = (int)(textureVSlopeLong >> coefficientShift);
+            textureX0 = (int)(textureVStepLong >> coefficientShift);
+            textureZ0 = (int)(textureWLong >> coefficientShift);
+            textureY1 = (int)(textureWSlopeLong >> coefficientShift);
+            textureX1 = (int)(textureWStepLong >> coefficientShift);
             textureX2 = 0;
             textureY2 = 0;
             if (y1 != y0) {
@@ -6452,15 +6525,35 @@ final class Rasterizer3D extends Rasterizer2D {
             textureId = 14;
          }
 
-         int textureU = textureX2 * textureY0 - textureY2 * textureX0 << textureId;
-         int textureUSlope = textureY2 * textureZ0 - textureZ2 * textureY0 << 8;
-         int scalar = textureZ2 * textureX0 - textureX2 * textureZ0 << 5;
-         int textureV = textureX1 * textureY0 - textureY1 * textureX0 << textureId;
-         textureY0 = textureY1 * textureZ0 - textureZ1 * textureY0 << 8;
-         textureX0 = textureZ1 * textureX0 - textureX1 * textureZ0 << 5;
-         textureZ0 = textureY1 * textureX2 - textureX1 * textureY2 << textureId;
-         textureY1 = textureZ1 * textureY2 - textureY1 * textureZ2 << 8;
-         textureX1 = textureX1 * textureZ2 - textureZ1 * textureX2 << 5;
+         long textureULong = ((long)textureX2 * textureY0 - (long)textureY2 * textureX0) << textureId;
+         long textureUSlopeLong = ((long)textureY2 * textureZ0 - (long)textureZ2 * textureY0) << 8;
+         long scalarLong = ((long)textureZ2 * textureX0 - (long)textureX2 * textureZ0) << 5;
+         long textureVLong = ((long)textureX1 * textureY0 - (long)textureY1 * textureX0) << textureId;
+         long textureVSlopeLong = ((long)textureY1 * textureZ0 - (long)textureZ1 * textureY0) << 8;
+         long textureVStepLong = ((long)textureZ1 * textureX0 - (long)textureX1 * textureZ0) << 5;
+         long textureWLong = ((long)textureY1 * textureX2 - (long)textureX1 * textureY2) << textureId;
+         long textureWSlopeLong = ((long)textureZ1 * textureY2 - (long)textureY1 * textureZ2) << 8;
+         long textureWStepLong = ((long)textureX1 * textureZ2 - (long)textureZ1 * textureX2) << 5;
+         int coefficientShift = textureCoefficientNormalizationShift(
+            textureULong,
+            textureUSlopeLong,
+            scalarLong,
+            textureVLong,
+            textureVSlopeLong,
+            textureVStepLong,
+            textureWLong,
+            textureWSlopeLong,
+            textureWStepLong
+         );
+         int textureU = (int)(textureULong >> coefficientShift);
+         int textureUSlope = (int)(textureUSlopeLong >> coefficientShift);
+         int scalar = (int)(scalarLong >> coefficientShift);
+         int textureV = (int)(textureVLong >> coefficientShift);
+         textureY0 = (int)(textureVSlopeLong >> coefficientShift);
+         textureX0 = (int)(textureVStepLong >> coefficientShift);
+         textureZ0 = (int)(textureWLong >> coefficientShift);
+         textureY1 = (int)(textureWSlopeLong >> coefficientShift);
+         textureX1 = (int)(textureWStepLong >> coefficientShift);
          textureX2 = 0;
          textureY2 = 0;
          if (y1 != y0) {

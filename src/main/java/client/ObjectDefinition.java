@@ -332,8 +332,18 @@ public final class ObjectDefinition {
             }
 
             if (objectModelIndex == -1) {
-               model = null;
-               break buildObjectModel;
+               if (objectDefinition.type == 4444
+                  && objectDefinition.objectModels != null
+                  && objectDefinition.objectModels.length > 0) {
+                  // Castle Wars climbing rope. Some 377 cache variants advertise
+                  // its model under a different loc type than the dynamic
+                  // battlement attachment packet uses. The model is still the
+                  // correct cached rope asset, so use its native first model.
+                  objectModelIndex = 0;
+               } else {
+                  model = null;
+                  break buildObjectModel;
+               }
             }
 
             key = (objectDefinition.type << 6) + (objectModelIndex << 3) + verticesXEntry + ((long)(frameIndex + 1) << 32);
