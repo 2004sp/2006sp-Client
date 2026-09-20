@@ -7,6 +7,7 @@ import java.awt.GraphicsEnvironment;
 import java.awt.Window;
 public final class FullscreenManager {
    private GraphicsDevice graphicsDevice;
+   private DisplayMode previousDisplayMode;
 
    public FullscreenManager() {
       GraphicsEnvironment graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment();
@@ -43,24 +44,35 @@ public final class FullscreenManager {
          this.graphicsDevice = graphicsEnvironment.getDefaultScreenDevice();
       }
 
+      this.previousDisplayMode = this.graphicsDevice.getDisplayMode();
       frame.setUndecorated(true);
       frame.setResizable(false);
       this.graphicsDevice.setFullScreenWindow(frame);
       if (displayMode != null && this.graphicsDevice.isDisplayChangeSupported()) {
          try {
             this.graphicsDevice.setDisplayMode(displayMode);
-            return;
          } catch (Exception exception) {
             exception.printStackTrace();
          }
       }
    }
    public final void exitFullscreen() {
-      Window window;
-      if ((window = this.graphicsDevice.getFullScreenWindow()) != null) {
-         window.dispose();
+      if (this.graphicsDevice == null) {
+         return;
       }
 
+      if (this.previousDisplayMode != null && this.graphicsDevice.isDisplayChangeSupported()) {
+         try {
+            this.graphicsDevice.setDisplayMode(this.previousDisplayMode);
+         } catch (Exception exception) {
+            exception.printStackTrace();
+         }
+      }
+
+      // Release exclusive ownership before the caller disposes/recreates the
+      // frame. Disposing the fullscreen window first can leave Windows/AWT with
+      // a stale fullscreen peer and a non-functional maximize state.
       this.graphicsDevice.setFullScreenWindow(null);
+      this.previousDisplayMode = null;
    }
 }
