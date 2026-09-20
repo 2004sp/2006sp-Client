@@ -4,10 +4,9 @@ import java.awt.DisplayMode;
 import java.awt.Frame;
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
-import java.awt.Window;
+import java.awt.Rectangle;
 public final class FullscreenManager {
    private GraphicsDevice graphicsDevice;
-   private DisplayMode previousDisplayMode;
 
    public FullscreenManager() {
       GraphicsEnvironment graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment();
@@ -39,40 +38,28 @@ public final class FullscreenManager {
       return null;
    }
    public final void enterFullscreen(DisplayMode displayMode, Frame frame) {
-      if (this.graphicsDevice == null) {
+      // Use borderless windowed fullscreen instead of AWT exclusive fullscreen.
+      // Exclusive mode changes the monitor display mode and Windows can blank or
+      // minimize the client when focus moves to another monitor. A borderless
+      // normal window keeps rendering while other monitors are being used.
+      if (frame.getGraphicsConfiguration() != null) {
+         this.graphicsDevice = frame.getGraphicsConfiguration().getDevice();
+      } else if (this.graphicsDevice == null) {
          GraphicsEnvironment graphicsEnvironment = GraphicsEnvironment.getLocalGraphicsEnvironment();
          this.graphicsDevice = graphicsEnvironment.getDefaultScreenDevice();
       }
 
-      this.previousDisplayMode = this.graphicsDevice.getDisplayMode();
+      Rectangle bounds = this.graphicsDevice.getDefaultConfiguration().getBounds();
       frame.setUndecorated(true);
       frame.setResizable(false);
-      this.graphicsDevice.setFullScreenWindow(frame);
-      if (displayMode != null && this.graphicsDevice.isDisplayChangeSupported()) {
-         try {
-            this.graphicsDevice.setDisplayMode(displayMode);
-         } catch (Exception exception) {
-            exception.printStackTrace();
-         }
-      }
+      frame.setExtendedState(Frame.NORMAL);
+      frame.setBounds(bounds);
+      frame.setVisible(true);
+      frame.toFront();
    }
+
    public final void exitFullscreen() {
-      if (this.graphicsDevice == null) {
-         return;
-      }
-
-      if (this.previousDisplayMode != null && this.graphicsDevice.isDisplayChangeSupported()) {
-         try {
-            this.graphicsDevice.setDisplayMode(this.previousDisplayMode);
-         } catch (Exception exception) {
-            exception.printStackTrace();
-         }
-      }
-
-      // Release exclusive ownership before the caller disposes/recreates the
-      // frame. Disposing the fullscreen window first can leave Windows/AWT with
-      // a stale fullscreen peer and a non-functional maximize state.
-      this.graphicsDevice.setFullScreenWindow(null);
-      this.previousDisplayMode = null;
+      // Borderless fullscreen does not own the GraphicsDevice and does not
+      // change its DisplayMode, so there is no exclusive state to release.
    }
 }
