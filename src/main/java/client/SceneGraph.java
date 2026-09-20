@@ -1125,6 +1125,13 @@ final class SceneGraph {
       viewportMaxY = newViewportMaxY;
       viewportCenterX = newViewportMaxX / 2;
       viewportCenterY = newViewportMaxY / 2;
+      // The visibility map must use the exact same perspective scale as the
+      // scene and model rasterizers. The original fixed-size client always used
+      // 1 << 9 (512), but the resizable client increases the projection scale
+      // with viewport width. Keeping 512 here makes the culling frustum much
+      // wider than the rendered frustum at fullscreen resolutions, activating
+      // occluders that should not participate in the current camera view.
+      int projectionScaleShift = Client.getProjectionScaleShift();
       boolean[][][][] flag = new boolean[9][32][53][53];
 
       for (short sINEIndex2 = 128; sINEIndex2 <= 384; sINEIndex2 += 32) {
@@ -1153,8 +1160,8 @@ final class SceneGraph {
                      scalar7 = scalar7 * pitchCos - scalar6 * pitchSin >> 16;
                      boolean flag2;
                      if (scalar5 >= 50 && scalar5 <= 3500) {
-                        scalar6 = viewportCenterX + (scalar8 << 9) / scalar5;
-                        scalar7 = viewportCenterY + (scalar7 << 9) / scalar5;
+                        scalar6 = viewportCenterX + (scalar8 << projectionScaleShift) / scalar5;
+                        scalar7 = viewportCenterY + (scalar7 << projectionScaleShift) / scalar5;
                         flag2 = scalar6 >= 0 && scalar6 <= viewportMaxX && scalar7 >= 0 && scalar7 <= viewportMaxY;
                      } else {
                         flag2 = false;
