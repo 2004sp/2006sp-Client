@@ -58,12 +58,14 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    private int middleMouseX;
    private int middleMouseY;
    public final void restoreWindowedMode() {
+      // Leave exclusive fullscreen before disposing/recreating the window peer.
+      // Disposing the frame while GraphicsDevice still owns it as the fullscreen
+      // window can leave the restored frame in a state where maximize no longer
+      // changes the native window state.
       if (this.clientWindow != null) {
-         this.clientWindow.frame.dispose();
          this.clientWindow.restoreWindowedMode(800, 600);
          this.graphics = this.getGameComponent().getGraphics();
       } else {
-         this.gameFrame.dispose();
          this.gameFrame.restoreWindowedMode(800, 600);
          this.graphics = this.getGameComponent().getGraphics();
       }
