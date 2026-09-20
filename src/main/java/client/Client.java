@@ -5936,6 +5936,29 @@ public class Client extends GameShell {
 
       return scalar;
    }
+   private boolean isBankTabContainerWidget(int widgetId) {
+      for (int bankTabIndex = 0; bankTabIndex < bankTabs.length; bankTabIndex++) {
+         if (bankTabs[bankTabIndex].getContainerWidgetId() == widgetId) {
+            return true;
+         }
+      }
+
+      return false;
+   }
+
+   private int getHoveredBankTabActionIndex() {
+      for (int menuIndex = this.menuActionCount - 1; menuIndex >= 0; menuIndex--) {
+         int widgetId = this.menuParam1[menuIndex];
+         for (int bankTabIndex = 0; bankTabIndex < bankTabs.length; bankTabIndex++) {
+            if (bankTabs[bankTabIndex].getActionWidgetId() == widgetId) {
+               return bankTabIndex;
+            }
+         }
+      }
+
+      return -1;
+   }
+
    private void mainGameProcessor() {
       if (screenMode != 0 && (clientWidth != super.getSize().getWidth() || clientHeight != super.getSize().getHeight())) {
          clientWidth = (int)super.getSize().getWidth();
@@ -6239,7 +6262,18 @@ public class Client extends GameShell {
                if (this.widgetDragThresholdExceeded && this.widgetDragDuration >= 5) {
                   this.lastActiveInvInterface = -1;
                   this.processRightClick();
-                  if (this.lastActiveInvInterface != -1 && this.draggedWidgetId != -1) {
+                  int bankTabDropIndex = this.getHoveredBankTabActionIndex();
+                  if (this.draggedWidgetId != -1
+                     && this.isBankTabContainerWidget(this.draggedWidgetId)
+                     && bankTabDropIndex >= 0
+                     && bankTabDropIndex <= getBankTabCount()) {
+                     this.outgoingBuffer.writeOpcode(214);
+                     this.outgoingBuffer.writeShortLittleEndianAdded(this.draggedWidgetId);
+                     this.outgoingBuffer.writeByteNegated(0);
+                     this.outgoingBuffer.writeShortLittleEndianAdded(this.draggedSlot);
+                     this.outgoingBuffer.writeShortLittleEndian(bankTabDropIndex);
+                     this.outgoingBuffer.writeShortLittleEndianAdded(bankTabSummaryWidgetId);
+                  } else if (this.lastActiveInvInterface != -1 && this.draggedWidgetId != -1) {
                      int mouseInvInterfaceIndex = this.mouseInvInterfaceIndex;
                      boolean localFlag = false;
                      if (fetchMusic) {
