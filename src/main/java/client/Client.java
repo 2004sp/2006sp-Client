@@ -1163,6 +1163,26 @@ public class Client extends GameShell {
          && this.gameScreenImageProducer.getHeight() == clientHeight;
    }
 
+   private boolean shouldUseRawMenuCoordinates() {
+      return screenMode != 0 && clampUiScalePercent(uiScalePercent) != 100;
+   }
+
+   private int getMenuMouseX() {
+      return this.shouldUseRawMenuCoordinates() ? super.rawMouseX : super.mouseX;
+   }
+
+   private int getMenuMouseY() {
+      return this.shouldUseRawMenuCoordinates() ? super.rawMouseY : super.mouseY;
+   }
+
+   private int getMenuClickX() {
+      return this.shouldUseRawMenuCoordinates() ? super.rawClickX : super.clickX;
+   }
+
+   private int getMenuClickY() {
+      return this.shouldUseRawMenuCoordinates() ? super.rawClickY : super.clickY;
+   }
+
    private void captureResizableUiBackground() {
       if (!this.shouldScaleResizableUi()) {
          return;
@@ -1602,8 +1622,8 @@ public class Client extends GameShell {
          customSprites[51].drawSprite(localScreenMode + 18, screenMode2 + 18);
 
          for (int itemSearchResultNameIndex = 0; itemSearchResultNameIndex < this.clanChatMode; itemSearchResultNameIndex++) {
-            int mouseX = super.mouseX;
-            int mouseY = super.mouseY;
+            int mouseX = this.getMenuMouseX();
+            int mouseY = this.getMenuMouseY();
             int scalar;
             if ((scalar = itemSearchResultNameIndex * 14 - this.autoCastId + 14) > 0 && scalar < height + 1) {
                bitmapFont.textLeft(10508800, formatItemSearchName(this.itemSearchResultNames[itemSearchResultNameIndex]), scalar + screenMode2, localScreenMode + 77);
@@ -1897,7 +1917,7 @@ public class Client extends GameShell {
       // the bottom edge; rendering at +25 clips the bottom row of the glyphs
       // before the UI-scaling pass captures them, and scaling magnifies that
       // clipping. Lift only the resizable status baselines slightly.
-      int channelStatusTextY = screenMode2 + (screenMode != 0 ? 23 : 25);
+      int channelStatusTextY = screenMode2 + (this.shouldScaleResizableUi() ? 20 : 25);
       this.smallFont.textCenterShadow(values[this.publicChatMode], localScreenMode + 164, text[this.publicChatMode], channelStatusTextY, true);
       this.smallFont.textCenterShadow(values[this.privateChatMode], localScreenMode + 230, text[this.privateChatMode], channelStatusTextY, true);
       this.smallFont.textCenterShadow(values[this.tradeMode], localScreenMode + 362, text[this.tradeMode], channelStatusTextY, true);
@@ -2404,8 +2424,8 @@ public class Client extends GameShell {
             int menuOffsetX = this.menuOffsetX;
             int menuOffsetY = this.menuOffsetY;
             int menuWidth = this.menuWidth;
-            int clickX = super.clickX;
-            int clickY = super.clickY;
+            int clickX = this.getMenuClickX();
+            int clickY = this.getMenuClickY();
             if (this.menuScreenArea == 0) {
                clickX -= screenMode == 0 ? 4 : 0;
                clickY -= screenMode == 0 ? 4 : 0;
@@ -4792,8 +4812,8 @@ public class Client extends GameShell {
       Rasterizer2D.fillRectangle(16, menuOffsetY + 1, menuOffsetX + 1, 0, menuWidth - 2);
       Rasterizer2D.drawRectangle(menuOffsetX + 1, menuWidth - 2, menuHeight - 19, 0, menuOffsetY + 18);
       this.boldFont.textLeft(6116423, "Choose Option", menuOffsetY + 14, menuOffsetX + 3);
-      menuHeight = super.mouseX;
-      int mouseY = super.mouseY;
+      menuHeight = this.getMenuMouseX();
+      int mouseY = this.getMenuMouseY();
       if (this.menuScreenArea == 0) {
          menuHeight -= screenMode == 0 ? 4 : 0;
          mouseY -= screenMode == 0 ? 4 : 0;
@@ -15930,9 +15950,15 @@ public class Client extends GameShell {
             this.menuHeight = 15 * this.menuActionCount + 22;
             return;
          }
-      } else if (super.clickX > 0 && super.clickY > 0 && super.clickX < clientWidth && super.clickY < clientHeight) {
+      } else {
+         int menuClickX = this.getMenuClickX();
+         int menuClickY = this.getMenuClickY();
+         if (menuClickX <= 0 || menuClickY <= 0 || menuClickX >= clientWidth || menuClickY >= clientHeight) {
+            return;
+         }
+
          int menuOffsetXOrClickX5;
-         if ((menuOffsetXOrClickX5 = super.clickX - menuWidthOrBoldFont / 2) + menuWidthOrBoldFont > clientWidth) {
+         if ((menuOffsetXOrClickX5 = menuClickX - menuWidthOrBoldFont / 2) + menuWidthOrBoldFont > clientWidth) {
             menuOffsetXOrClickX5 = clientWidth - menuWidthOrBoldFont;
          }
 
@@ -15940,8 +15966,8 @@ public class Client extends GameShell {
             menuOffsetXOrClickX5 = 0;
          }
 
-         int menuOffsetYOrClickY5 = super.clickY;
-         if (super.clickY + scalar > clientHeight) {
+         int menuOffsetYOrClickY5 = menuClickY;
+         if (menuClickY + scalar > clientHeight) {
             menuOffsetYOrClickY5 = clientHeight - scalar;
          }
 
