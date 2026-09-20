@@ -876,8 +876,11 @@ public class Client extends GameShell {
 
       if (newScreenMode == 2) {
          screenMode = 1;
-         clientWidth = fullscreenDisplayMode.getWidth() - clientWidthOrGetWidth;
-         clientHeight = fullscreenDisplayMode.getHeight() - byteCode;
+         // Exclusive fullscreen is borderless and the top menu is hidden, so
+         // the game component can use the full display rather than reserving
+         // space for window chrome.
+         clientWidth = fullscreenDisplayMode.getWidth();
+         clientHeight = fullscreenDisplayMode.getHeight();
          cameraZoom = 600;
          Client client = this;
          if (super.clientWindow != null) {
