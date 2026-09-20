@@ -38,6 +38,7 @@ public final class Widget {
    public int parentId;
    public int spellUsableOn;
    private static LruCache spriteCache;
+   private static int castleWarsCatapultMarkerWidgetId = -1;
    public int secondaryHoverColor;
    public int[] childIds;
    public int[] childX;
@@ -616,19 +617,30 @@ public final class Widget {
    private static void configureCastleWarsCatapultInterface() {
       final int rootId = 11169;
       final int closeId = 11259;
-      final int fireId = 11328;
+      final int upId = 11321;
+      final int downId = 11322;
+      final int rightId = 11323;
+      final int leftId = 11324;
+      final int fireId = 11329;
 
       if (widgets == null || rootId >= widgets.length || widgets[rootId] == null) {
          return;
       }
 
       makeCastleWarsCatapultButton(closeId, "Close Window");
+      makeCastleWarsCatapultButton(upId, "Aim up");
+      makeCastleWarsCatapultButton(downId, "Aim down");
+      makeCastleWarsCatapultButton(leftId, "Aim left");
+      makeCastleWarsCatapultButton(rightId, "Aim right");
       makeCastleWarsCatapultButton(fireId, "Fire Catapult");
+      resolveCastleWarsCatapultMarker(rootId, closeId, upId, downId, leftId, rightId, fireId);
 
       java.util.ArrayList<Widget> controls = new java.util.ArrayList<Widget>();
       for (int id = 0; id < widgets.length; id++) {
          Widget candidate = widgets[id];
          if (candidate == null || candidate.id == closeId || candidate.id == fireId
+               || candidate.id == upId || candidate.id == downId
+               || candidate.id == leftId || candidate.id == rightId
                || !isCastleWarsCatapultDescendant(candidate, rootId)
                || !isCastleWarsCatapultArrowCandidate(candidate)) {
             continue;
@@ -697,6 +709,87 @@ public final class Widget {
 
    private static void makeCastleWarsCatapultButton(int widgetId, String tooltip) {
       makeInterfaceButton(widgetId, tooltip);
+   }
+
+   private static void resolveCastleWarsCatapultMarker(int rootId, int... excludedIds) {
+      castleWarsCatapultMarkerWidgetId = -1;
+      int bestScore = -1;
+
+      for (int id = 0; id < widgets.length; id++) {
+         Widget candidate = widgets[id];
+         if (candidate == null || candidate.type != 5
+               || !isCastleWarsCatapultDescendant(candidate, rootId)
+               || isCastleWarsCatapultExcluded(id, excludedIds)) {
+            continue;
+         }
+
+         Sprite sprite = candidate.disabledSprite != null
+               ? candidate.disabledSprite : candidate.enabledSprite;
+         if (sprite == null || sprite.pixels == null
+               || sprite.spriteWidth < 4 || sprite.spriteHeight < 4
+               || sprite.spriteWidth > 32 || sprite.spriteHeight > 32) {
+            continue;
+         }
+
+         int visiblePixels = 0;
+         int redPixels = 0;
+         for (int pixel : sprite.pixels) {
+            if (pixel == 0) {
+               continue;
+            }
+            visiblePixels++;
+            int red = pixel >> 16 & 255;
+            int green = pixel >> 8 & 255;
+            int blue = pixel & 255;
+            if (red >= 140 && red >= green + 45 && red >= blue + 45) {
+               redPixels++;
+            }
+         }
+
+         if (visiblePixels == 0 || redPixels < 4) {
+            continue;
+         }
+
+         int score = redPixels * 1000 / visiblePixels;
+         if (score > bestScore) {
+            bestScore = score;
+            castleWarsCatapultMarkerWidgetId = id;
+         }
+      }
+   }
+
+   private static boolean isCastleWarsCatapultExcluded(int widgetId, int[] excludedIds) {
+      if (excludedIds == null) {
+         return false;
+      }
+      for (int excludedId : excludedIds) {
+         if (widgetId == excludedId) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   public static void updateCastleWarsCatapultAimMarker(int aimX, int aimY) {
+      if (widgets == null) {
+         return;
+      }
+      if (castleWarsCatapultMarkerWidgetId < 0
+            || castleWarsCatapultMarkerWidgetId >= widgets.length
+            || widgets[castleWarsCatapultMarkerWidgetId] == null) {
+         resolveCastleWarsCatapultMarker(
+               11169, 11259, 11321, 11322, 11323, 11324, 11329);
+      }
+      if (castleWarsCatapultMarkerWidgetId < 0
+            || castleWarsCatapultMarkerWidgetId >= widgets.length) {
+         return;
+      }
+
+      Widget marker = widgets[castleWarsCatapultMarkerWidgetId];
+      int clampedX = Math.max(0, Math.min(30, aimX));
+      int clampedY = Math.max(0, Math.min(30, aimY));
+      marker.runtimeXOffset = (clampedY - 15) * 4;
+      marker.runtimeYOffset = (15 - clampedX) * 4;
    }
 
    private static boolean isCastleWarsCatapultArrowCandidate(Widget widget) {
