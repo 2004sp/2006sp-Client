@@ -212,20 +212,21 @@ public final class ClientWindow extends Client implements ActionListener {
    public final void restoreWindowedMode(int scalarArgument, int scalarArgument2) {
       try {
          if (super.fullscreenActive) {
-            this.fullscreenManager = new FullscreenManager();
-            this.fullscreenManager.exitFullscreen();
+            if (this.fullscreenManager != null) {
+               this.fullscreenManager.exitFullscreen();
+            }
             super.fullscreenActive = false;
          }
 
+         // Recreate a normal window peer only after exclusive fullscreen has
+         // been released. This restores the normal maximize/minimize behavior.
+         this.frame.dispose();
          this.frame.setTitle("Progressive 2006 singleplayer [v1.0]");
          this.frame.setExtendedState(JFrame.NORMAL);
          this.frame.setResizable(true);
          this.frame.setSize(808, 628);
          this.frame.setLocationRelativeTo(null);
          this.frame.setVisible(true);
-         // Fullscreen mode recreates the native peer after setting the frame
-         // non-resizable. Reassert this after setVisible() so the restored peer
-         // exposes the maximize action/button again.
          this.frame.setResizable(true);
          this.frame.toFront();
       } catch (Exception exception) {
