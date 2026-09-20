@@ -411,6 +411,11 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    public final void keyPressed(KeyEvent keyEvent) {
       this.idleTime = 0;
       int keyCode = keyEvent.getKeyCode();
+      if (keyCode == KeyEvent.VK_F12 && this.fullscreenActive && this.clientWindow != null) {
+         this.clientWindow.toggleFullscreenMenuBar();
+         keyEvent.consume();
+         return;
+      }
       int keyQueueOrGetKeyChar;
       if ((keyQueueOrGetKeyChar = keyEvent.getKeyChar()) < 30) {
          keyQueueOrGetKeyChar = 0;
