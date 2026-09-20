@@ -276,9 +276,7 @@ public final class Widget {
                widget.childY[childIdIndex] = buffer.readShort();
                configureCastleWarsWaitingInterface(newFont);
 
-      configureCastleWarsCatapultInterface();
-
-      if (Client.getClient().graphicsEnabled) {
+               if (Client.getClient().graphicsEnabled) {
                   boolean flag = false;
                   if (widget.parentId == 638) {
                      Iterator iterator = QuestEntry.entries.iterator();
@@ -571,6 +569,8 @@ public final class Widget {
             }
          }
       }
+
+      configureCastleWarsCatapultInterface();
 
       if (Client.getClient().graphicsEnabled) {
          QuestEntry.categorizeQuests();
