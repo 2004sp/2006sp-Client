@@ -17002,6 +17002,19 @@ public class Client extends GameShell {
             return false;
          }
 
+         if (this.pktSize > this.inStream.buffer.length) {
+            int newCapacity = Math.max(1, this.inStream.buffer.length);
+            while (newCapacity < this.pktSize) {
+               int doubled = newCapacity << 1;
+               if (doubled <= newCapacity) {
+                  newCapacity = this.pktSize;
+                  break;
+               }
+               newCapacity = doubled;
+            }
+            this.inStream.buffer = new byte[newCapacity];
+         }
+
          this.inStream.currentPosition = 0;
          this.connection.flushInputStream(this.inStream.buffer, this.pktSize);
          this.timeoutCounter = 0;
