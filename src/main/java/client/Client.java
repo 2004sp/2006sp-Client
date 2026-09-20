@@ -14897,33 +14897,103 @@ public class Client extends GameShell {
       return 16777215;
    }
 
-   private Sprite getCastleWarsStatusSprite(int iconWidgetId, String status) {
-      if (Widget.widgets == null || iconWidgetId < 0 || iconWidgetId >= Widget.widgets.length) {
+   private boolean hasCastleWarsWidgetSprite(Widget widget) {
+      return widget != null
+            && (widget.disabledSprite != null || widget.enabledSprite != null);
+   }
+
+   private Widget getCastleWarsStatusIconWidget(int textWidgetId,
+                                                int fallbackIconWidgetId) {
+      if (Widget.widgets == null) {
          return null;
       }
 
-      Widget widget = Widget.widgets[iconWidgetId];
+      Widget fallback = null;
+      if (fallbackIconWidgetId >= 0 && fallbackIconWidgetId < Widget.widgets.length) {
+         fallback = Widget.widgets[fallbackIconWidgetId];
+         if (this.hasCastleWarsWidgetSprite(fallback)) {
+            return fallback;
+         }
+      }
+
+      final int parentWidgetId = 11344;
+      if (parentWidgetId >= Widget.widgets.length) {
+         return fallback;
+      }
+
+      Widget parent = Widget.widgets[parentWidgetId];
+      if (parent == null || parent.childIds == null
+            || parent.childX == null || parent.childY == null) {
+         return fallback;
+      }
+
+      int textChildIndex = -1;
+      for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
+         if (parent.childIds[childIndex] == textWidgetId) {
+            textChildIndex = childIndex;
+            break;
+         }
+      }
+      if (textChildIndex < 0) {
+         return fallback;
+      }
+
+      int textX = parent.childX[textChildIndex];
+      int textY = parent.childY[textChildIndex];
+      Widget best = null;
+      int bestScore = Integer.MAX_VALUE;
+
+      for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
+         int childId = parent.childIds[childIndex];
+         if (childId < 0 || childId >= Widget.widgets.length || childId == textWidgetId) {
+            continue;
+         }
+
+         Widget candidate = Widget.widgets[childId];
+         if (!this.hasCastleWarsWidgetSprite(candidate)) {
+            continue;
+         }
+
+         int deltaY = Math.abs(parent.childY[childIndex] - textY);
+         if (deltaY > 20) {
+            continue;
+         }
+
+         int deltaX = parent.childX[childIndex] - textX;
+         int score = deltaY * 1000 + Math.abs(deltaX);
+         if (deltaX > 0) {
+            score += 5000;
+         }
+
+         if (score < bestScore) {
+            best = candidate;
+            bestScore = score;
+         }
+      }
+
+      return best != null ? best : fallback;
+   }
+
+   private Sprite getCastleWarsStatusSprite(int textWidgetId,
+                                             int fallbackIconWidgetId) {
+      Widget widget = this.getCastleWarsStatusIconWidget(
+            textWidgetId, fallbackIconWidgetId);
       if (widget == null) {
          return null;
       }
 
-      String lower = status == null ? "" : status.toLowerCase();
-      boolean alternateState = lower.contains("taken")
-            || lower.contains("destroyed")
-            || lower.contains("collapsed")
-            || lower.contains("unlocked")
-            || lower.equals("health 0%");
-
-      Sprite sprite = alternateState ? widget.enabledSprite : widget.disabledSprite;
+      Sprite sprite = this.interfaceIsSelected(widget)
+            ? widget.enabledSprite : widget.disabledSprite;
       if (sprite == null) {
-         sprite = alternateState ? widget.disabledSprite : widget.enabledSprite;
+         sprite = widget.disabledSprite != null
+               ? widget.disabledSprite : widget.enabledSprite;
       }
       return sprite;
    }
 
-   private int drawCastleWarsStatusIcon(int iconWidgetId, String status,
+   private int drawCastleWarsStatusIcon(int textWidgetId, int fallbackIconWidgetId,
                                         int x, int baselineY) {
-      Sprite sprite = this.getCastleWarsStatusSprite(iconWidgetId, status);
+      Sprite sprite = this.getCastleWarsStatusSprite(textWidgetId, fallbackIconWidgetId);
       if (sprite == null) {
          return 0;
       }
@@ -14935,7 +15005,7 @@ public class Client extends GameShell {
    private void drawCastleWarsStatusLine(String label, int widgetId,
                                          int iconWidgetId, int x, int y) {
       String status = this.getCastleWarsInterfaceText(widgetId);
-      int iconWidth = this.drawCastleWarsStatusIcon(iconWidgetId, status, x, y);
+      int iconWidth = this.drawCastleWarsStatusIcon(widgetId, iconWidgetId, x, y);
       int textX = x + Math.max(24, iconWidth) + 8;
       this.richPlainFont.drawBasicString(label + ":", textX, y, 16777215, 0);
       int statusX = textX + this.richPlainFont.getTextWidth(label + ":") + 6;
