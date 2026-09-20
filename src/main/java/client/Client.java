@@ -2380,8 +2380,8 @@ public class Client extends GameShell {
 
       if (this.menuOpen) {
          if (clickButton != 1) {
-            int mouseX = super.mouseX;
-            int mouseY = super.mouseY;
+            int mouseX = this.getMenuMouseX();
+            int mouseY = this.getMenuMouseY();
             if (this.menuScreenArea == 0) {
                mouseX -= screenMode == 0 ? 4 : 0;
                mouseY -= screenMode == 0 ? 4 : 0;
