@@ -2159,48 +2159,80 @@ final class Rasterizer3D extends Rasterizer2D {
       int coordinateShift = lowMemory ? 6 : 7;
 
       long xOffset = (long)xStart - viewportCenterX;
-      // Keep three fractional bits that the old (slope >> 3) * x path threw
-      // away.  Advancing these accumulators once per pixel also removes the
-      // eight-pixel affine approximation that made textures swim as the camera
-      // moved.
+      // Preserve the three fractional slope bits that the legacy
+      // (slope >> 3) * x calculation discarded. Perspective is evaluated at
+      // four-pixel boundaries and interpolated inside each short block. This
+      // removes the visible eight-pixel swimming without paying for two long
+      // divisions for every textured pixel at fullscreen resolutions.
       long projectedU = ((long)textureU << 3) + (long)textureUSlope * xOffset;
       long projectedV = ((long)textureV << 3) + (long)textureVSlope * xOffset;
       long projectedW = ((long)textureW << 3) + (long)textureWSlope * xOffset;
 
-      for (int x = xStart; x < xEnd; x++) {
-         int u = 0;
-         int v = 0;
-         if (projectedW != 0L) {
-            long projectedTextureU = (projectedU << perspectiveShift) / projectedW;
-            long projectedTextureV = (projectedV << perspectiveShift) / projectedW;
+      int u = 0;
+      int v = 0;
+      if (projectedW != 0L) {
+         long projectedTextureU = (projectedU << perspectiveShift) / projectedW;
+         if (projectedTextureU < 0L) {
+            u = 0;
+         } else if (projectedTextureU > coordinateMask) {
+            u = coordinateMask;
+         } else {
+            u = (int)projectedTextureU;
+         }
+
+         v = (int)((projectedV << perspectiveShift) / projectedW);
+      }
+
+      int remaining = xEnd - xStart;
+      while (remaining > 0) {
+         int blockSize = remaining > 4 ? 4 : remaining;
+         long nextProjectedU = projectedU + (long)textureUSlope * blockSize;
+         long nextProjectedV = projectedV + (long)textureVSlope * blockSize;
+         long nextProjectedW = projectedW + (long)textureWSlope * blockSize;
+
+         int nextU = 0;
+         int nextV = 0;
+         if (nextProjectedW != 0L) {
+            long projectedTextureU = (nextProjectedU << perspectiveShift) / nextProjectedW;
             if (projectedTextureU < 0L) {
-               u = 0;
+               nextU = 0;
             } else if (projectedTextureU > coordinateMask) {
-               u = coordinateMask;
+               nextU = coordinateMask;
             } else {
-               u = (int)projectedTextureU;
+               nextU = (int)projectedTextureU;
             }
 
-            v = (int)projectedTextureV;
+            nextV = (int)((nextProjectedV << perspectiveShift) / nextProjectedW);
          }
 
-         int texturePixel = texturePixels[(v & coordinateMask) + (u >> coordinateShift)];
-         if (textureOpaque || texturePixel != 0) {
-            int light = brightness >> 16;
-            pixels[pixelOffset] = (
-               (texturePixel & 16711935) * light & -16711936
-            ) + (
-               (texturePixel & 0xFF00) * light & 0xFF0000
-            ) >> 8;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
+         int uStep = (nextU - u) / blockSize;
+         int vStep = (nextV - v) / blockSize;
+
+         for (int blockPixel = 0; blockPixel < blockSize; blockPixel++) {
+            int texturePixel = texturePixels[(v & coordinateMask) + (u >> coordinateShift)];
+            if (textureOpaque || texturePixel != 0) {
+               int light = brightness >> 16;
+               pixels[pixelOffset] = (
+                  (texturePixel & 16711935) * light & -16711936
+               ) + (
+                  (texturePixel & 0xFF00) * light & 0xFF0000
+               ) >> 8;
+               Rasterizer2D.depthBuffer[pixelOffset] = depth;
+            }
+
+            pixelOffset++;
+            depth += depthSlope;
+            brightness += brightnessStep;
+            u += uStep;
+            v += vStep;
          }
 
-         pixelOffset++;
-         depth += depthSlope;
-         brightness += brightnessStep;
-         projectedU += textureUSlope;
-         projectedV += textureVSlope;
-         projectedW += textureWSlope;
+         projectedU = nextProjectedU;
+         projectedV = nextProjectedV;
+         projectedW = nextProjectedW;
+         u = nextU;
+         v = nextV;
+         remaining -= blockSize;
       }
    }
    private static void drawTexturedScanline(
@@ -2262,42 +2294,73 @@ final class Rasterizer3D extends Rasterizer2D {
       long projectedV = ((long)textureV << 3) + (long)textureVSlope * xOffset;
       long projectedW = ((long)textureW << 3) + (long)textureWSlope * xOffset;
 
-      int blockPixel = 0;
-      for (int x = xStart; x < xEnd; x++) {
-         int u = 0;
-         int v = 0;
-         if (projectedW != 0L) {
-            long projectedTextureU = (projectedU << perspectiveShift) / projectedW;
-            long projectedTextureV = (projectedV << perspectiveShift) / projectedW;
+      int u = 0;
+      int v = 0;
+      if (projectedW != 0L) {
+         long projectedTextureU = (projectedU << perspectiveShift) / projectedW;
+         if (projectedTextureU < 0L) {
+            u = 0;
+         } else if (projectedTextureU > coordinateMask) {
+            u = coordinateMask;
+         } else {
+            u = (int)projectedTextureU;
+         }
+
+         v = (int)((projectedV << perspectiveShift) / projectedW);
+      }
+
+      int brightnessBlockPixel = 0;
+      int remaining = xEnd - xStart;
+      while (remaining > 0) {
+         int blockSize = remaining > 4 ? 4 : remaining;
+         long nextProjectedU = projectedU + (long)textureUSlope * blockSize;
+         long nextProjectedV = projectedV + (long)textureVSlope * blockSize;
+         long nextProjectedW = projectedW + (long)textureWSlope * blockSize;
+
+         int nextU = 0;
+         int nextV = 0;
+         if (nextProjectedW != 0L) {
+            long projectedTextureU = (nextProjectedU << perspectiveShift) / nextProjectedW;
             if (projectedTextureU < 0L) {
-               u = 0;
+               nextU = 0;
             } else if (projectedTextureU > coordinateMask) {
-               u = coordinateMask;
+               nextU = coordinateMask;
             } else {
-               u = (int)projectedTextureU;
+               nextU = (int)projectedTextureU;
             }
 
-            v = (int)projectedTextureV;
+            nextV = (int)((nextProjectedV << perspectiveShift) / nextProjectedW);
          }
 
-         int bankOffset = (scaledBrightness & 6291456) >> bankShift;
-         int shadeShift = scaledBrightness >> 23;
-         int texturePixel = texturePixels[bankOffset + (v & coordinateMask) + (u >> coordinateShift)] >>> shadeShift;
-         if (textureOpaque || texturePixel != 0) {
-            pixels[pixelOffset] = texturePixel;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
+         int uStep = (nextU - u) / blockSize;
+         int vStep = (nextV - v) / blockSize;
+
+         for (int blockPixel = 0; blockPixel < blockSize; blockPixel++) {
+            int bankOffset = (scaledBrightness & 6291456) >> bankShift;
+            int shadeShift = scaledBrightness >> 23;
+            int texturePixel = texturePixels[bankOffset + (v & coordinateMask) + (u >> coordinateShift)] >>> shadeShift;
+            if (textureOpaque || texturePixel != 0) {
+               pixels[pixelOffset] = texturePixel;
+               Rasterizer2D.depthBuffer[pixelOffset] = depth;
+            }
+
+            pixelOffset++;
+            depth += depthSlope;
+            u += uStep;
+            v += vStep;
+
+            if (++brightnessBlockPixel == 8) {
+               brightnessBlockPixel = 0;
+               scaledBrightness += brightnessStep;
+            }
          }
 
-         pixelOffset++;
-         depth += depthSlope;
-         projectedU += textureUSlope;
-         projectedV += textureVSlope;
-         projectedW += textureWSlope;
-
-         if (++blockPixel == 8) {
-            blockPixel = 0;
-            scaledBrightness += brightnessStep;
-         }
+         projectedU = nextProjectedU;
+         projectedV = nextProjectedV;
+         projectedW = nextProjectedW;
+         u = nextU;
+         v = nextV;
+         remaining -= blockSize;
       }
    }
    public static void clear() {
