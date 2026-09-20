@@ -1109,6 +1109,7 @@ public class Client extends GameShell {
 
    private void drawScaledUiRegion(
       int[] source,
+      int[] background,
       int sourceWidth,
       int sourceHeight,
       int destinationX,
@@ -1131,7 +1132,13 @@ public class Client extends GameShell {
                continue;
             }
             int sourceX = x * sourceWidth / destinationWidth;
-            destination[destinationRow + screenX] = source[sourceRow + sourceX];
+            int sourceIndex = sourceRow + sourceX;
+            // Only scale pixels actually changed by the UI pass. This keeps
+            // the 3D scene underneath transparent/irregular UI regions at its
+            // native resolution instead of magnifying the background too.
+            if (source[sourceIndex] != background[sourceIndex]) {
+               destination[destinationRow + screenX] = source[sourceIndex];
+            }
          }
       }
    }
@@ -1216,6 +1223,7 @@ public class Client extends GameShell {
       // Preserve the same anchor points as the unscaled resizable UI.
       this.drawScaledUiRegion(
          this.uiChatComposite,
+         this.uiChatBackground,
          RESIZABLE_CHAT_UI_WIDTH,
          RESIZABLE_CHAT_UI_HEIGHT,
          0,
@@ -1225,6 +1233,7 @@ public class Client extends GameShell {
       );
       this.drawScaledUiRegion(
          this.uiTabComposite,
+         this.uiTabBackground,
          RESIZABLE_TAB_UI_WIDTH,
          RESIZABLE_TAB_UI_HEIGHT,
          clientWidth - tabWidth,
@@ -1234,6 +1243,7 @@ public class Client extends GameShell {
       );
       this.drawScaledUiRegion(
          this.uiMinimapComposite,
+         this.uiMinimapBackground,
          RESIZABLE_MINIMAP_UI_WIDTH,
          RESIZABLE_MINIMAP_UI_HEIGHT,
          clientWidth - minimapWidth,
