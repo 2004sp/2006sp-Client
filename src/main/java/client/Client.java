@@ -14996,6 +14996,29 @@ public class Client extends GameShell {
       }
    }
 
+   private int getCastleWarsRelocatedTextBaselineY(int widgetId,
+                                                   int anchorBaselineY) {
+      if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
+            || 11349 >= Widget.widgets.length) {
+         return anchorBaselineY;
+      }
+
+      Widget widget = Widget.widgets[widgetId];
+      Widget anchor = Widget.widgets[11349];
+      int[] widgetPosition = this.findCastleWarsWidgetPosition(widgetId);
+      int[] anchorPosition = this.findCastleWarsWidgetPosition(11349);
+      if (widget == null || anchor == null
+            || widgetPosition == null || anchorPosition == null) {
+         return anchorBaselineY;
+      }
+
+      int widgetLineHeight = widget.font == null ? 12 : widget.font.lineHeight;
+      int anchorLineHeight = anchor.font == null ? 12 : anchor.font.lineHeight;
+      int nativeWidgetBaselineY = widgetPosition[1] + widgetLineHeight;
+      int nativeAnchorBaselineY = anchorPosition[1] + anchorLineHeight;
+      return anchorBaselineY + nativeWidgetBaselineY - nativeAnchorBaselineY;
+   }
+
    private void drawCastleWarsStatusLine(String label, int widgetId,
                                          int x, int y) {
       String status = this.getCastleWarsInterfaceText(widgetId);
@@ -15024,13 +15047,20 @@ public class Client extends GameShell {
       int statusX = 10;
       int statusY = Math.max(120, overlayHeight / 2 - 100);
       this.drawCastleWarsNativeIconLayer(statusX, statusY);
-      this.drawCastleWarsStatusLine("Zamorak flag", 11349, statusX, statusY);
-      this.drawCastleWarsStatusLine("Saradomin flag", 11350, statusX, statusY + 20);
-      this.drawCastleWarsStatusLine("Main door", 11352, statusX, statusY + 50);
-      this.drawCastleWarsStatusLine("Side door", 11356, statusX, statusY + 70);
-      this.drawCastleWarsStatusLine("Tunnel 1", 11358, statusX, statusY + 90);
-      this.drawCastleWarsStatusLine("Tunnel 2", 11360, statusX, statusY + 110);
-      this.drawCastleWarsStatusLine("Catapult", 11362, statusX, statusY + 130);
+      this.drawCastleWarsStatusLine("Zamorak flag", 11349, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11349, statusY));
+      this.drawCastleWarsStatusLine("Saradomin flag", 11350, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11350, statusY));
+      this.drawCastleWarsStatusLine("Main door", 11352, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11352, statusY));
+      this.drawCastleWarsStatusLine("Side door", 11356, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11356, statusY));
+      this.drawCastleWarsStatusLine("Tunnel 1", 11358, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11358, statusY));
+      this.drawCastleWarsStatusLine("Tunnel 2", 11360, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11360, statusY));
+      this.drawCastleWarsStatusLine("Catapult", 11362, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(11362, statusY));
 
       // Keep the clock inside the game viewport. In resizable mode it stays
       // left of the tab panel; in fixed mode it sits near the viewport's right edge.
