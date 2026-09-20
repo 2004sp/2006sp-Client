@@ -1186,7 +1186,7 @@ final class SceneGraph {
                            break scanVisibilityNeighbors;
                         }
 
-                        if (flag[flagIndex][(loopIndex4 + 1) & 31][loopIndex5 + loopIndex7 + 25 + 1][loopIndex6 + loopIndex8 + 25 + 1]) {
+                        if (flag[flagIndex][(loopIndex4 + 1) % 31][loopIndex5 + loopIndex7 + 25 + 1][loopIndex6 + loopIndex8 + 25 + 1]) {
                            flag3 = true;
                            break scanVisibilityNeighbors;
                         }
@@ -1196,7 +1196,7 @@ final class SceneGraph {
                            break scanVisibilityNeighbors;
                         }
 
-                        if (flag[flagIndex + 1][(loopIndex4 + 1) & 31][loopIndex5 + loopIndex7 + 25 + 1][loopIndex6 + loopIndex8 + 25 + 1]) {
+                        if (flag[flagIndex + 1][(loopIndex4 + 1) % 31][loopIndex5 + loopIndex7 + 25 + 1][loopIndex6 + loopIndex8 + 25 + 1]) {
                            flag3 = true;
                            break scanVisibilityNeighbors;
                         }
@@ -1511,7 +1511,6 @@ final class SceneGraph {
          int tileY;
          int tileIndex;
          int sourceTileHeightIndex;
-         boolean useLegacyOcclusion;
          SceneTile[][] sceneTile8;
          while (true) {
             if ((sceneTile = (SceneTile)tileQueue.removeFirst()) == null) {
@@ -1523,12 +1522,6 @@ final class SceneGraph {
                tileY = sceneTile.y;
                tileIndex = sceneTile.plane;
                sourceTileHeightIndex = sceneTile.originalPlane;
-               // The legacy occluder clusters are reliable for the ground plane but
-               // can falsely reject upper-floor geometry as the camera rotates around
-               // multi-level buildings. Keep the normal visibility-map, roof/draw
-               // level and wall-facing checks, but only use cluster occlusion for
-               // original plane 0. This also covers bridge-shifted upper-plane tiles.
-               useLegacyOcclusion = sourceTileHeightIndex == 0;
                sceneTile8 = this.tiles[tileIndex];
                if (!sceneTile.draw) {
                   break;
@@ -1610,7 +1603,12 @@ final class SceneGraph {
                }
 
                boolean localFlag = false;
-               boolean floorOccluded = useLegacyOcclusion && this.isTileOccluded(sourceTileHeightIndex, tileX, tileY);
+               // Upper-plane floors can be falsely rejected by the legacy occlusion
+               // clusters as the camera rotates around tall buildings. The roof/draw
+               // level checks have already decided whether this tile belongs in the
+               // current scene, so always submit upper-floor surfaces and retain the
+               // old occlusion shortcut for the ground plane.
+               boolean floorOccluded = this.isTileOccluded(sourceTileHeightIndex, tileX, tileY);
                if (sceneTile.plainTile != null) {
                   if (!floorOccluded) {
                      localFlag = true;
@@ -1665,7 +1663,7 @@ final class SceneGraph {
                      sceneTile.wallCullMask = 0;
                   }
 
-                  if ((wall.orientation & localWallVisibilityFlags) != 0 && (!useLegacyOcclusion || !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wall.orientation))) {
+                  if ((wall.orientation & localWallVisibilityFlags) != 0 && !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wall.orientation)) {
                      wall.primary
                         .renderAtPoint(
                            0,
@@ -1680,7 +1678,7 @@ final class SceneGraph {
                         );
                   }
 
-                  if ((wall.orientationB & localWallVisibilityFlags) != 0 && (!useLegacyOcclusion || !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wall.orientationB))) {
+                  if ((wall.orientationB & localWallVisibilityFlags) != 0 && !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wall.orientationB)) {
                      wall.secondary
                         .renderAtPoint(
                            0,
@@ -1696,7 +1694,7 @@ final class SceneGraph {
                   }
                }
 
-               if (groundDecoration != null && (!useLegacyOcclusion || !this.isOccluded(sourceTileHeightIndex, tileX, tileY, groundDecoration.renderable.modelHeight))) {
+               if (groundDecoration != null && !this.isOccluded(sourceTileHeightIndex, tileX, tileY, groundDecoration.renderable.modelHeight)) {
                   if ((groundDecoration.configBits & localWallVisibilityFlags) != 0) {
                      groundDecoration.renderable
                         .renderAtPoint(
@@ -1845,7 +1843,7 @@ final class SceneGraph {
 
             if (flag2) {
                WallObject wallObject2 = sceneTile.wall;
-               if (!useLegacyOcclusion || !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wallObject2.orientation)) {
+               if (!this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wallObject2.orientation)) {
                   wallObject2.primary
                      .renderAtPoint(
                         0,
@@ -1962,11 +1960,6 @@ final class SceneGraph {
                      int tileLeft2 = interactiveObject3.tileLeft;
                      tileHeightIndex = sourceTileHeightIndex;
                      SceneGraph sceneGraph = this;
-                     if (!useLegacyOcclusion) {
-                        objectOccluded = false;
-                        break testObjectOcclusion;
-                     }
-
                      if (tileLeft2 == tileRight2 && tileTop2 == tileBottom2) {
                         if (sceneGraph.isTileOccluded(tileHeightIndex, tileLeft2, tileTop2)) {
                            interactiveObjectCount = tileLeft2 << 7;
@@ -2103,7 +2096,7 @@ final class SceneGraph {
 
             if (sceneTile.delayedWallMask != 0) {
                GroundDecoration wallDecoration = sceneTile.wallDecoration;
-               if (sceneTile.wallDecoration != null && (!useLegacyOcclusion || !this.isOccluded(sourceTileHeightIndex, tileX, tileY, wallDecoration.renderable.modelHeight))) {
+               if (sceneTile.wallDecoration != null && !this.isOccluded(sourceTileHeightIndex, tileX, tileY, wallDecoration.renderable.modelHeight)) {
                   if ((wallDecoration.configBits & sceneTile.delayedWallMask) != 0) {
                      wallDecoration.renderable
                         .renderAtPoint(
@@ -2153,7 +2146,7 @@ final class SceneGraph {
 
                WallObject wallObject3 = sceneTile.wall;
                if (sceneTile.wall != null) {
-                  if ((wallObject3.orientationB & sceneTile.delayedWallMask) != 0 && (!useLegacyOcclusion || !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wallObject3.orientationB))) {
+                  if ((wallObject3.orientationB & sceneTile.delayedWallMask) != 0 && !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wallObject3.orientationB)) {
                      wallObject3.secondary
                         .renderAtPoint(
                            0,
@@ -2168,7 +2161,7 @@ final class SceneGraph {
                         );
                   }
 
-                  if ((wallObject3.orientation & sceneTile.delayedWallMask) != 0 && (!useLegacyOcclusion || !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wallObject3.orientation))) {
+                  if ((wallObject3.orientation & sceneTile.delayedWallMask) != 0 && !this.isWallOccluded(sourceTileHeightIndex, tileX, tileY, wallObject3.orientation)) {
                      wallObject3.primary
                         .renderAtPoint(
                            0,
