@@ -14897,119 +14897,108 @@ public class Client extends GameShell {
       return 16777215;
    }
 
-   private boolean hasCastleWarsWidgetSprite(Widget widget) {
-      return widget != null
-            && (widget.disabledSprite != null || widget.enabledSprite != null);
-   }
-
-   private Widget getCastleWarsStatusIconWidget(int textWidgetId,
-                                                int fallbackIconWidgetId) {
-      if (Widget.widgets == null) {
+   private int[] findCastleWarsWidgetPosition(int targetWidgetId) {
+      if (Widget.widgets == null || 11344 >= Widget.widgets.length) {
          return null;
       }
+      return this.findCastleWarsWidgetPosition(
+            Widget.widgets[11344], targetWidgetId, 0, 0, 0);
+   }
 
-      Widget fallback = null;
-      if (fallbackIconWidgetId >= 0 && fallbackIconWidgetId < Widget.widgets.length) {
-         fallback = Widget.widgets[fallbackIconWidgetId];
-         if (this.hasCastleWarsWidgetSprite(fallback)) {
-            return fallback;
-         }
-      }
-
-      final int parentWidgetId = 11344;
-      if (parentWidgetId >= Widget.widgets.length) {
-         return fallback;
-      }
-
-      Widget parent = Widget.widgets[parentWidgetId];
+   private int[] findCastleWarsWidgetPosition(Widget parent, int targetWidgetId,
+                                               int baseX, int baseY, int depth) {
       if (parent == null || parent.childIds == null
-            || parent.childX == null || parent.childY == null) {
-         return fallback;
+            || parent.childX == null || parent.childY == null || depth > 12) {
+         return null;
       }
-
-      int textChildIndex = -1;
-      for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
-         if (parent.childIds[childIndex] == textWidgetId) {
-            textChildIndex = childIndex;
-            break;
-         }
-      }
-      if (textChildIndex < 0) {
-         return fallback;
-      }
-
-      int textX = parent.childX[textChildIndex];
-      int textY = parent.childY[textChildIndex];
-      Widget best = null;
-      int bestScore = Integer.MAX_VALUE;
 
       for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
          int childId = parent.childIds[childIndex];
-         if (childId < 0 || childId >= Widget.widgets.length || childId == textWidgetId) {
+         if (childId < 0 || childId >= Widget.widgets.length) {
             continue;
          }
 
-         Widget candidate = Widget.widgets[childId];
-         if (!this.hasCastleWarsWidgetSprite(candidate)) {
+         Widget child = Widget.widgets[childId];
+         if (child == null) {
             continue;
          }
 
-         int deltaY = Math.abs(parent.childY[childIndex] - textY);
-         if (deltaY > 20) {
-            continue;
+         int childX = baseX + parent.childX[childIndex] + child.runtimeXOffset;
+         int childY = baseY + parent.childY[childIndex]
+               - parent.scrollPosition + child.runtimeYOffset;
+         if (childId == targetWidgetId) {
+            return new int[]{childX, childY};
          }
 
-         int deltaX = parent.childX[childIndex] - textX;
-         int score = deltaY * 1000 + Math.abs(deltaX);
-         if (deltaX > 0) {
-            score += 5000;
-         }
-
-         if (score < bestScore) {
-            best = candidate;
-            bestScore = score;
+         if (child.type == 0) {
+            int[] nested = this.findCastleWarsWidgetPosition(
+                  child, targetWidgetId, childX, childY, depth + 1);
+            if (nested != null) {
+               return nested;
+            }
          }
       }
-
-      return best != null ? best : fallback;
+      return null;
    }
 
-   private Sprite getCastleWarsStatusSprite(int textWidgetId,
-                                             int fallbackIconWidgetId) {
-      Widget widget = this.getCastleWarsStatusIconWidget(
-            textWidgetId, fallbackIconWidgetId);
-      if (widget == null) {
-         return null;
+   private void drawCastleWarsNativeIconLayer(int statusX, int statusY) {
+      if (Widget.widgets == null || 11344 >= Widget.widgets.length
+            || 11349 >= Widget.widgets.length) {
+         return;
       }
 
-      Sprite sprite = this.interfaceIsSelected(widget)
-            ? widget.enabledSprite : widget.disabledSprite;
-      if (sprite == null) {
-         sprite = widget.disabledSprite != null
-               ? widget.disabledSprite : widget.enabledSprite;
-      }
-      return sprite;
-   }
-
-   private int drawCastleWarsStatusIcon(int textWidgetId, int fallbackIconWidgetId,
-                                        int x, int baselineY) {
-      Sprite sprite = this.getCastleWarsStatusSprite(textWidgetId, fallbackIconWidgetId);
-      if (sprite == null) {
-         return 0;
+      Widget root = Widget.widgets[11344];
+      Widget anchorText = Widget.widgets[11349];
+      int[] anchorPosition = this.findCastleWarsWidgetPosition(11349);
+      if (root == null || anchorText == null || anchorPosition == null) {
+         return;
       }
 
-      sprite.drawSprite(x, baselineY - sprite.spriteHeight + 4);
-      return sprite.spriteWidth;
+      int lineHeight = anchorText.font == null ? 12 : anchorText.font.lineHeight;
+      int desiredTextX = statusX + 32;
+      int nativeTextBaselineY = anchorPosition[1] + lineHeight;
+      int drawX = desiredTextX - anchorPosition[0];
+      int drawY = statusY - nativeTextBaselineY;
+
+      // Draw the original cache-authored Castle Wars graphics, but suppress
+      // its text because the relocated overlay draws the status strings itself.
+      // The native widgets still evaluate configs 377/378, so the cache chooses
+      // the proper Safe/Taken/Dropped, door, tunnel and catapult artwork.
+      int[] textWidgetIds = new int[]{
+            11345, 11346, 11349, 11350, 11352, 11353,
+            11356, 11358, 11360, 11362, 11363, 11364, 11365, 11366
+      };
+      String[] messages = new String[textWidgetIds.length];
+
+      for (int i = 0; i < textWidgetIds.length; i++) {
+         int widgetId = textWidgetIds[i];
+         if (widgetId >= 0 && widgetId < Widget.widgets.length
+               && Widget.widgets[widgetId] != null) {
+            messages[i] = Widget.widgets[widgetId].message;
+            Widget.widgets[widgetId].message = "";
+         }
+      }
+
+      try {
+         this.drawInterface(0, drawX, root, drawY);
+      } finally {
+         for (int i = 0; i < textWidgetIds.length; i++) {
+            int widgetId = textWidgetIds[i];
+            if (widgetId >= 0 && widgetId < Widget.widgets.length
+                  && Widget.widgets[widgetId] != null) {
+               Widget.widgets[widgetId].message = messages[i];
+            }
+         }
+      }
    }
 
    private void drawCastleWarsStatusLine(String label, int widgetId,
-                                         int iconWidgetId, int x, int y) {
+                                         int x, int y) {
       String status = this.getCastleWarsInterfaceText(widgetId);
-      int iconWidth = this.drawCastleWarsStatusIcon(widgetId, iconWidgetId, x, y);
-      int textX = x + Math.max(24, iconWidth) + 8;
+      int textX = x + 32;
       this.richPlainFont.drawBasicString(label + ":", textX, y, 16777215, 0);
-      int statusX = textX + this.richPlainFont.getTextWidth(label + ":") + 6;
-      this.richBoldFont.drawBasicString(status, statusX, y,
+      int statusTextX = textX + this.richPlainFont.getTextWidth(label + ":") + 6;
+      this.richBoldFont.drawBasicString(status, statusTextX, y,
             this.getCastleWarsStatusColor(status), 0);
    }
 
@@ -15030,13 +15019,14 @@ public class Client extends GameShell {
       // viewport without depending on the cache-authored child coordinates.
       int statusX = 10;
       int statusY = Math.max(120, overlayHeight / 2 - 100);
-      this.drawCastleWarsStatusLine("Zamorak flag", 11349, 11347, statusX, statusY);
-      this.drawCastleWarsStatusLine("Saradomin flag", 11350, 11348, statusX, statusY + 20);
-      this.drawCastleWarsStatusLine("Main door", 11352, 11351, statusX, statusY + 50);
-      this.drawCastleWarsStatusLine("Side door", 11356, 11355, statusX, statusY + 70);
-      this.drawCastleWarsStatusLine("Tunnel 1", 11358, 11357, statusX, statusY + 90);
-      this.drawCastleWarsStatusLine("Tunnel 2", 11360, 11359, statusX, statusY + 110);
-      this.drawCastleWarsStatusLine("Catapult", 11362, 11361, statusX, statusY + 130);
+      this.drawCastleWarsNativeIconLayer(statusX, statusY);
+      this.drawCastleWarsStatusLine("Zamorak flag", 11349, statusX, statusY);
+      this.drawCastleWarsStatusLine("Saradomin flag", 11350, statusX, statusY + 20);
+      this.drawCastleWarsStatusLine("Main door", 11352, statusX, statusY + 50);
+      this.drawCastleWarsStatusLine("Side door", 11356, statusX, statusY + 70);
+      this.drawCastleWarsStatusLine("Tunnel 1", 11358, statusX, statusY + 90);
+      this.drawCastleWarsStatusLine("Tunnel 2", 11360, statusX, statusY + 110);
+      this.drawCastleWarsStatusLine("Catapult", 11362, statusX, statusY + 130);
 
       // Keep the clock inside the game viewport. In resizable mode it stays
       // left of the tab panel; in fixed mode it sits near the viewport's right edge.
