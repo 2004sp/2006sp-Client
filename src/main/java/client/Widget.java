@@ -571,6 +571,7 @@ public final class Widget {
       }
 
       configureCastleWarsCatapultInterface();
+      configureCastleWarsManualInterface();
 
       if (Client.getClient().graphicsEnabled) {
          QuestEntry.categorizeQuests();
@@ -593,6 +594,25 @@ public final class Widget {
 
       spriteCache = null;
    }
+   private static void configureCastleWarsManualInterface() {
+      // Cache 377's Castle Wars manual uses the standard book interface.
+      // The arrow sprites are present, but this cache has them decoded without
+      // an actionable option type, so clicking them never sends packet 185.
+      makeInterfaceButton(840, "Previous Page");
+      makeInterfaceButton(842, "Next Page");
+   }
+
+   private static void makeInterfaceButton(int widgetId, String tooltip) {
+      if (widgets == null || widgetId < 0 || widgetId >= widgets.length
+            || widgets[widgetId] == null) {
+         return;
+      }
+
+      Widget widget = widgets[widgetId];
+      widget.optionType = 1;
+      widget.tooltip = tooltip;
+   }
+
    private static void configureCastleWarsCatapultInterface() {
       final int rootId = 11169;
       final int closeId = 11259;
@@ -676,12 +696,7 @@ public final class Widget {
    }
 
    private static void makeCastleWarsCatapultButton(int widgetId, String tooltip) {
-      if (widgetId < 0 || widgetId >= widgets.length || widgets[widgetId] == null) {
-         return;
-      }
-      Widget widget = widgets[widgetId];
-      widget.optionType = 1;
-      widget.tooltip = tooltip;
+      makeInterfaceButton(widgetId, tooltip);
    }
 
    private static boolean isCastleWarsCatapultArrowCandidate(Widget widget) {
