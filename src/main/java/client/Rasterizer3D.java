@@ -50,33 +50,25 @@ final class Rasterizer3D extends Rasterizer2D {
       long textureWSlope,
       long textureWStep
    ) {
-      // The texture coefficients are homogeneous, so they may all be shifted by
-      // the same amount to keep the legacy int rasterizer safe.  Do not scale
-      // every coefficient by the full viewport span though: the horizontal
-      // slopes advance once per eight pixels and the vertical steps advance
-      // once per scanline.  Treating the bases and slopes identically destroys
-      // too much fixed-point precision in resizable/fullscreen mode and makes
-      // textures collapse into streaks or transparent/black patches.
-      long horizontalSpan = Math.max(
-         Math.abs((long)viewportCenterX),
-         Math.abs((long)Rasterizer2D.bottomX - viewportCenterX)
-      ) + 8L;
+      // Horizontal texture projection is evaluated with long intermediates in
+      // the scanline routines.  Only the coefficients that remain in the
+      // legacy int triangle walker need viewport-span overflow protection.
+      // Keeping the horizontal slopes out of the span calculation preserves
+      // substantially more fixed-point precision in large viewports.
       long verticalSpan = Math.max(
          Math.abs((long)viewportCenterY),
          Math.abs((long)Rasterizer2D.bottomY - viewportCenterY)
       ) + 1L;
 
-      long maxU = Math.abs(textureU)
-         + ((Math.abs(textureUSlope) + 7L) >> 3) * horizontalSpan
-         + Math.abs(textureUStep) * verticalSpan;
-      long maxV = Math.abs(textureV)
-         + ((Math.abs(textureVSlope) + 7L) >> 3) * horizontalSpan
-         + Math.abs(textureVStep) * verticalSpan;
-      long maxW = Math.abs(textureW)
-         + ((Math.abs(textureWSlope) + 7L) >> 3) * horizontalSpan
-         + Math.abs(textureWStep) * verticalSpan;
+      long maxU = Math.abs(textureU) + Math.abs(textureUStep) * verticalSpan;
+      long maxV = Math.abs(textureV) + Math.abs(textureVStep) * verticalSpan;
+      long maxW = Math.abs(textureW) + Math.abs(textureWStep) * verticalSpan;
+      long maxSlope = Math.max(
+         Math.abs(textureUSlope),
+         Math.max(Math.abs(textureVSlope), Math.abs(textureWSlope))
+      );
 
-      long max = Math.max(maxU, Math.max(maxV, maxW));
+      long max = Math.max(maxSlope, Math.max(maxU, Math.max(maxV, maxW)));
       long safeLimit = Integer.MAX_VALUE - (1L << 20);
       int shift = 0;
       while (max > safeLimit) {
@@ -2139,537 +2131,76 @@ final class Rasterizer3D extends Rasterizer2D {
       float depth,
       float depthSlope
    ) {
-      int scalar = 0;
-      int scalar2 = 0;
-      if (xStart < xEnd) {
-         brightnessSlope = (brightnessSlope - brightness) / (xEnd - xStart);
-         if (restrictEdges) {
-            if (xEnd > Rasterizer2D.centerX) {
-               xEnd = Rasterizer2D.centerX;
-            }
+      if (xStart >= xEnd) {
+         return;
+      }
 
-            if (xStart < 0) {
-               brightness -= xStart * brightnessSlope;
-               xStart = 0;
-            }
+      int brightnessStep = (brightnessSlope - brightness) / (xEnd - xStart);
+      if (restrictEdges) {
+         if (xEnd > Rasterizer2D.centerX) {
+            xEnd = Rasterizer2D.centerX;
          }
 
-         if (xStart < xEnd) {
-            int scalar3 = xEnd - xStart >> 3;
-            pixelOffset += xStart;
-            depth += depthSlope * xStart;
-            if (lowMemory) {
-               int scalar4 = 0;
-               int scalar5 = 0;
-               int scalar6 = xStart - viewportCenterX;
-               textureU += (textureUSlope >> 3) * scalar6;
-               textureV += (textureVSlope >> 3) * scalar6;
-               if ((scalar6 = (textureW = textureW + (textureWSlope >> 3) * scalar6) >> 12) != 0) {
-                  scalar = textureU / scalar6;
-                  scalar2 = textureV / scalar6;
-                  if (scalar < 0) {
-                     scalar = 0;
-                  } else if (scalar > 4032) {
-                     scalar = 4032;
-                  }
-               }
+         if (xStart < 0) {
+            brightness -= xStart * brightnessStep;
+            xStart = 0;
+         }
+      }
 
-               textureU += textureUSlope;
-               textureV += textureVSlope;
-               if ((scalar6 = (textureW = textureW + textureWSlope) >> 12) != 0) {
-                  scalar4 = textureU / scalar6;
-                  scalar5 = textureV / scalar6;
-                  if (scalar4 < 7) {
-                     scalar4 = 7;
-                  } else if (scalar4 > 4032) {
-                     scalar4 = 4032;
-                  }
-               }
+      if (xStart >= xEnd) {
+         return;
+      }
 
-               scalar6 = scalar4 - scalar >> 3;
-               int scalar7 = scalar5 - scalar2 >> 3;
-               if (!textureOpaque) {
-                  while (scalar3-- > 0) {
-                     int texturePixel;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar8 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar8 & -16711936) + ((texturePixel & 0xFF00) * scalar8 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
+      pixelOffset += xStart;
+      depth += depthSlope * xStart;
 
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar9 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar9 & -16711936) + ((texturePixel & 0xFF00) * scalar9 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
+      int perspectiveShift = lowMemory ? 12 : 14;
+      int coordinateMask = lowMemory ? 4032 : 16256;
+      int coordinateShift = lowMemory ? 6 : 7;
 
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar10 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar10 & -16711936) + ((texturePixel & 0xFF00) * scalar10 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
+      long xOffset = (long)xStart - viewportCenterX;
+      // Keep three fractional bits that the old (slope >> 3) * x path threw
+      // away.  Advancing these accumulators once per pixel also removes the
+      // eight-pixel affine approximation that made textures swim as the camera
+      // moved.
+      long projectedU = ((long)textureU << 3) + (long)textureUSlope * xOffset;
+      long projectedV = ((long)textureV << 3) + (long)textureVSlope * xOffset;
+      long projectedW = ((long)textureW << 3) + (long)textureWSlope * xOffset;
 
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar11 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar11 & -16711936) + ((texturePixel & 0xFF00) * scalar11 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar12 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar12 & -16711936) + ((texturePixel & 0xFF00) * scalar12 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar13 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar13 & -16711936) + ((texturePixel & 0xFF00) * scalar13 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar14 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar14 & -16711936) + ((texturePixel & 0xFF00) * scalar14 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     if ((texturePixel = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar15 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel & 16711935) * scalar15 & -16711936) + ((texturePixel & 0xFF00) * scalar15 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar = scalar4;
-                     scalar2 = scalar5;
-                     brightness += brightnessSlope;
-                     textureU += textureUSlope;
-                     textureV += textureVSlope;
-                     int scalar16;
-                     if ((scalar16 = (textureW += textureWSlope) >> 12) != 0) {
-                        scalar4 = textureU / scalar16;
-                        scalar5 = textureV / scalar16;
-                        if (scalar4 < 7) {
-                           scalar4 = 7;
-                        } else if (scalar4 > 4032) {
-                           scalar4 = 4032;
-                        }
-                     }
-
-                     scalar6 = scalar4 - scalar >> 3;
-                     scalar7 = scalar5 - scalar2 >> 3;
-                     brightness += brightnessSlope;
-                  }
-
-                  for (int position = xEnd - xStart & 7; position-- > 0; brightness += brightnessSlope) {
-                     int texturePixel2;
-                     if ((texturePixel2 = texturePixels[(scalar2 & 4032) + (scalar >> 6)]) != 0) {
-                        int scalar17 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel2 & 16711935) * scalar17 & -16711936) + ((texturePixel2 & 0xFF00) * scalar17 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                  }
-               } else {
-                  while (scalar3-- > 0) {
-                     int texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     int scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                     brightness += brightnessSlope;
-                     texturePixel3 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     scalar18 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel3 & 16711935) * scalar18 & -16711936) + ((texturePixel3 & 0xFF00) * scalar18 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar = scalar4;
-                     scalar2 = scalar5;
-                     brightness += brightnessSlope;
-                     textureU += textureUSlope;
-                     textureV += textureVSlope;
-                     int scalar19;
-                     if ((scalar19 = (textureW += textureWSlope) >> 12) != 0) {
-                        scalar4 = textureU / scalar19;
-                        scalar5 = textureV / scalar19;
-                        if (scalar4 < 7) {
-                           scalar4 = 7;
-                        } else if (scalar4 > 4032) {
-                           scalar4 = 4032;
-                        }
-                     }
-
-                     scalar6 = scalar4 - scalar >> 3;
-                     scalar7 = scalar5 - scalar2 >> 3;
-                     brightness += brightnessSlope;
-                  }
-
-                  for (int position2 = xEnd - xStart & 7; position2-- > 0; brightness += brightnessSlope) {
-                     int texturePixel4 = texturePixels[(scalar2 & 4032) + (scalar >> 6)];
-                     int scalar20 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel4 & 16711935) * scalar20 & -16711936) + ((texturePixel4 & 0xFF00) * scalar20 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                  }
-               }
+      for (int x = xStart; x < xEnd; x++) {
+         int u = 0;
+         int v = 0;
+         if (projectedW != 0L) {
+            long projectedTextureU = (projectedU << perspectiveShift) / projectedW;
+            long projectedTextureV = (projectedV << perspectiveShift) / projectedW;
+            if (projectedTextureU < 0L) {
+               u = 0;
+            } else if (projectedTextureU > coordinateMask) {
+               u = coordinateMask;
             } else {
-               int scalar21 = 0;
-               int scalar22 = 0;
-               int scalar23 = xStart - viewportCenterX;
-               textureU += (textureUSlope >> 3) * scalar23;
-               textureV += (textureVSlope >> 3) * scalar23;
-               if ((scalar23 = (textureW = textureW + (textureWSlope >> 3) * scalar23) >> 14) != 0) {
-                  scalar = textureU / scalar23;
-                  scalar2 = textureV / scalar23;
-                  if (scalar < 0) {
-                     scalar = 0;
-                  } else if (scalar > 16256) {
-                     scalar = 16256;
-                  }
-               }
-
-               textureU += textureUSlope;
-               textureV += textureVSlope;
-               if ((scalar23 = (textureW = textureW + textureWSlope) >> 14) != 0) {
-                  scalar21 = textureU / scalar23;
-                  scalar22 = textureV / scalar23;
-                  if (scalar21 < 7) {
-                     scalar21 = 7;
-                  } else if (scalar21 > 16256) {
-                     scalar21 = 16256;
-                  }
-               }
-
-               scalar23 = scalar21 - scalar >> 3;
-               int scalar24 = scalar22 - scalar2 >> 3;
-               if (!textureOpaque) {
-                  while (scalar3-- > 0) {
-                     int texturePixel5;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar25 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar25 & -16711936) + ((texturePixel5 & 0xFF00) * scalar25 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar26 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar26 & -16711936) + ((texturePixel5 & 0xFF00) * scalar26 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar27 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar27 & -16711936) + ((texturePixel5 & 0xFF00) * scalar27 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar28 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar28 & -16711936) + ((texturePixel5 & 0xFF00) * scalar28 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar29 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar29 & -16711936) + ((texturePixel5 & 0xFF00) * scalar29 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar30 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar30 & -16711936) + ((texturePixel5 & 0xFF00) * scalar30 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar31 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar31 & -16711936) + ((texturePixel5 & 0xFF00) * scalar31 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     if ((texturePixel5 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar32 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel5 & 16711935) * scalar32 & -16711936) + ((texturePixel5 & 0xFF00) * scalar32 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar = scalar21;
-                     scalar2 = scalar22;
-                     brightness += brightnessSlope;
-                     textureU += textureUSlope;
-                     textureV += textureVSlope;
-                     int scalar33;
-                     if ((scalar33 = (textureW += textureWSlope) >> 14) != 0) {
-                        scalar21 = textureU / scalar33;
-                        scalar22 = textureV / scalar33;
-                        if (scalar21 < 7) {
-                           scalar21 = 7;
-                        } else if (scalar21 > 16256) {
-                           scalar21 = 16256;
-                        }
-                     }
-
-                     scalar23 = scalar21 - scalar >> 3;
-                     scalar24 = scalar22 - scalar2 >> 3;
-                     brightness += brightnessSlope;
-                  }
-
-                  for (int position3 = xEnd - xStart & 7; position3-- > 0; brightness += brightnessSlope) {
-                     int texturePixel6;
-                     if ((texturePixel6 = texturePixels[(scalar2 & 16256) + (scalar >> 7)]) != 0) {
-                        int scalar34 = brightness >> 16;
-                        pixels[pixelOffset] = ((texturePixel6 & 16711935) * scalar34 & -16711936) + ((texturePixel6 & 0xFF00) * scalar34 & 0xFF0000) >> 8;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                  }
-               } else {
-                  while (scalar3-- > 0) {
-                     int texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     int scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                     brightness += brightnessSlope;
-                     texturePixel7 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     scalar35 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel7 & 16711935) * scalar35 & -16711936) + ((texturePixel7 & 0xFF00) * scalar35 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar = scalar21;
-                     scalar2 = scalar22;
-                     brightness += brightnessSlope;
-                     textureU += textureUSlope;
-                     textureV += textureVSlope;
-                     int scalar36;
-                     if ((scalar36 = (textureW += textureWSlope) >> 14) != 0) {
-                        scalar21 = textureU / scalar36;
-                        scalar22 = textureV / scalar36;
-                        if (scalar21 < 7) {
-                           scalar21 = 7;
-                        } else if (scalar21 > 16256) {
-                           scalar21 = 16256;
-                        }
-                     }
-
-                     scalar23 = scalar21 - scalar >> 3;
-                     scalar24 = scalar22 - scalar2 >> 3;
-                     brightness += brightnessSlope;
-                  }
-
-                  for (int position4 = xEnd - xStart & 7; position4-- > 0; brightness += brightnessSlope) {
-                     int texturePixel8 = texturePixels[(scalar2 & 16256) + (scalar >> 7)];
-                     int scalar37 = brightness >> 16;
-                     pixels[pixelOffset] = ((texturePixel8 & 16711935) * scalar37 & -16711936) + ((texturePixel8 & 0xFF00) * scalar37 & 0xFF0000) >> 8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar23;
-                     scalar2 += scalar24;
-                  }
-               }
+               u = (int)projectedTextureU;
             }
+
+            v = (int)projectedTextureV;
          }
+
+         int texturePixel = texturePixels[(v & coordinateMask) + (u >> coordinateShift)];
+         if (textureOpaque || texturePixel != 0) {
+            int light = brightness >> 16;
+            pixels[pixelOffset] = (
+               (texturePixel & 16711935) * light & -16711936
+            ) + (
+               (texturePixel & 0xFF00) * light & 0xFF0000
+            ) >> 8;
+            Rasterizer2D.depthBuffer[pixelOffset] = depth;
+         }
+
+         pixelOffset++;
+         depth += depthSlope;
+         brightness += brightnessStep;
+         projectedU += textureUSlope;
+         projectedV += textureVSlope;
+         projectedW += textureWSlope;
       }
    }
    private static void drawTexturedScanline(
@@ -2689,280 +2220,83 @@ final class Rasterizer3D extends Rasterizer2D {
       float depth,
       float depthSlope
    ) {
-      int scalar = 0;
-      int scalar2 = 0;
-      if (xStart < xEnd) {
-         int scalar3;
-         if (restrictEdges) {
-            brightnessSlope = (brightnessSlope - brightness) / (xEnd - xStart);
-            if (xEnd > Rasterizer2D.centerX) {
-               xEnd = Rasterizer2D.centerX;
-            }
+      if (xStart >= xEnd) {
+         return;
+      }
 
-            if (xStart < 0) {
-               brightness -= xStart * brightnessSlope;
-               xStart = 0;
-            }
-
-            if (xStart >= xEnd) {
-               return;
-            }
-
-            scalar3 = xEnd - xStart >> 3;
-            brightnessSlope <<= 12;
-         } else if (xEnd - xStart > 7) {
-            scalar3 = xEnd - xStart >> 3;
-            brightnessSlope = (brightnessSlope - brightness) * reciprocal512[scalar3] >> 6;
-         } else {
-            scalar3 = 0;
-            brightnessSlope = 0;
+      int brightnessStep;
+      if (restrictEdges) {
+         int brightnessPerPixel = (brightnessSlope - brightness) / (xEnd - xStart);
+         if (xEnd > Rasterizer2D.centerX) {
+            xEnd = Rasterizer2D.centerX;
          }
 
-         brightness <<= 9;
-         pixelOffset += xStart;
-         depth += depthSlope * xStart;
-         if (lowMemory) {
-            int scalar4 = 0;
-            int scalar5 = 0;
-            int scalar6 = xStart - viewportCenterX;
-            textureU += (textureUSlope >> 3) * scalar6;
-            textureV += (textureVSlope >> 3) * scalar6;
-            if ((scalar6 = (textureW = textureW + (textureWSlope >> 3) * scalar6) >> 12) != 0) {
-               scalar = textureU / scalar6;
-               scalar2 = textureV / scalar6;
-               if (scalar < 0) {
-                  scalar = 0;
-               } else if (scalar > 4032) {
-                  scalar = 4032;
-               }
-            }
+         if (xStart < 0) {
+            brightness -= xStart * brightnessPerPixel;
+            xStart = 0;
+         }
 
-            textureU += textureUSlope;
-            textureV += textureVSlope;
-            if ((scalar6 = (textureW = textureW + textureWSlope) >> 12) != 0) {
-               scalar4 = textureU / scalar6;
-               scalar5 = textureV / scalar6;
-               if (scalar4 < 7) {
-                  scalar4 = 7;
-               } else if (scalar4 > 4032) {
-                  scalar4 = 4032;
-               }
-            }
+         if (xStart >= xEnd) {
+            return;
+         }
 
-            scalar6 = scalar4 - scalar >> 3;
-            int scalar7 = scalar5 - scalar2 >> 3;
-            scalar += (brightness & 6291456) >> 3;
-            int scalar8 = brightness >> 23;
-            if (textureOpaque) {
-               while (scalar3-- > 0) {
-                  for (int loopIndex = 0; loopIndex < 8; loopIndex++) {
-                     pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                  }
+         brightnessStep = brightnessPerPixel << 12;
+      } else if (xEnd - xStart > 7) {
+         int blocks = xEnd - xStart >> 3;
+         brightnessStep = (brightnessSlope - brightness) * reciprocal512[blocks] >> 6;
+      } else {
+         brightnessStep = 0;
+      }
 
-                  scalar = scalar4;
-                  scalar2 = scalar5;
-                  textureU += textureUSlope;
-                  textureV += textureVSlope;
-                  int scalar9;
-                  if ((scalar9 = (textureW += textureWSlope) >> 12) != 0) {
-                     scalar4 = textureU / scalar9;
-                     scalar5 = textureV / scalar9;
-                     if (scalar4 < 7) {
-                        scalar4 = 7;
-                     } else if (scalar4 > 4032) {
-                        scalar4 = 4032;
-                     }
-                  }
+      int scaledBrightness = brightness << 9;
+      pixelOffset += xStart;
+      depth += depthSlope * xStart;
 
-                  scalar6 = scalar4 - scalar >> 3;
-                  scalar7 = scalar5 - scalar2 >> 3;
-                  brightness += brightnessSlope;
-                  scalar += (brightness & 6291456) >> 3;
-                  scalar8 = brightness >> 23;
-               }
+      int perspectiveShift = lowMemory ? 12 : 14;
+      int coordinateMask = lowMemory ? 4032 : 16256;
+      int coordinateShift = lowMemory ? 6 : 7;
+      int bankShift = lowMemory ? 9 : 7;
 
-               for (int position = xEnd - xStart & 7; position-- > 0; scalar2 += scalar7) {
-                  pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  pixelOffset++;
-                  depth += depthSlope;
-                  scalar += scalar6;
-               }
+      long xOffset = (long)xStart - viewportCenterX;
+      long projectedU = ((long)textureU << 3) + (long)textureUSlope * xOffset;
+      long projectedV = ((long)textureV << 3) + (long)textureVSlope * xOffset;
+      long projectedW = ((long)textureW << 3) + (long)textureWSlope * xOffset;
+
+      int blockPixel = 0;
+      for (int x = xStart; x < xEnd; x++) {
+         int u = 0;
+         int v = 0;
+         if (projectedW != 0L) {
+            long projectedTextureU = (projectedU << perspectiveShift) / projectedW;
+            long projectedTextureV = (projectedV << perspectiveShift) / projectedW;
+            if (projectedTextureU < 0L) {
+               u = 0;
+            } else if (projectedTextureU > coordinateMask) {
+               u = coordinateMask;
             } else {
-               while (scalar3-- > 0) {
-                  for (int loopIndex2 = 0; loopIndex2 < 8; loopIndex2++) {
-                     int scalar10;
-                     if ((scalar10 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                        pixels[pixelOffset] = scalar10;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar6;
-                     scalar2 += scalar7;
-                  }
-
-                  scalar = scalar4;
-                  scalar2 = scalar5;
-                  textureU += textureUSlope;
-                  textureV += textureVSlope;
-                  int scalar11;
-                  if ((scalar11 = (textureW += textureWSlope) >> 12) != 0) {
-                     scalar4 = textureU / scalar11;
-                     scalar5 = textureV / scalar11;
-                     if (scalar4 < 7) {
-                        scalar4 = 7;
-                     } else if (scalar4 > 4032) {
-                        scalar4 = 4032;
-                     }
-                  }
-
-                  scalar6 = scalar4 - scalar >> 3;
-                  scalar7 = scalar5 - scalar2 >> 3;
-                  brightness += brightnessSlope;
-                  scalar += (brightness & 6291456) >> 3;
-                  scalar8 = brightness >> 23;
-               }
-
-               for (int position2 = xEnd - xStart & 7; position2-- > 0; scalar2 += scalar7) {
-                  int scalar12;
-                  if ((scalar12 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar12;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  pixelOffset++;
-                  depth += depthSlope;
-                  scalar += scalar6;
-               }
-            }
-         } else {
-            int scalar13 = 0;
-            int scalar14 = 0;
-            int scalar15 = xStart - viewportCenterX;
-            textureU += (textureUSlope >> 3) * scalar15;
-            textureV += (textureVSlope >> 3) * scalar15;
-            if ((scalar15 = (textureW = textureW + (textureWSlope >> 3) * scalar15) >> 14) != 0) {
-               scalar = textureU / scalar15;
-               scalar2 = textureV / scalar15;
-               if (scalar < 0) {
-                  scalar = 0;
-               } else if (scalar > 16256) {
-                  scalar = 16256;
-               }
+               u = (int)projectedTextureU;
             }
 
-            textureU += textureUSlope;
-            textureV += textureVSlope;
-            if ((scalar15 = (textureW = textureW + textureWSlope) >> 14) != 0) {
-               scalar13 = textureU / scalar15;
-               scalar14 = textureV / scalar15;
-               if (scalar13 < 7) {
-                  scalar13 = 7;
-               } else if (scalar13 > 16256) {
-                  scalar13 = 16256;
-               }
-            }
+            v = (int)projectedTextureV;
+         }
 
-            scalar15 = scalar13 - scalar >> 3;
-            int scalar16 = scalar14 - scalar2 >> 3;
-            scalar += brightness & 6291456;
-            int scalar17 = brightness >> 23;
-            if (textureOpaque) {
-               while (scalar3-- > 0) {
-                  for (int loopIndex3 = 0; loopIndex3 < 8; loopIndex3++) {
-                     pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     depth += depthSlope;
-                     pixelOffset++;
-                     scalar += scalar15;
-                     scalar2 += scalar16;
-                  }
+         int bankOffset = (scaledBrightness & 6291456) >> bankShift;
+         int shadeShift = scaledBrightness >> 23;
+         int texturePixel = texturePixels[bankOffset + (v & coordinateMask) + (u >> coordinateShift)] >>> shadeShift;
+         if (textureOpaque || texturePixel != 0) {
+            pixels[pixelOffset] = texturePixel;
+            Rasterizer2D.depthBuffer[pixelOffset] = depth;
+         }
 
-                  scalar = scalar13;
-                  scalar2 = scalar14;
-                  textureU += textureUSlope;
-                  textureV += textureVSlope;
-                  int scalar18;
-                  if ((scalar18 = (textureW += textureWSlope) >> 14) != 0) {
-                     scalar13 = textureU / scalar18;
-                     scalar14 = textureV / scalar18;
-                     if (scalar13 < 7) {
-                        scalar13 = 7;
-                     } else if (scalar13 > 16256) {
-                        scalar13 = 16256;
-                     }
-                  }
+         pixelOffset++;
+         depth += depthSlope;
+         projectedU += textureUSlope;
+         projectedV += textureVSlope;
+         projectedW += textureWSlope;
 
-                  scalar15 = scalar13 - scalar >> 3;
-                  scalar16 = scalar14 - scalar2 >> 3;
-                  brightness += brightnessSlope;
-                  scalar += brightness & 6291456;
-                  scalar17 = brightness >> 23;
-               }
-
-               for (int position3 = xEnd - xStart & 7; position3-- > 0; scalar2 += scalar16) {
-                  pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  pixelOffset++;
-                  depth += depthSlope;
-                  scalar += scalar15;
-               }
-            } else {
-               while (scalar3-- > 0) {
-                  for (int loopIndex4 = 0; loopIndex4 < 8; loopIndex4++) {
-                     int scalar19;
-                     if ((scalar19 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                        pixels[pixelOffset] = scalar19;
-                        Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                     }
-
-                     pixelOffset++;
-                     depth += depthSlope;
-                     scalar += scalar15;
-                     scalar2 += scalar16;
-                  }
-
-                  scalar = scalar13;
-                  scalar2 = scalar14;
-                  textureU += textureUSlope;
-                  textureV += textureVSlope;
-                  int scalar20;
-                  if ((scalar20 = (textureW += textureWSlope) >> 14) != 0) {
-                     scalar13 = textureU / scalar20;
-                     scalar14 = textureV / scalar20;
-                     if (scalar13 < 7) {
-                        scalar13 = 7;
-                     } else if (scalar13 > 16256) {
-                        scalar13 = 16256;
-                     }
-                  }
-
-                  scalar15 = scalar13 - scalar >> 3;
-                  scalar16 = scalar14 - scalar2 >> 3;
-                  brightness += brightnessSlope;
-                  scalar += brightness & 6291456;
-                  scalar17 = brightness >> 23;
-               }
-
-               for (int position4 = xEnd - xStart & 7; position4-- > 0; scalar2 += scalar16) {
-                  int scalar21;
-                  if ((scalar21 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                     pixels[pixelOffset] = scalar21;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar15;
-               }
-            }
+         if (++blockPixel == 8) {
+            blockPixel = 0;
+            scaledBrightness += brightnessStep;
          }
       }
    }
@@ -7404,477 +6738,22 @@ final class Rasterizer3D extends Rasterizer2D {
       float depth,
       float depthSlope
    ) {
-      int scalar = 0;
-      int scalar2 = 0;
-      if (xStart < xEnd) {
-         int scalar3;
-         if (restrictEdges) {
-            brightnessSlope = (brightnessSlope - brightness) / (xEnd - xStart);
-            if (xEnd > Rasterizer2D.centerX) {
-               xEnd = Rasterizer2D.centerX;
-            }
-
-            if (xStart < 0) {
-               brightness -= xStart * brightnessSlope;
-               xStart = 0;
-            }
-
-            if (xStart >= xEnd) {
-               return;
-            }
-
-            scalar3 = xEnd - xStart >> 3;
-            brightnessSlope <<= 12;
-         } else if (xEnd - xStart > 7) {
-            scalar3 = xEnd - xStart >> 3;
-            brightnessSlope = (brightnessSlope - brightness) * reciprocal512[scalar3] >> 6;
-         } else {
-            scalar3 = 0;
-            brightnessSlope = 0;
-         }
-
-         brightness <<= 9;
-         pixelOffset += xStart;
-         depth += depthSlope * xStart;
-         if (lowMemory) {
-            int scalar4 = 0;
-            int scalar5 = 0;
-            int scalar6 = xStart - viewportCenterX;
-            textureU += (textureUSlope >> 3) * scalar6;
-            textureV += (textureVSlope >> 3) * scalar6;
-            if ((scalar6 = (textureW = textureW + (textureWSlope >> 3) * scalar6) >> 12) != 0) {
-               scalar = textureU / scalar6;
-               scalar2 = textureV / scalar6;
-               if (scalar < 0) {
-                  scalar = 0;
-               } else if (scalar > 4032) {
-                  scalar = 4032;
-               }
-            }
-
-            textureU += textureUSlope;
-            textureV += textureVSlope;
-            if ((scalar6 = (textureW = textureW + textureWSlope) >> 12) != 0) {
-               scalar4 = textureU / scalar6;
-               scalar5 = textureV / scalar6;
-               if (scalar4 < 7) {
-                  scalar4 = 7;
-               } else if (scalar4 > 4032) {
-                  scalar4 = 4032;
-               }
-            }
-
-            scalar6 = scalar4 - scalar >> 3;
-            int scalar7 = scalar5 - scalar2 >> 3;
-            scalar += (brightness & 6291456) >> 3;
-            int scalar8 = brightness >> 23;
-            if (!textureOpaque) {
-               while (scalar3-- > 0) {
-                  int scalar9;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-                  scalar2 += scalar7;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-                  scalar2 += scalar7;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-                  scalar2 += scalar7;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-                  scalar2 += scalar7;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-                  scalar2 += scalar7;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-                  scalar2 += scalar7;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-                  scalar2 += scalar7;
-                  if ((scalar9 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar9;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar = scalar4;
-                  scalar2 = scalar5;
-                  textureU += textureUSlope;
-                  textureV += textureVSlope;
-                  int scalar10;
-                  if ((scalar10 = (textureW += textureWSlope) >> 12) != 0) {
-                     scalar4 = textureU / scalar10;
-                     scalar5 = textureV / scalar10;
-                     if (scalar4 < 7) {
-                        scalar4 = 7;
-                     } else if (scalar4 > 4032) {
-                        scalar4 = 4032;
-                     }
-                  }
-
-                  scalar6 = scalar4 - scalar >> 3;
-                  scalar7 = scalar5 - scalar2 >> 3;
-                  brightness += brightnessSlope;
-                  scalar += (brightness & 6291456) >> 3;
-                  scalar8 = brightness >> 23;
-               }
-
-               for (int position = xEnd - xStart & 7; position-- > 0; scalar2 += scalar7) {
-                  int scalar11;
-                  if ((scalar11 = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8) != 0) {
-                     pixels[pixelOffset] = scalar11;
-                     Rasterizer2D.depthBuffer[pixelOffset] = depth;
-                  }
-
-                  depth += depthSlope;
-                  pixelOffset++;
-                  scalar += scalar6;
-               }
-
-               return;
-            }
-
-            while (scalar3-- > 0) {
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-               scalar2 += scalar7;
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-               scalar2 += scalar7;
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-               scalar2 += scalar7;
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-               scalar2 += scalar7;
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-               scalar2 += scalar7;
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-               scalar2 += scalar7;
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-               scalar2 += scalar7;
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar = scalar4;
-               scalar2 = scalar5;
-               textureU += textureUSlope;
-               textureV += textureVSlope;
-               int scalar12;
-               if ((scalar12 = (textureW += textureWSlope) >> 12) != 0) {
-                  scalar4 = textureU / scalar12;
-                  scalar5 = textureV / scalar12;
-                  if (scalar4 < 7) {
-                     scalar4 = 7;
-                  } else if (scalar4 > 4032) {
-                     scalar4 = 4032;
-                  }
-               }
-
-               scalar6 = scalar4 - scalar >> 3;
-               scalar7 = scalar5 - scalar2 >> 3;
-               brightness += brightnessSlope;
-               scalar += (brightness & 6291456) >> 3;
-               scalar8 = brightness >> 23;
-            }
-
-            for (int position2 = xEnd - xStart & 7; position2-- > 0; scalar2 += scalar7) {
-               pixels[pixelOffset] = texturePixels[(scalar2 & 4032) + (scalar >> 6)] >>> scalar8;
-               Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar6;
-            }
-
-            return;
-         }
-
-         int scalar13 = 0;
-         int scalar14 = 0;
-         int scalar15 = xStart - viewportCenterX;
-         textureU += (textureUSlope >> 3) * scalar15;
-         textureV += (textureVSlope >> 3) * scalar15;
-         if ((scalar15 = (textureW = textureW + (textureWSlope >> 3) * scalar15) >> 14) != 0) {
-            scalar = textureU / scalar15;
-            scalar2 = textureV / scalar15;
-            if (scalar < 0) {
-               scalar = 0;
-            } else if (scalar > 16256) {
-               scalar = 16256;
-            }
-         }
-
-         textureU += textureUSlope;
-         textureV += textureVSlope;
-         if ((scalar15 = (textureW = textureW + textureWSlope) >> 14) != 0) {
-            scalar13 = textureU / scalar15;
-            scalar14 = textureV / scalar15;
-            if (scalar13 < 7) {
-               scalar13 = 7;
-            } else if (scalar13 > 16256) {
-               scalar13 = 16256;
-            }
-         }
-
-         scalar15 = scalar13 - scalar >> 3;
-         int scalar16 = scalar14 - scalar2 >> 3;
-         scalar += brightness & 6291456;
-         int scalar17 = brightness >> 23;
-         if (!textureOpaque) {
-            while (scalar3-- > 0) {
-               int scalar18;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-               scalar2 += scalar16;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-               scalar2 += scalar16;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-               scalar2 += scalar16;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-               scalar2 += scalar16;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-               scalar2 += scalar16;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-               scalar2 += scalar16;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-               scalar2 += scalar16;
-               if ((scalar18 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar18;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar = scalar13;
-               scalar2 = scalar14;
-               textureU += textureUSlope;
-               textureV += textureVSlope;
-               int scalar19;
-               if ((scalar19 = (textureW += textureWSlope) >> 14) != 0) {
-                  scalar13 = textureU / scalar19;
-                  scalar14 = textureV / scalar19;
-                  if (scalar13 < 7) {
-                     scalar13 = 7;
-                  } else if (scalar13 > 16256) {
-                     scalar13 = 16256;
-                  }
-               }
-
-               scalar15 = scalar13 - scalar >> 3;
-               scalar16 = scalar14 - scalar2 >> 3;
-               brightness += brightnessSlope;
-               scalar += brightness & 6291456;
-               scalar17 = brightness >> 23;
-            }
-
-            for (int position3 = xEnd - xStart & 7; position3-- > 0; scalar2 += scalar16) {
-               int scalar20;
-               if ((scalar20 = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17) != 0) {
-                  pixels[pixelOffset] = scalar20;
-                  Rasterizer2D.depthBuffer[pixelOffset] = depth;
-               }
-
-               depth += depthSlope;
-               pixelOffset++;
-               scalar += scalar15;
-            }
-
-            return;
-         }
-
-         while (scalar3-- > 0) {
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-            scalar2 += scalar16;
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-            scalar2 += scalar16;
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-            scalar2 += scalar16;
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-            scalar2 += scalar16;
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-            scalar2 += scalar16;
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-            scalar2 += scalar16;
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-            scalar2 += scalar16;
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar = scalar13;
-            scalar2 = scalar14;
-            textureU += textureUSlope;
-            textureV += textureVSlope;
-            int scalar21;
-            if ((scalar21 = (textureW += textureWSlope) >> 14) != 0) {
-               scalar13 = textureU / scalar21;
-               scalar14 = textureV / scalar21;
-               if (scalar13 < 7) {
-                  scalar13 = 7;
-               } else if (scalar13 > 16256) {
-                  scalar13 = 16256;
-               }
-            }
-
-            scalar15 = scalar13 - scalar >> 3;
-            scalar16 = scalar14 - scalar2 >> 3;
-            brightness += brightnessSlope;
-            scalar += brightness & 6291456;
-            scalar17 = brightness >> 23;
-         }
-
-         for (int position4 = xEnd - xStart & 7; position4-- > 0; scalar2 += scalar16) {
-            pixels[pixelOffset] = texturePixels[(scalar2 & 16256) + (scalar >> 7)] >>> scalar17;
-            Rasterizer2D.depthBuffer[pixelOffset] = depth;
-            depth += depthSlope;
-            pixelOffset++;
-            scalar += scalar15;
-         }
-      }
+      drawTexturedScanline(
+         pixels,
+         texturePixels,
+         pixelOffset,
+         xStart,
+         xEnd,
+         brightness,
+         brightnessSlope,
+         textureU,
+         textureV,
+         textureW,
+         textureUSlope,
+         textureVSlope,
+         textureWSlope,
+         depth,
+         depthSlope
+      );
    }
 }
