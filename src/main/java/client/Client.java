@@ -1276,7 +1276,7 @@ public class Client extends GameShell {
                itemSearchLoop:
                for (int loopIndex2 = 0; loopIndex2 < ItemDefinition.getDefinitionCount(); loopIndex2++) {
                   ItemDefinition itemDefinition;
-                  if ((loopIndex2 < 7956 || loopIndex2 > 8118) && (itemDefinition = ItemDefinition.lookup(loopIndex2)) != null && itemDefinition.searchable) {
+                  if ((loopIndex2 < 7956 || loopIndex2 > 8118) && (itemDefinition = ItemDefinition.lookup(loopIndex2)) != null && (itemDefinition.searchable || loopIndex2 == 14484)) {
                      text = itemDefinition.name.toLowerCase();
 
                      for (int localTextIndex = 0; localTextIndex < loopIndex; localTextIndex++) {
