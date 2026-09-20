@@ -11,6 +11,7 @@ public final class ClientSettings {
       new ClientSettings("XP_DROPS", 3),
       new ClientSettings("SMOOTH_RENDER", 1),
       new ClientSettings("SHOW_TITLEBAR", 1),
+      new ClientSettings("UI_SCALE_PERCENT", 1),
       new ClientSettings("WILDY_LVL_RANGE", 2),
       new ClientSettings("COMBAT_BOX", 1),
       new ClientSettings("SKILL_BOX", 1),
@@ -109,6 +110,8 @@ public final class ClientSettings {
                   Client.autoScreenshots = Integer.parseInt(newText[0]) == 1;
                } else if (sourceText.equals("SHOW_TITLEBAR")) {
                   Client.showTitlebar = Integer.parseInt(newText[0]) == 1;
+               } else if (sourceText.equals("UI_SCALE_PERCENT")) {
+                  Client.uiScalePercent = Client.clampUiScalePercent(Integer.parseInt(newText[0]));
                } else if (sourceText.equals("AUTO_LOGIN")) {
                   Client.autoLogin = Integer.parseInt(newText[0]) == 1;
                } else if (sourceText.equals("LOGO")) {
@@ -443,6 +446,13 @@ public final class ClientSettings {
             writeLine(bufferedWriter, "//1 = enable, 0 = disable\t//shows/hides titlebar, recommended to hide for fullscreen");
             writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "[SHOW_TITLEBAR];1");
+            writeLine(bufferedWriter, "");
+            writeLine(bufferedWriter, "//UI_SCALE_PERCENT - Parameters for customization:");
+            writeLine(bufferedWriter, "//50-200 = UI scale percentage, 100 = original size");
+            writeLine(bufferedWriter, "//Applies to chatbox, sidebar/tabs and minimap in resizable/fullscreen mode.");
+            writeLine(bufferedWriter, "//Large values may overlap on very small windows.");
+            writeLine(bufferedWriter, "");
+            writeLine(bufferedWriter, "[UI_SCALE_PERCENT];100");
             writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "//FISH_ICONS - Parameters for customization:");
             writeLine(bufferedWriter, "//1 = enable, 0 = disable\t//shows fish icons over fishing spots");
