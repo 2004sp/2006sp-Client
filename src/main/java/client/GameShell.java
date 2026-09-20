@@ -40,13 +40,19 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    int mouseButtonDown;
    public int mouseX;
    public int mouseY;
+   int rawMouseX;
+   int rawMouseY;
    private int pendingMouseButton;
    private int pendingClickX;
    private int pendingClickY;
+   private int rawPendingClickX;
+   private int rawPendingClickY;
    private long pendingClickTime;
    int clickButton;
    int clickX;
    int clickY;
+   int rawClickX;
+   int rawClickY;
    long clickTime;
    final int[] keyStatus = new int[128];
    private final int[] keyQueue = new int[128];
@@ -149,6 +155,8 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             this.clickButton = this.pendingMouseButton;
             this.clickX = this.pendingClickX;
             this.clickY = this.pendingClickY;
+            this.rawClickX = this.rawPendingClickX;
+            this.rawClickY = this.rawPendingClickY;
             this.clickTime = this.pendingClickTime;
             this.pendingMouseButton = 0;
             this.processGameLoop();
@@ -269,6 +277,8 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          pendingClickYOrGetY -= 22;
       }
 
+      int rawPendingClickXOrGetX = pendingClickXOrGetX;
+      int rawPendingClickYOrGetY = pendingClickYOrGetY;
       long translatedUiPoint = Client.translateUiInputCoordinates(pendingClickXOrGetX, pendingClickYOrGetY);
       pendingClickXOrGetX = (int)(translatedUiPoint >> 32);
       pendingClickYOrGetY = (int)translatedUiPoint;
@@ -279,6 +289,8 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          int pendingClickY = this.pendingClickY;
          this.pendingClickX = pendingClickXOrGetX;
          this.pendingClickY = pendingClickYOrGetY;
+         this.rawPendingClickX = rawPendingClickXOrGetX;
+         this.rawPendingClickY = rawPendingClickYOrGetY;
          long pendingClickTime = this.pendingClickTime;
          this.pendingClickTime = System.currentTimeMillis();
          if (mouseEvent.getButton() == 2) {
@@ -357,6 +369,8 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
       this.idleTime = 0;
       this.mouseX = -1;
       this.mouseY = -1;
+      this.rawMouseX = -1;
+      this.rawMouseY = -1;
    }
 
    @Override
@@ -372,6 +386,9 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          mouseXOrGetX -= 4;
          mouseYOrGetY -= 22;
       }
+
+      this.rawMouseX = mouseXOrGetX;
+      this.rawMouseY = mouseYOrGetY;
 
       if (this.middleMouseDown) {
          mouseYOrGetY = this.middleMouseX - mouseEvent.getX();
@@ -407,6 +424,8 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          mouseYOrGetY -= 22;
       }
 
+      this.rawMouseX = mouseXOrGetX;
+      this.rawMouseY = mouseYOrGetY;
       long translatedUiPoint = Client.translateUiInputCoordinates(mouseXOrGetX, mouseYOrGetY);
       mouseXOrGetX = (int)(translatedUiPoint >> 32);
       mouseYOrGetY = (int)translatedUiPoint;
