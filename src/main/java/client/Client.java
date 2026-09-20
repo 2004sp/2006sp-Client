@@ -64,6 +64,8 @@ public class Client extends GameShell {
    private static final int RESIZABLE_TAB_UI_HEIGHT = 335;
    private static final int RESIZABLE_MINIMAP_UI_WIDTH = 241;
    private static final int RESIZABLE_MINIMAP_UI_HEIGHT = 177;
+   private static final int CENTERED_INTERFACE_UI_WIDTH = 512;
+   private static final int CENTERED_INTERFACE_UI_HEIGHT = 334;
    public static int logoStyle = 0;
    public static boolean customSettingVisiblePlayerNames = false;
    public static String version = "v1.0";
@@ -661,6 +663,8 @@ public class Client extends GameShell {
    private int[] uiMinimapComposite;
    private int[] uiMenuBackground;
    private int[] uiMenuComposite;
+   private int[] uiOpenInterfaceBackground;
+   private int[] uiOpenInterfaceComposite;
    private static int[][] bankTabItemIds;
    private int[][] bankTabItemAmounts;
    private String bankTitle = "";
@@ -1113,6 +1117,21 @@ public class Client extends GameShell {
          return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
       }
 
+      Client client = clientInstance;
+      if (client != null && client.shouldScaleCenteredOpenInterface()) {
+         int interfaceWidth = scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH);
+         int interfaceHeight = scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT);
+         int interfaceLeft = (clientWidth - interfaceWidth) / 2;
+         int interfaceTop = (clientHeight - interfaceHeight) / 2;
+         if (isInsideRectangle(x, y, interfaceLeft, interfaceTop, interfaceWidth, interfaceHeight)) {
+            int logicalLeft = clientWidth / 2 - CENTERED_INTERFACE_UI_WIDTH / 2;
+            int logicalTop = clientHeight / 2 - CENTERED_INTERFACE_UI_HEIGHT / 2;
+            int logicalX = logicalLeft + (x - interfaceLeft) * CENTERED_INTERFACE_UI_WIDTH / interfaceWidth;
+            int logicalY = logicalTop + (y - interfaceTop) * CENTERED_INTERFACE_UI_HEIGHT / interfaceHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
+      }
+
       return ((long)x << 32) | (y & 0xffffffffL);
    }
 
@@ -1346,6 +1365,113 @@ public class Client extends GameShell {
       return this.translateContextMenuY(this.getMenuClickY());
    }
 
+   private boolean shouldScaleCenteredOpenInterface() {
+      if (screenMode == 0
+         || clampUiScalePercent(uiScalePercent) == 100
+         || this.openInterfaceId == -1
+         || Widget.widgets == null
+         || this.openInterfaceId < 0
+         || this.openInterfaceId >= Widget.widgets.length
+         || Widget.widgets[this.openInterfaceId] == null
+         || !shouldCenterInterface(Widget.widgets[this.openInterfaceId])
+         || clientWidth < CENTERED_INTERFACE_UI_WIDTH
+         || clientHeight < CENTERED_INTERFACE_UI_HEIGHT
+         || this.gameScreenImageProducer == null
+         || this.gameScreenImageProducer.getWidth() != clientWidth
+         || this.gameScreenImageProducer.getHeight() != clientHeight) {
+         return false;
+      }
+      return true;
+   }
+
+   private int getScaledCenteredInterfaceLeft() {
+      return (clientWidth - scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH)) / 2;
+   }
+
+   private int getScaledCenteredInterfaceTop() {
+      return (clientHeight - scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT)) / 2;
+   }
+
+   private boolean isRawPointInScaledCenteredOpenInterface(int x, int y) {
+      if (!this.shouldScaleCenteredOpenInterface()) {
+         return false;
+      }
+
+      return isInsideRectangle(
+         x,
+         y,
+         this.getScaledCenteredInterfaceLeft(),
+         this.getScaledCenteredInterfaceTop(),
+         scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH),
+         scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT)
+      );
+   }
+
+   private void ensureCenteredOpenInterfaceScaleBuffers() {
+      int size = CENTERED_INTERFACE_UI_WIDTH * CENTERED_INTERFACE_UI_HEIGHT;
+      if (this.uiOpenInterfaceBackground == null || this.uiOpenInterfaceBackground.length != size) {
+         this.uiOpenInterfaceBackground = new int[size];
+         this.uiOpenInterfaceComposite = new int[size];
+      }
+   }
+
+   private void captureCenteredOpenInterfaceBackground() {
+      if (!this.shouldScaleCenteredOpenInterface()) {
+         return;
+      }
+
+      this.ensureCenteredOpenInterfaceScaleBuffers();
+      this.copyUiRegion(
+         this.gameScreenImageProducer.pixels,
+         clientWidth / 2 - CENTERED_INTERFACE_UI_WIDTH / 2,
+         clientHeight / 2 - CENTERED_INTERFACE_UI_HEIGHT / 2,
+         CENTERED_INTERFACE_UI_WIDTH,
+         CENTERED_INTERFACE_UI_HEIGHT,
+         this.uiOpenInterfaceBackground
+      );
+   }
+
+   private void scaleCenteredOpenInterfaceAfterRender() {
+      if (!this.shouldScaleCenteredOpenInterface()) {
+         return;
+      }
+
+      this.ensureCenteredOpenInterfaceScaleBuffers();
+      int logicalLeft = clientWidth / 2 - CENTERED_INTERFACE_UI_WIDTH / 2;
+      int logicalTop = clientHeight / 2 - CENTERED_INTERFACE_UI_HEIGHT / 2;
+      int[] pixels = this.gameScreenImageProducer.pixels;
+
+      this.copyUiRegion(
+         pixels,
+         logicalLeft,
+         logicalTop,
+         CENTERED_INTERFACE_UI_WIDTH,
+         CENTERED_INTERFACE_UI_HEIGHT,
+         this.uiOpenInterfaceComposite
+      );
+      this.restoreUiRegion(
+         pixels,
+         logicalLeft,
+         logicalTop,
+         CENTERED_INTERFACE_UI_WIDTH,
+         CENTERED_INTERFACE_UI_HEIGHT,
+         this.uiOpenInterfaceBackground
+      );
+
+      int scaledWidth = scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH);
+      int scaledHeight = scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT);
+      this.drawScaledUiRegion(
+         this.uiOpenInterfaceComposite,
+         this.uiOpenInterfaceBackground,
+         CENTERED_INTERFACE_UI_WIDTH,
+         CENTERED_INTERFACE_UI_HEIGHT,
+         (clientWidth - scaledWidth) / 2,
+         (clientHeight - scaledHeight) / 2,
+         scaledWidth,
+         scaledHeight
+      );
+   }
+
    private void captureResizableUiBackground() {
       if (!this.shouldScaleResizableUi()) {
          return;
@@ -1506,7 +1632,9 @@ public class Client extends GameShell {
          }
       }
 
-      if (this.openInterfaceId != -1) {
+      if (this.openInterfaceId != -1
+         && (!this.shouldScaleCenteredOpenInterface()
+            || this.isRawPointInScaledCenteredOpenInterface(super.rawMouseX, super.rawMouseY))) {
          Widget widget2 = Widget.widgets[this.openInterfaceId];
          int widgets3 = 1;
          if (shouldCenterInterface(widget2)) {
@@ -10759,11 +10887,19 @@ public class Client extends GameShell {
                   }
 
                   if (shouldCenterInterface(widget)) {
-                     if (this.openInterfaceId != -1
-                        && super.mouseX > clientWidth / 2 - 256 + 4
-                        && super.mouseY > clientHeight / 2 - 167 + 4
-                        && super.mouseX < clientWidth / 2 + 256 + 4
-                        && super.mouseY < clientHeight / 2 + 167 + 4) {
+                     boolean mouseOverCenteredInterface = false;
+                     if (this.openInterfaceId != -1) {
+                        if (this.shouldScaleCenteredOpenInterface()) {
+                           mouseOverCenteredInterface = this.isRawPointInScaledCenteredOpenInterface(super.rawMouseX, super.rawMouseY);
+                        } else {
+                           mouseOverCenteredInterface = super.mouseX > clientWidth / 2 - 256 + 4
+                              && super.mouseY > clientHeight / 2 - 167 + 4
+                              && super.mouseX < clientWidth / 2 + 256 + 4
+                              && super.mouseY < clientHeight / 2 + 167 + 4;
+                        }
+                     }
+
+                     if (mouseOverCenteredInterface) {
                         this.buildInterfaceMenu(
                            clientWidth / 2 - 256 + 4, Widget.widgets[this.openInterfaceId], super.mouseX, clientHeight / 2 - 167 + 4, super.mouseY, 0
                         );
@@ -15878,6 +16014,7 @@ public class Client extends GameShell {
       }
 
       if (this.openInterfaceId != -1) {
+         this.captureCenteredOpenInterfaceBackground();
          this.animateInterface(this.animationCycleDelta, this.openInterfaceId);
          if (screenMode != 0 && shouldCenterInterface(Widget.widgets[this.openInterfaceId])) {
             this.drawInterface(0, screenMode == 0 ? 0 : clientWidth / 2 - 256, Widget.widgets[this.openInterfaceId], screenMode == 0 ? 0 : clientHeight / 2 - 167);
@@ -15911,6 +16048,7 @@ public class Client extends GameShell {
             }
          }
 
+         this.scaleCenteredOpenInterfaceAfterRender();
          this.captureResizableUiBackground();
          this.drawChatArea();
          this.drawTabArea();
