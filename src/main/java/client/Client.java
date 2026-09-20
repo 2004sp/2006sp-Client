@@ -911,6 +911,14 @@ public class Client extends GameShell {
          if (ClientWindow.getInstance() != null) {
             ClientWindow.menuBar.add(ClientWindow.windowedModeButton);
          }
+
+         // Fullscreen changes clientWidth/clientHeight immediately, so rebuild
+         // every raster/image buffer before the next draw pass. Previously the
+         // fullscreen branch waited for a later component-resize tick, leaving
+         // gameScreenImageProducer at the old window size for one frame. UI
+         // scaling then copied regions using the new fullscreen stride and
+         // could run past the old pixel buffer (especially at 200% scale).
+         this.rebuildViewportBuffers();
       } else {
          if (super.fullscreenActive) {
             super.restoreWindowedMode();
