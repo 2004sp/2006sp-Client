@@ -656,6 +656,8 @@ public class Client extends GameShell {
    private int[] uiTabBackground;
    private int[] uiTabComposite;
    private int[] uiMinimapBackground;
+   private int[] uiMinimapPreFrame;
+   private int[] uiMinimapPostFrame;
    private int[] uiMinimapComposite;
    private static int[][] bankTabItemIds;
    private int[][] bankTabItemAmounts;
@@ -1126,6 +1128,8 @@ public class Client extends GameShell {
       }
       if (this.uiMinimapBackground == null || this.uiMinimapBackground.length != minimapSize) {
          this.uiMinimapBackground = new int[minimapSize];
+         this.uiMinimapPreFrame = new int[minimapSize];
+         this.uiMinimapPostFrame = new int[minimapSize];
          this.uiMinimapComposite = new int[minimapSize];
       }
    }
@@ -1147,6 +1151,82 @@ public class Client extends GameShell {
          System.arraycopy(source, sourceOffset, destinationPixels, destinationOffset, width);
          sourceOffset += width;
          destinationOffset += clientWidth;
+      }
+   }
+
+   private void captureResizableMinimapLayer(int[] destination) {
+      if (!this.shouldScaleResizableUi()) {
+         return;
+      }
+
+      this.ensureResizableUiScaleBuffers();
+      this.copyUiRegion(
+         this.gameScreenImageProducer.pixels,
+         clientWidth - RESIZABLE_MINIMAP_UI_WIDTH,
+         0,
+         RESIZABLE_MINIMAP_UI_WIDTH,
+         RESIZABLE_MINIMAP_UI_HEIGHT,
+         destination
+      );
+   }
+
+   /**
+    * Draws an ARGB sprite into the scaled minimap region without first
+    * compositing it against the unscaled 3D scene. The normal post-process
+    * scaler can copy opaque UI pixels directly, but the minimap frame uses
+    * per-pixel alpha. Copying those already-blended pixels to a new position
+    * also copies bits of the old scene background, which produces the moving
+    * ghost/halo artifacts visible around the minimap while rotating.
+    */
+   private void drawScaledMinimapArgbSprite(Sprite sprite, int sourceRegionX) {
+      if (sprite == null) {
+         return;
+      }
+
+      int destinationWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
+      int destinationHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
+      int destinationLeft = clientWidth - destinationWidth;
+      int[] destination = this.gameScreenImageProducer.pixels;
+      int spriteLeft = sourceRegionX + sprite.xOffset;
+      int spriteTop = sprite.yOffset;
+
+      for (int y = 0; y < destinationHeight; ++y) {
+         int sourceY = y * RESIZABLE_MINIMAP_UI_HEIGHT / destinationHeight;
+         int spriteY = sourceY - spriteTop;
+         if (spriteY < 0 || spriteY >= sprite.spriteHeight) {
+            continue;
+         }
+
+         int destinationRow = y * clientWidth;
+         int spriteRow = spriteY * sprite.spriteWidth;
+         for (int x = 0; x < destinationWidth; ++x) {
+            int sourceX = x * RESIZABLE_MINIMAP_UI_WIDTH / destinationWidth;
+            int spriteX = sourceX - spriteLeft;
+            if (spriteX < 0 || spriteX >= sprite.spriteWidth) {
+               continue;
+            }
+
+            int sourcePixel = sprite.pixels[spriteRow + spriteX];
+            if (sourcePixel == 0) {
+               continue;
+            }
+
+            int alpha = sourcePixel >>> 24;
+            if (alpha == 0) {
+               continue;
+            }
+
+            int destinationIndex = destinationRow + destinationLeft + x;
+            int destinationPixel = destination[destinationIndex];
+            int inverseAlpha = 256 - alpha;
+            destination[destinationIndex] = ((sourcePixel & 16711935) * alpha
+                  + (destinationPixel & 16711935) * inverseAlpha
+                  & -16711936)
+               + ((sourcePixel & 0xFF00) * alpha
+                  + (destinationPixel & 0xFF00) * inverseAlpha
+                  & 0xFF0000)
+               >> 8;
+         }
       }
    }
 
@@ -1311,9 +1391,29 @@ public class Client extends GameShell {
          tabWidth,
          tabHeight
       );
+      // Scale the minimap in layers. The rotating map/compass are opaque and
+      // can use the normal changed-pixel scaler. The frame itself is ARGB, so
+      // redraw it against the scaled destination instead of moving pixels that
+      // were already blended with the unscaled world behind it.
+      this.drawScaledUiRegion(
+         this.uiMinimapPreFrame,
+         this.uiMinimapBackground,
+         RESIZABLE_MINIMAP_UI_WIDTH,
+         RESIZABLE_MINIMAP_UI_HEIGHT,
+         clientWidth - minimapWidth,
+         0,
+         minimapWidth,
+         minimapHeight
+      );
+      if (this.minimapState == 2 && customSprites.length > 96) {
+         this.drawScaledMinimapArgbSprite(customSprites[96], 7);
+      }
+      if (customSprites.length > 95) {
+         this.drawScaledMinimapArgbSprite(customSprites[95], 0);
+      }
       this.drawScaledUiRegion(
          this.uiMinimapComposite,
-         this.uiMinimapBackground,
+         this.uiMinimapPostFrame,
          RESIZABLE_MINIMAP_UI_WIDTH,
          RESIZABLE_MINIMAP_UI_HEIGHT,
          clientWidth - minimapWidth,
@@ -16489,8 +16589,10 @@ public class Client extends GameShell {
          }
 
          if (screenMode != 0) {
+            this.captureResizableMinimapLayer(this.uiMinimapPreFrame);
             customSprites[96].drawArgbSprite(clientWidth - 234, 0);
             customSprites[95].drawArgbSprite(clientWidth - 241, 0);
+            this.captureResizableMinimapLayer(this.uiMinimapPostFrame);
          }
 
          compassSprite.drawRotatedMasked(33, this.minimapInt1, compassMaskLineWidths, 256, compassMaskLineOffsets, 25, screenMode == 0 ? 0 : 9, screenMode == 0 ? byteCode + 0 : clientWidth - 207, 33, 25);
@@ -16618,7 +16720,9 @@ public class Client extends GameShell {
 
          Rasterizer2D.fillRectangle(3, screenMode == 0 ? 78 : 87, screenMode == 0 ? byteCode + 97 : clientWidth - 110, 16777215, 3);
          if (screenMode != 0) {
+            this.captureResizableMinimapLayer(this.uiMinimapPreFrame);
             customSprites[95].drawArgbSprite(clientWidth - 241, 0);
+            this.captureResizableMinimapLayer(this.uiMinimapPostFrame);
          }
 
          if (orbsEnabled) {
