@@ -1036,6 +1036,37 @@ public class Client extends GameShell {
    }
 
    /**
+    * Returns the logical width of the complete resizable sidebar/tab region.
+    *
+    * In the wide 317-style layout all fourteen tab buttons occupy one row,
+    * which is substantially wider than the 241-pixel sidebar panel. Scaling
+    * only that sidebar rectangle leaves the first half of the row unscaled;
+    * the enlarged right half then covers the inventory/equipment/prayer/magic
+    * buttons. Capture the complete tab bar so it scales as one unit.
+    */
+   private static int getResizableTabUiWidth() {
+      Client client = clientInstance;
+      if (client == null || customSprites == null) {
+         return RESIZABLE_TAB_UI_WIDTH;
+      }
+
+      if (osrsResizableFrame && customSprites.length > 97 && customSprites[97] != null) {
+         return Math.max(RESIZABLE_TAB_UI_WIDTH, customSprites[97].canvasWidth);
+      }
+
+      int backgroundSpriteId = client.tabBarBackgroundSpriteId;
+      if (backgroundSpriteId >= 0
+         && backgroundSpriteId < customSprites.length
+         && customSprites[backgroundSpriteId] != null) {
+         int columns = clientWidth >= client.wideTabBarWidthThreshold ? 14 : 7;
+         int tabBarWidth = customSprites[backgroundSpriteId].canvasWidth * columns;
+         return Math.max(RESIZABLE_TAB_UI_WIDTH, tabBarWidth);
+      }
+
+      return RESIZABLE_TAB_UI_WIDTH;
+   }
+
+   /**
     * Converts physical mouse coordinates over a scaled resizable/fullscreen UI
     * panel back into the original 2006 UI coordinate space. World/viewport
     * coordinates are returned unchanged.
@@ -1055,13 +1086,14 @@ public class Client extends GameShell {
          return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
       }
 
-      int tabWidth = scaledUiDimension(RESIZABLE_TAB_UI_WIDTH);
+      int logicalTabWidth = getResizableTabUiWidth();
+      int tabWidth = scaledUiDimension(logicalTabWidth);
       int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
       int tabLeft = clientWidth - tabWidth;
       int tabTop = clientHeight - tabHeight;
       if (isInsideRectangle(x, y, tabLeft, tabTop, tabWidth, tabHeight)) {
-         int logicalX = clientWidth - RESIZABLE_TAB_UI_WIDTH
-            + (x - tabLeft) * RESIZABLE_TAB_UI_WIDTH / tabWidth;
+         int logicalX = clientWidth - logicalTabWidth
+            + (x - tabLeft) * logicalTabWidth / tabWidth;
          int logicalY = clientHeight - RESIZABLE_TAB_UI_HEIGHT
             + (y - tabTop) * RESIZABLE_TAB_UI_HEIGHT / tabHeight;
          return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
@@ -1082,7 +1114,7 @@ public class Client extends GameShell {
 
    private void ensureResizableUiScaleBuffers() {
       int chatSize = RESIZABLE_CHAT_UI_WIDTH * RESIZABLE_CHAT_UI_HEIGHT;
-      int tabSize = RESIZABLE_TAB_UI_WIDTH * RESIZABLE_TAB_UI_HEIGHT;
+      int tabSize = getResizableTabUiWidth() * RESIZABLE_TAB_UI_HEIGHT;
       int minimapSize = RESIZABLE_MINIMAP_UI_WIDTH * RESIZABLE_MINIMAP_UI_HEIGHT;
       if (this.uiChatBackground == null || this.uiChatBackground.length != chatSize) {
          this.uiChatBackground = new int[chatSize];
@@ -1155,8 +1187,10 @@ public class Client extends GameShell {
    }
 
    private boolean shouldScaleResizableUi() {
+      int tabUiWidth = getResizableTabUiWidth();
       return screenMode != 0 && clampUiScalePercent(uiScalePercent) != 100
          && clientWidth >= RESIZABLE_CHAT_UI_WIDTH
+         && clientWidth >= tabUiWidth
          && clientHeight >= RESIZABLE_TAB_UI_HEIGHT
          && this.gameScreenImageProducer != null
          && this.gameScreenImageProducer.getWidth() == clientWidth
@@ -1197,11 +1231,12 @@ public class Client extends GameShell {
          RESIZABLE_CHAT_UI_HEIGHT,
          this.uiChatBackground
       );
+      int tabUiWidth = getResizableTabUiWidth();
       this.copyUiRegion(
          pixels,
-         clientWidth - RESIZABLE_TAB_UI_WIDTH,
+         clientWidth - tabUiWidth,
          clientHeight - RESIZABLE_TAB_UI_HEIGHT,
-         RESIZABLE_TAB_UI_WIDTH,
+         tabUiWidth,
          RESIZABLE_TAB_UI_HEIGHT,
          this.uiTabBackground
       );
@@ -1222,7 +1257,8 @@ public class Client extends GameShell {
 
       int[] pixels = this.gameScreenImageProducer.pixels;
       int chatY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT;
-      int tabX = clientWidth - RESIZABLE_TAB_UI_WIDTH;
+      int tabUiWidth = getResizableTabUiWidth();
+      int tabX = clientWidth - tabUiWidth;
       int tabY = clientHeight - RESIZABLE_TAB_UI_HEIGHT;
       int minimapX = clientWidth - RESIZABLE_MINIMAP_UI_WIDTH;
 
@@ -1230,7 +1266,7 @@ public class Client extends GameShell {
          pixels, 0, chatY, RESIZABLE_CHAT_UI_WIDTH, RESIZABLE_CHAT_UI_HEIGHT, this.uiChatComposite
       );
       this.copyUiRegion(
-         pixels, tabX, tabY, RESIZABLE_TAB_UI_WIDTH, RESIZABLE_TAB_UI_HEIGHT, this.uiTabComposite
+         pixels, tabX, tabY, tabUiWidth, RESIZABLE_TAB_UI_HEIGHT, this.uiTabComposite
       );
       this.copyUiRegion(
          pixels, minimapX, 0, RESIZABLE_MINIMAP_UI_WIDTH, RESIZABLE_MINIMAP_UI_HEIGHT, this.uiMinimapComposite
@@ -1241,7 +1277,7 @@ public class Client extends GameShell {
          pixels, 0, chatY, RESIZABLE_CHAT_UI_WIDTH, RESIZABLE_CHAT_UI_HEIGHT, this.uiChatBackground
       );
       this.restoreUiRegion(
-         pixels, tabX, tabY, RESIZABLE_TAB_UI_WIDTH, RESIZABLE_TAB_UI_HEIGHT, this.uiTabBackground
+         pixels, tabX, tabY, tabUiWidth, RESIZABLE_TAB_UI_HEIGHT, this.uiTabBackground
       );
       this.restoreUiRegion(
          pixels, minimapX, 0, RESIZABLE_MINIMAP_UI_WIDTH, RESIZABLE_MINIMAP_UI_HEIGHT, this.uiMinimapBackground
@@ -1249,7 +1285,7 @@ public class Client extends GameShell {
 
       int chatWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
       int chatHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
-      int tabWidth = scaledUiDimension(RESIZABLE_TAB_UI_WIDTH);
+      int tabWidth = scaledUiDimension(tabUiWidth);
       int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
       int minimapWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
       int minimapHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
@@ -1268,7 +1304,7 @@ public class Client extends GameShell {
       this.drawScaledUiRegion(
          this.uiTabComposite,
          this.uiTabBackground,
-         RESIZABLE_TAB_UI_WIDTH,
+         tabUiWidth,
          RESIZABLE_TAB_UI_HEIGHT,
          clientWidth - tabWidth,
          clientHeight - tabHeight,
