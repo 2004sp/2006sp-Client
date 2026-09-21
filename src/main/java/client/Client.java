@@ -66,6 +66,19 @@ public class Client extends GameShell {
    private static final int RESIZABLE_MINIMAP_UI_HEIGHT = 177;
    private static final int CENTERED_INTERFACE_UI_WIDTH = 512;
    private static final int CENTERED_INTERFACE_UI_HEIGHT = 334;
+   private static final int CASTLE_WARS_WAITING_INTERFACE_ID = 6673;
+   private static final int CASTLE_WARS_WAITING_TIMER_TEXT_ID = 6570;
+   private static final int CASTLE_WARS_GAME_INTERFACE_ID = 11344;
+   private static final int CASTLE_WARS_ZAMORAK_SCORE_TEXT_ID = 11345;
+   private static final int CASTLE_WARS_SARADOMIN_SCORE_TEXT_ID = 11346;
+   private static final int CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID = 11349;
+   private static final int CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID = 11350;
+   private static final int CASTLE_WARS_MAIN_DOOR_TEXT_ID = 11352;
+   private static final int CASTLE_WARS_TIMER_TEXT_ID = 11353;
+   private static final int CASTLE_WARS_SIDE_DOOR_TEXT_ID = 11356;
+   private static final int CASTLE_WARS_TUNNEL_ONE_TEXT_ID = 11358;
+   private static final int CASTLE_WARS_TUNNEL_TWO_TEXT_ID = 11360;
+   private static final int CASTLE_WARS_CATAPULT_TEXT_ID = 11362;
    public static int logoStyle = 0;
    public static boolean customSettingVisiblePlayerNames = false;
    public static String version = "v1.0";
@@ -15728,6 +15741,55 @@ public class Client extends GameShell {
          return clientWidth >= 900 && clientHeight >= 650 ? true : widget != null && (widget.spriteXOffset != -1 || widget.spriteYOffset != -1);
       }
    }
+   private int getCastleWarsViewportWidth() {
+      if (this.gameScreenImageProducer != null) {
+         return this.gameScreenImageProducer.getWidth();
+      }
+      return screenMode == 0 ? 512 : clientWidth;
+   }
+
+   private int getCastleWarsViewportHeight() {
+      if (this.gameScreenImageProducer != null) {
+         return this.gameScreenImageProducer.getHeight();
+      }
+      return screenMode == 0 ? 334 : clientHeight;
+   }
+
+   private int getCastleWarsTopRightReservedWidth() {
+      if (screenMode == 0) {
+         return 0;
+      }
+      return scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
+   }
+
+   private int getCastleWarsBottomReservedHeight() {
+      if (screenMode == 0 || !this.chatMessagesVisible) {
+         return 0;
+      }
+      return scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+   }
+
+   private int getCastleWarsSafeTopCenterX() {
+      int width = this.getCastleWarsViewportWidth();
+      int right = Math.max(160, width - this.getCastleWarsTopRightReservedWidth());
+      return right / 2;
+   }
+
+   private void drawCastleWarsWaitingOverlay() {
+      String timer = this.getCastleWarsInterfaceText(CASTLE_WARS_WAITING_TIMER_TEXT_ID);
+      if (timer.length() == 0) {
+         return;
+      }
+
+      // All fixed gameframes render the 3D scene into the same 512x334 raster,
+      // while every resizable frame renders into the full client raster. Draw
+      // the waiting timer from those actual bounds instead of cache-authored
+      // frame coordinates so 317, 459, 474, 474+orbs and OSRS resizable all
+      // land in the same visible place.
+      this.richBoldFont.drawCenteredString(
+            timer, this.getCastleWarsSafeTopCenterX(), 32, 16777215, 0);
+   }
+
    private String getCastleWarsInterfaceText(int widgetId) {
       if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
             || Widget.widgets[widgetId] == null || Widget.widgets[widgetId].message == null) {
@@ -15833,11 +15895,13 @@ public class Client extends GameShell {
    }
 
    private int[] findCastleWarsWidgetPosition(int targetWidgetId) {
-      if (Widget.widgets == null || 11344 >= Widget.widgets.length) {
+      if (Widget.widgets == null
+            || CASTLE_WARS_GAME_INTERFACE_ID >= Widget.widgets.length) {
          return null;
       }
       return this.findCastleWarsWidgetPosition(
-            Widget.widgets[11344], targetWidgetId, 0, 0, 0);
+            Widget.widgets[CASTLE_WARS_GAME_INTERFACE_ID],
+            targetWidgetId, 0, 0, 0);
    }
 
    private int[] findCastleWarsWidgetPosition(Widget parent, int targetWidgetId,
@@ -15877,14 +15941,16 @@ public class Client extends GameShell {
    }
 
    private void drawCastleWarsNativeIconLayer(int statusX, int statusY) {
-      if (Widget.widgets == null || 11344 >= Widget.widgets.length
-            || 11349 >= Widget.widgets.length) {
+      if (Widget.widgets == null
+            || CASTLE_WARS_GAME_INTERFACE_ID >= Widget.widgets.length
+            || CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID >= Widget.widgets.length) {
          return;
       }
 
-      Widget root = Widget.widgets[11344];
-      Widget anchorText = Widget.widgets[11349];
-      int[] anchorPosition = this.findCastleWarsWidgetPosition(11349);
+      Widget root = Widget.widgets[CASTLE_WARS_GAME_INTERFACE_ID];
+      Widget anchorText = Widget.widgets[CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID];
+      int[] anchorPosition = this.findCastleWarsWidgetPosition(
+            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID);
       if (root == null || anchorText == null || anchorPosition == null) {
          return;
       }
@@ -15900,8 +15966,17 @@ public class Client extends GameShell {
       // The native widgets still evaluate configs 377/378, so the cache chooses
       // the proper Safe/Taken/Dropped, door, tunnel and catapult artwork.
       int[] textWidgetIds = new int[]{
-            11345, 11346, 11349, 11350, 11352, 11353,
-            11356, 11358, 11360, 11362, 11363, 11364, 11365, 11366
+            CASTLE_WARS_ZAMORAK_SCORE_TEXT_ID,
+            CASTLE_WARS_SARADOMIN_SCORE_TEXT_ID,
+            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID,
+            CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID,
+            CASTLE_WARS_MAIN_DOOR_TEXT_ID,
+            CASTLE_WARS_TIMER_TEXT_ID,
+            CASTLE_WARS_SIDE_DOOR_TEXT_ID,
+            CASTLE_WARS_TUNNEL_ONE_TEXT_ID,
+            CASTLE_WARS_TUNNEL_TWO_TEXT_ID,
+            CASTLE_WARS_CATAPULT_TEXT_ID,
+            11363, 11364, 11365, 11366
       };
       String[] messages = new String[textWidgetIds.length];
       String[] secondaryTexts = new String[textWidgetIds.length];
@@ -15934,14 +16009,15 @@ public class Client extends GameShell {
    private int getCastleWarsRelocatedTextBaselineY(int widgetId,
                                                    int anchorBaselineY) {
       if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
-            || 11349 >= Widget.widgets.length) {
+            || CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID >= Widget.widgets.length) {
          return anchorBaselineY;
       }
 
       Widget widget = Widget.widgets[widgetId];
-      Widget anchor = Widget.widgets[11349];
+      Widget anchor = Widget.widgets[CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID];
       int[] widgetPosition = this.findCastleWarsWidgetPosition(widgetId);
-      int[] anchorPosition = this.findCastleWarsWidgetPosition(11349);
+      int[] anchorPosition = this.findCastleWarsWidgetPosition(
+            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID);
       if (widget == null || anchor == null
             || widgetPosition == null || anchorPosition == null) {
          return anchorBaselineY;
@@ -15965,47 +16041,72 @@ public class Client extends GameShell {
    }
 
    private void drawCastleWarsGameOverlay() {
-      String zamorakScore = this.getCastleWarsInterfaceText(11345);
-      String saradominScore = this.getCastleWarsInterfaceText(11346);
-      String timer = this.getCastleWarsInterfaceText(11353);
-      int overlayWidth = screenMode == 0 ? 512 : clientWidth;
-      int overlayHeight = screenMode == 0 ? 334 : clientHeight;
+      String zamorakScore = this.getCastleWarsInterfaceText(
+            CASTLE_WARS_ZAMORAK_SCORE_TEXT_ID);
+      String saradominScore = this.getCastleWarsInterfaceText(
+            CASTLE_WARS_SARADOMIN_SCORE_TEXT_ID);
+      String timer = this.getCastleWarsInterfaceText(CASTLE_WARS_TIMER_TEXT_ID);
+      int overlayWidth = this.getCastleWarsViewportWidth();
+      int overlayHeight = this.getCastleWarsViewportHeight();
 
-      // Keep the score high and centered inside the actual game viewport in
-      // both fixed and resizable modes.
+      // Fixed 317/459/474 all use the same 512x334 scene raster. Resizable
+      // 474/474+orbs/OSRS use the full client raster, so reserve the scaled
+      // minimap area before centering top-of-screen Castle Wars information.
+      int safeTopRight = Math.max(160,
+            overlayWidth - this.getCastleWarsTopRightReservedWidth());
+      int scoreX = safeTopRight / 2;
       this.richBoldFont.drawCenteredString(
             zamorakScore + "     " + saradominScore,
-            overlayWidth / 2, 32, 16777215, 0);
+            scoreX, 32, 16777215, 0);
 
-      // Keep the team/objective state together at the left edge of the game
-      // viewport without depending on the cache-authored child coordinates.
+      // Keep the objective/status stack inside the visible scene even at high
+      // UI scales. The chatbox can cover the bottom-left of resizable frames,
+      // so clamp the cache-derived status block above that reserved region.
       int statusX = 10;
-      int statusY = Math.max(120, overlayHeight / 2 - 100);
-      this.drawCastleWarsNativeIconLayer(statusX, statusY);
-      this.drawCastleWarsStatusLine("Zamorak flag", 11349, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(11349, statusY));
-      this.drawCastleWarsStatusLine("Saradomin flag", 11350, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(11350, statusY));
-      this.drawCastleWarsStatusLine("Main door", 11352, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(11352, statusY));
-      this.drawCastleWarsStatusLine("Side door", 11356, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(11356, statusY));
-      this.drawCastleWarsStatusLine("Tunnel 1", 11358, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(11358, statusY));
-      this.drawCastleWarsStatusLine("Tunnel 2", 11360, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(11360, statusY));
-      this.drawCastleWarsStatusLine("Catapult", 11362, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(11362, statusY));
+      int lastStatusOffset = this.getCastleWarsRelocatedTextBaselineY(
+            CASTLE_WARS_CATAPULT_TEXT_ID, 0);
+      int statusBlockHeight = Math.max(112, lastStatusOffset + 18);
+      int safeBottom = overlayHeight - this.getCastleWarsBottomReservedHeight() - 8;
+      int desiredStatusY = Math.max(120, overlayHeight / 2 - 100);
+      int maxStatusY = Math.max(64, safeBottom - statusBlockHeight);
+      int statusY = Math.min(desiredStatusY, maxStatusY);
 
-      // Keep the clock inside the game viewport. In resizable mode it stays
-      // left of the tab panel; in fixed mode it sits near the viewport's right edge.
-      int timerX = screenMode == 0
-            ? overlayWidth - 42
-            : (this.resizableTabPanelVisible ? overlayWidth - 250 : overlayWidth - 55);
-      int timerY = screenMode == 0
-            ? 50
-            : (this.resizableTabPanelVisible ? Math.max(80, overlayHeight - 290) : 50);
-      this.richBoldFont.drawCenteredString(timer, timerX, timerY, 16777215, 0);
+      this.drawCastleWarsNativeIconLayer(statusX, statusY);
+      this.drawCastleWarsStatusLine("Zamorak flag",
+            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(
+                  CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID, statusY));
+      this.drawCastleWarsStatusLine("Saradomin flag",
+            CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(
+                  CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID, statusY));
+      this.drawCastleWarsStatusLine("Main door",
+            CASTLE_WARS_MAIN_DOOR_TEXT_ID, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(
+                  CASTLE_WARS_MAIN_DOOR_TEXT_ID, statusY));
+      this.drawCastleWarsStatusLine("Side door",
+            CASTLE_WARS_SIDE_DOOR_TEXT_ID, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(
+                  CASTLE_WARS_SIDE_DOOR_TEXT_ID, statusY));
+      this.drawCastleWarsStatusLine("Tunnel 1",
+            CASTLE_WARS_TUNNEL_ONE_TEXT_ID, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(
+                  CASTLE_WARS_TUNNEL_ONE_TEXT_ID, statusY));
+      this.drawCastleWarsStatusLine("Tunnel 2",
+            CASTLE_WARS_TUNNEL_TWO_TEXT_ID, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(
+                  CASTLE_WARS_TUNNEL_TWO_TEXT_ID, statusY));
+      this.drawCastleWarsStatusLine("Catapult",
+            CASTLE_WARS_CATAPULT_TEXT_ID, statusX,
+            this.getCastleWarsRelocatedTextBaselineY(
+                  CASTLE_WARS_CATAPULT_TEXT_ID, statusY));
+
+      // The minimap is outside the scene raster in every fixed frame, but is
+      // overlaid on the scene in every resizable frame. Anchoring the clock to
+      // the safe top-right edge keeps it clear of 317-style, 474+orbs and OSRS
+      // minimaps without maintaining a separate coordinate table per frame.
+      int timerX = Math.max(80, safeTopRight - 42);
+      this.richBoldFont.drawCenteredString(timer, timerX, 50, 16777215, 0);
    }
 
    private void draw3dScreen() {
@@ -16106,12 +16207,10 @@ public class Client extends GameShell {
 
          this.animateInterface(this.animationCycleDelta, this.openWalkableInterface);
          this.centeredWalkableInterface = false;
-         if (this.openWalkableInterface == 11344) {
+         if (this.openWalkableInterface == CASTLE_WARS_GAME_INTERFACE_ID) {
             this.drawCastleWarsGameOverlay();
-         } else if (screenMode != 0 && this.openWalkableInterface == 6673) {
-            int left = clientWidth / 2 - 256;
-            this.centeredWalkableInterface = true;
-            this.drawInterface(0, left, Widget.widgets[this.openWalkableInterface], 20);
+         } else if (this.openWalkableInterface == CASTLE_WARS_WAITING_INTERFACE_ID) {
+            this.drawCastleWarsWaitingOverlay();
          } else if (screenMode != 0 && shouldCenterInterface(Widget.widgets[this.openWalkableInterface])) {
             int top = screenMode == 0 ? 0 : clientWidth / 2 - 256;
             int screenMode2 = screenMode == 0 ? 0 : clientHeight / 2 - 167;
