@@ -38,6 +38,7 @@ final class GpuRasterizer3D {
    private static final int VERTEX_STRIDE_BYTES = FLOATS_PER_VERTEX * 4;
    private static final int MAX_BATCH_VERTICES = 24576;
    private static final int PARTICLE_SEGMENTS = 16;
+   private static final int UI_TRANSPARENT_KEY = 0x00010203;
 
    private static volatile boolean requested = true;
    private static boolean unavailable;
@@ -178,6 +179,12 @@ final class GpuRasterizer3D {
 
    static boolean isFrameActive() {
       return frameOpen && frameActive && !frameSoftwareFallback;
+   }
+
+   static void prepareDirectUiOverlayBuffer() {
+      if (isFrameActive() && canUseDirectPresentation() && Rasterizer2D.pixels != null) {
+         Arrays.fill(Rasterizer2D.pixels, UI_TRANSPARENT_KEY);
+      }
    }
 
    static boolean endFrame() {
