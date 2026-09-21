@@ -612,7 +612,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glColorMask(true, true, true, true);
       GL11.glDisable(GL11.GL_DEPTH_TEST);
       GL11.glDisable(GL11.GL_ALPHA_TEST);
-      GL11.glDisable(GL11.GL_BLEND);
+      GL11.glEnable(GL11.GL_BLEND);
+      GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
       clearOutsideTarget(frame, canvasWidth, canvasHeight);
 
       int viewportY = canvasHeight - frame.targetY - frame.targetHeight;
@@ -649,6 +650,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
       GL20.glUseProgram(0);
       GL11.glDisable(GL11.GL_TEXTURE_2D);
+      GL11.glDisable(GL11.GL_BLEND);
    }
 
    private static void clearOutsideTarget(FrameState frame, int canvasWidth, int canvasHeight) {
@@ -695,9 +697,12 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             + "  bool inScene = vLogical.x >= uSceneRect.x && vLogical.x < uSceneRect.z"
             + " && vLogical.y >= uSceneRect.y && vLogical.y < uSceneRect.w;\n"
             + "  vec3 key = vec3(1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0);\n"
-            + "  if (uUseSceneKey > 0.5 && inScene"
-            + " && all(lessThan(abs(ui.rgb - key), vec3(0.5 / 255.0)))) discard;\n"
-            + "  gl_FragColor = vec4(ui.rgb, 1.0);\n"
+            + "  bool keyedTransparent = uUseSceneKey > 0.5 && inScene"
+            + " && ui.a < (0.5 / 255.0)"
+            + " && all(lessThan(abs(ui.rgb - key), vec3(0.5 / 255.0)));\n"
+            + "  if (keyedTransparent) discard;\n"
+            + "  float alpha = ui.a < (0.5 / 255.0) ? 1.0 : ui.a;\n"
+            + "  gl_FragColor = vec4(ui.rgb, alpha);\n"
             + "}\n";
 
       int vertexShader = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
