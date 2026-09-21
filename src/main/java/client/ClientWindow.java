@@ -287,6 +287,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 317;
                      Client.orbsEnabled = false;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception) {
                      exception.printStackTrace();
@@ -302,6 +303,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 459;
                      Client.orbsEnabled = false;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception11) {
                      exception11.printStackTrace();
@@ -321,6 +323,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 474;
                      Client.orbsEnabled = false;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception2) {
                      exception2.printStackTrace();
@@ -336,6 +339,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 474;
                      Client.orbsEnabled = true;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception3) {
                      exception3.printStackTrace();
