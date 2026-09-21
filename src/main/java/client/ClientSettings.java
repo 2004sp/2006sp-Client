@@ -13,6 +13,7 @@ public final class ClientSettings {
       new ClientSettings("GPU_RENDERING", 1),
       new ClientSettings("SHOW_TITLEBAR", 1),
       new ClientSettings("UI_SCALE_PERCENT", 1),
+      new ClientSettings("CAMERA_REFRESH_RATE", 1),
       new ClientSettings("WILDY_LVL_RANGE", 2),
       new ClientSettings("COMBAT_BOX", 1),
       new ClientSettings("SKILL_BOX", 1),
@@ -44,12 +45,6 @@ public final class ClientSettings {
       this.parameterCount = newParameterCount;
    }
    public static void applySetting(String text, String[] newText) {
-      // Kept for compatibility with userConfig.cfg files created by older builds.
-      // Camera refresh is no longer a configurable client setting.
-      if (text.equals("CAMERA_REFRESH_RATE")) {
-         return;
-      }
-
       int xpDropPositionOrParseInt = 0;
       ClientSettings[] sourceCachedProfiles = cachedProfiles;
       int cachedProfilesLengthOrLength = cachedProfiles.length;
@@ -119,6 +114,8 @@ public final class ClientSettings {
                   Client.showTitlebar = Integer.parseInt(newText[0]) == 1;
                } else if (sourceText.equals("UI_SCALE_PERCENT")) {
                   Client.uiScalePercent = Client.clampUiScalePercent(Integer.parseInt(newText[0]));
+               } else if (sourceText.equals("CAMERA_REFRESH_RATE")) {
+                  Client.cameraRefreshRate = Client.clampCameraRefreshRate(Integer.parseInt(newText[0]));
                } else if (sourceText.equals("AUTO_LOGIN")) {
                   Client.autoLogin = Integer.parseInt(newText[0]) == 1;
                } else if (sourceText.equals("LOGO")) {
@@ -462,6 +459,12 @@ public final class ClientSettings {
             writeLine(bufferedWriter, "//Large values may overlap on very small windows.");
             writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "[UI_SCALE_PERCENT];100");
+            writeLine(bufferedWriter, "");
+            writeLine(bufferedWriter, "//CAMERA_REFRESH_RATE - Parameters for customization:");
+            writeLine(bufferedWriter, "//50-240 = render refresh rate in frames per second.");
+            writeLine(bufferedWriter, "//Game simulation remains at 50 Hz; higher values only increase redraw/camera smoothness.");
+            writeLine(bufferedWriter, "");
+            writeLine(bufferedWriter, "[CAMERA_REFRESH_RATE];120");
             writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "//FISH_ICONS - Parameters for customization:");
             writeLine(bufferedWriter, "//1 = enable, 0 = disable\t//shows fish icons over fishing spots");
