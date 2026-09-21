@@ -88,8 +88,8 @@ final class GpuRasterizer3D {
          configureViewport(Rasterizer2D.width, Rasterizer2D.height);
 
          GL11.glEnable(GL11.GL_SCISSOR_TEST);
-         GL11.glScissor(0, 0, viewportWidth, viewportHeight);
-         GL11.glColorMask(true, true, true, false);
+         setScissor(0, 0, viewportWidth, viewportHeight);
+         GL11.glColorMask(true, true, true, true);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
          GL11.glDisable(GL11.GL_BLEND);
