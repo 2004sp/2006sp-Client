@@ -58,8 +58,11 @@ public class Client extends GameShell {
    public static int clientWidth = 765;
    public static int clientHeight = 503;
    public static int uiScalePercent = 100;
+   public static int cameraRefreshRate = 120;
    private static final int MIN_UI_SCALE_PERCENT = 50;
    private static final int MAX_UI_SCALE_PERCENT = 200;
+   private static final int MIN_CAMERA_REFRESH_RATE = 50;
+   private static final int MAX_CAMERA_REFRESH_RATE = 240;
    private static final int RESIZABLE_CHAT_UI_WIDTH = 520;
    private static final int RESIZABLE_CHAT_UI_HEIGHT = 165;
    private static final int RESIZABLE_TAB_UI_WIDTH = 241;
@@ -539,8 +542,10 @@ public class Client extends GameShell {
    private byte[][] terrainRegionData;
    private int cameraPitch;
    private int minimapInt1;
-   private int cameraYawVelocity;
-   private int cameraPitchVelocity;
+   private double cameraYawVelocity;
+   private double cameraPitchVelocity;
+   private double cameraYawFraction;
+   private double cameraPitchFraction;
    private static int playerInteractionNoiseCounter;
    private int invOverlayInterfaceID;
    private int[] flameNoise;
@@ -1080,6 +1085,29 @@ public class Client extends GameShell {
          return MAX_UI_SCALE_PERCENT;
       }
       return percent;
+   }
+
+   public static int clampCameraRefreshRate(int framesPerSecond) {
+      if (framesPerSecond < MIN_CAMERA_REFRESH_RATE) {
+         return MIN_CAMERA_REFRESH_RATE;
+      }
+      if (framesPerSecond > MAX_CAMERA_REFRESH_RATE) {
+         return MAX_CAMERA_REFRESH_RATE;
+      }
+      return framesPerSecond;
+   }
+
+   @Override
+   int getRenderFpsLimit() {
+      return loggedIn ? clampCameraRefreshRate(cameraRefreshRate) : 50;
+   }
+
+   @Override
+   void processCameraFrame(double elapsedSeconds) {
+      if (!loggedIn) {
+         return;
+      }
+      this.updateCameraRotationFrame(elapsedSeconds);
    }
 
    private static int scaledUiDimension(int baseSize) {
@@ -15726,6 +15754,56 @@ public class Client extends GameShell {
          }
       }
    }
+   private void updateCameraRotationFrame(double elapsedSeconds) {
+      double frameScale = elapsedSeconds * 50.0;
+      if (frameScale <= 0.0) {
+         return;
+      }
+      if (frameScale > 5.0) {
+         frameScale = 5.0;
+      }
+
+      // The original 50 Hz camera halves the distance to its target velocity
+      // once per game tick. Convert that damping to elapsed time so 50-240 FPS
+      // has the same camera speed and inertia instead of becoming faster as the
+      // refresh rate rises.
+      double retention = Math.pow(0.5, frameScale);
+      double approach = 1.0 - retention;
+
+      if (super.keyStatus[1] == 1) {
+         this.cameraYawVelocity += (-24.0 - this.cameraYawVelocity) * approach;
+      } else if (super.keyStatus[2] == 1) {
+         this.cameraYawVelocity += (24.0 - this.cameraYawVelocity) * approach;
+      } else {
+         this.cameraYawVelocity *= retention;
+      }
+
+      if (super.keyStatus[3] == 1) {
+         this.cameraPitchVelocity += (12.0 - this.cameraPitchVelocity) * approach;
+      } else if (super.keyStatus[4] == 1) {
+         this.cameraPitchVelocity += (-12.0 - this.cameraPitchVelocity) * approach;
+      } else {
+         this.cameraPitchVelocity *= retention;
+      }
+
+      double yawMovement = this.cameraYawFraction + this.cameraYawVelocity * 0.5 * frameScale;
+      int yawStep = (int)yawMovement;
+      this.cameraYawFraction = yawMovement - yawStep;
+      this.minimapInt1 = this.minimapInt1 + yawStep & 2047;
+
+      double pitchMovement = this.cameraPitchFraction + this.cameraPitchVelocity * 0.5 * frameScale;
+      int pitchStep = (int)pitchMovement;
+      this.cameraPitchFraction = pitchMovement - pitchStep;
+      this.cameraPitch += pitchStep;
+      if (this.cameraPitch < 128) {
+         this.cameraPitch = 128;
+         this.cameraPitchFraction = 0.0;
+      } else if (this.cameraPitch > 383) {
+         this.cameraPitch = 383;
+         this.cameraPitchFraction = 0.0;
+      }
+   }
+
    private void updateCameraFollow() {
       try {
          int sourceCameraFocusX = localPlayer.worldX + this.cameraX;
@@ -15741,32 +15819,6 @@ public class Client extends GameShell {
 
          if (this.cameraFocusY != sourceCameraFocusY) {
             this.cameraFocusY = this.cameraFocusY + (sourceCameraFocusY - this.cameraFocusY) / 16;
-         }
-
-         if (super.keyStatus[1] == 1) {
-            this.cameraYawVelocity = this.cameraYawVelocity + (-24 - this.cameraYawVelocity) / 2;
-         } else if (super.keyStatus[2] == 1) {
-            this.cameraYawVelocity = this.cameraYawVelocity + (24 - this.cameraYawVelocity) / 2;
-         } else {
-            this.cameraYawVelocity /= 2;
-         }
-
-         if (super.keyStatus[3] == 1) {
-            this.cameraPitchVelocity = this.cameraPitchVelocity + (12 - this.cameraPitchVelocity) / 2;
-         } else if (super.keyStatus[4] == 1) {
-            this.cameraPitchVelocity = this.cameraPitchVelocity + (-12 - this.cameraPitchVelocity) / 2;
-         } else {
-            this.cameraPitchVelocity /= 2;
-         }
-
-         this.minimapInt1 = this.minimapInt1 + this.cameraYawVelocity / 2 & 2047;
-         this.cameraPitch = this.cameraPitch + this.cameraPitchVelocity / 2;
-         if (this.cameraPitch < 128) {
-            this.cameraPitch = 128;
-         }
-
-         if (this.cameraPitch > 383) {
-            this.cameraPitch = 383;
          }
 
          sourceCameraFocusX = this.cameraFocusX >> 7;
