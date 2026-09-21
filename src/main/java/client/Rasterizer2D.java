@@ -268,11 +268,11 @@ public class Rasterizer2D extends CacheableNode {
 
       for (int loopIndex = 0; loopIndex < newBottomY; loopIndex++) {
          for (int loopIndex2 = 0; loopIndex2 < newBottomX; loopIndex2++) {
-            int pixel = (pixels[pixelIndex] >> 16 & 0xFF) * 206;
-            int scalar = (pixels[pixelIndex] >> 8 & 0xFF) * 206;
-            int scalar2 = (pixels[pixelIndex] & 0xFF) * 206;
-            pixel = (pixel + 0 >> 8 << 16) + (scalar + 0 >> 8 << 8) + (scalar2 + 0 >> 8);
-            pixels[pixelIndex++] = pixel;
+            // Legacy darkening keeps 206/256 of the destination, which is
+            // equivalent to drawing black at 50/256 alpha. Preserve that as
+            // overlay alpha when the destination is the direct-GPU scene key.
+            pixels[pixelIndex] = blendUiPixel(0, pixels[pixelIndex], 50);
+            pixelIndex++;
          }
 
          pixelIndex += newWidth;
