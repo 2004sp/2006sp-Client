@@ -1,6 +1,7 @@
 package client;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.Arrays;
@@ -772,10 +773,13 @@ final class GpuRasterizer3D {
          // the transfer normally completes while Java renders the next frame.
          int consumeIndex = colorPboReady[readIndex] ? readIndex : writeIndex;
          GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, colorPbos[consumeIndex]);
-         colorReadback.clear();
-         colorReadback.limit(bytes);
-         GL15.glGetBufferSubData(GL21.GL_PIXEL_PACK_BUFFER, 0L, colorReadback);
-         copyColorReadback(width, height);
+         ByteBuffer mapped = GL15.glMapBuffer(GL21.GL_PIXEL_PACK_BUFFER, GL15.GL_READ_ONLY, (long)bytes, null);
+         if (mapped == null) {
+            throw new IllegalStateException("Unable to map completed GPU color PBO");
+         }
+         mapped.order(ByteOrder.nativeOrder());
+         copyColorReadback(mapped, width, height);
+         GL15.glUnmapBuffer(GL21.GL_PIXEL_PACK_BUFFER);
 
          GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
          colorPboWriteIndex = readIndex;
@@ -806,7 +810,7 @@ final class GpuRasterizer3D {
       colorReadback.clear();
       colorReadback.limit(count * 4);
       GL11.glReadPixels(0, 0, width, height, GL_BGRA, GL11.GL_UNSIGNED_BYTE, colorReadback);
-      copyColorReadback(width, height);
+      copyColorReadback(colorReadback, width, height);
 
       if (copyDepth) {
          depthReadback.clear();
@@ -825,9 +829,9 @@ final class GpuRasterizer3D {
       }
    }
 
-   private static void copyColorReadback(int width, int height) {
-      colorReadback.rewind();
-      IntBuffer packedColors = colorReadback.asIntBuffer();
+   private static void copyColorReadback(ByteBuffer sourceBuffer, int width, int height) {
+      sourceBuffer.rewind();
+      IntBuffer packedColors = sourceBuffer.asIntBuffer();
       for (int readRow = 0; readRow < height; readRow++) {
          packedColors.position(readRow * width);
          packedColors.get(Rasterizer2D.pixels, (height - 1 - readRow) * width, width);
