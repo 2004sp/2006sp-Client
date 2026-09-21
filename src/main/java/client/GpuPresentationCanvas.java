@@ -6,6 +6,7 @@ import java.nio.IntBuffer;
 import java.awt.EventQueue;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.IdentityHashMap;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.LWJGLException;
 import org.lwjgl.opengl.AWTGLCanvas;
@@ -43,6 +44,13 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private int[] uiShadow;
    private int uiShadowWidth;
    private int uiShadowHeight;
+
+   private final ArrayList<SceneSpriteDraw> pendingSceneSprites = new ArrayList<SceneSpriteDraw>();
+   private final ArrayList<SceneSpriteDraw> retainedSceneSprites = new ArrayList<SceneSpriteDraw>();
+   private final IdentityHashMap<Sprite, SceneSpriteTexture> sceneSpriteTextures =
+      new IdentityHashMap<Sprite, SceneSpriteTexture>();
+   private boolean sceneSpriteCapturePending;
+   private ByteBuffer sceneSpriteUploadBytes;
 
    private volatile boolean contextReady;
    private volatile boolean failed;
@@ -193,6 +201,71 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.sceneBackbufferPending = true;
    }
 
+   boolean beginSceneSpriteCapture() {
+      if (!isContextReady()) {
+         return false;
+      }
+      synchronized (this) {
+         this.pendingSceneSprites.clear();
+         this.sceneSpriteCapturePending = true;
+      }
+      return true;
+   }
+
+   boolean queueSceneSprite(
+      Sprite sprite,
+      int x,
+      int y,
+      int clipLeft,
+      int clipTop,
+      int clipRight,
+      int clipBottom
+   ) {
+      if (sprite == null || sprite.pixels == null || sprite.spriteWidth <= 0 || sprite.spriteHeight <= 0) {
+         return false;
+      }
+
+      synchronized (this) {
+         if (!this.sceneSpriteCapturePending || !isContextReady()) {
+            return false;
+         }
+
+         int left = x + sprite.xOffset;
+         int top = y + sprite.yOffset;
+         int right = left + sprite.spriteWidth;
+         int bottom = top + sprite.spriteHeight;
+
+         int clippedLeft = Math.max(left, clipLeft);
+         int clippedTop = Math.max(top, clipTop);
+         int clippedRight = Math.min(right, clipRight);
+         int clippedBottom = Math.min(bottom, clipBottom);
+         if (clippedLeft >= clippedRight || clippedTop >= clippedBottom) {
+            return true;
+         }
+
+         this.pendingSceneSprites.add(
+            new SceneSpriteDraw(
+               sprite,
+               clippedLeft,
+               clippedTop,
+               clippedLeft - left,
+               clippedTop - top,
+               clippedRight - clippedLeft,
+               clippedBottom - clippedTop
+            )
+         );
+         return true;
+      }
+   }
+
+   void clearSceneSprites() {
+      synchronized (this) {
+         this.pendingSceneSprites.clear();
+         this.retainedSceneSprites.clear();
+         this.sceneSpriteCapturePending = false;
+      }
+   }
+
    boolean presentFrame(
       int[] uiPixels,
       boolean softwareUiChanged,
@@ -280,6 +353,15 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             byteBuffer.limit(uploadByteCount);
          }
 
+         if (this.sceneSpriteCapturePending) {
+            this.retainedSceneSprites.clear();
+            this.retainedSceneSprites.addAll(this.pendingSceneSprites);
+            this.pendingSceneSprites.clear();
+            this.sceneSpriteCapturePending = false;
+         }
+         SceneSpriteDraw[] sceneSprites =
+            this.retainedSceneSprites.toArray(new SceneSpriteDraw[this.retainedSceneSprites.size()]);
+
          frame = new FrameState(
             bufferIndex,
             uiWidth,
@@ -292,6 +374,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             sceneY,
             Math.max(1, sceneWidth),
             Math.max(1, sceneHeight),
+            sceneSprites,
             dirtyRects,
             uploadByteCount
          );
@@ -659,6 +742,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glLoadIdentity();
       GL11.glEnable(GL11.GL_TEXTURE_2D);
 
+      renderSceneSprites(frame);
+
       GL20.glUseProgram(this.overlayProgram);
       GL20.glUniform4f(
          this.uniformSceneRect,
@@ -684,6 +769,107 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL20.glUseProgram(0);
       GL11.glDisable(GL11.GL_TEXTURE_2D);
       GL11.glDisable(GL11.GL_BLEND);
+   }
+
+   private void renderSceneSprites(FrameState frame) {
+      if (frame.sceneSprites.length == 0) {
+         return;
+      }
+
+      GL20.glUseProgram(0);
+      GL11.glDisable(GL11.GL_DEPTH_TEST);
+      GL11.glDisable(GL11.GL_ALPHA_TEST);
+      GL11.glEnable(GL11.GL_BLEND);
+      GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+      GL11.glEnable(GL11.GL_TEXTURE_2D);
+      GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+
+      for (SceneSpriteDraw draw : frame.sceneSprites) {
+         SceneSpriteTexture texture = ensureSceneSpriteTexture(draw.sprite);
+         if (texture == null) {
+            continue;
+         }
+
+         float u0 = (float)draw.sourceX / (float)texture.width;
+         float v0 = (float)draw.sourceY / (float)texture.height;
+         float u1 = (float)(draw.sourceX + draw.width) / (float)texture.width;
+         float v1 = (float)(draw.sourceY + draw.height) / (float)texture.height;
+         float left = frame.sceneX + draw.x;
+         float top = frame.sceneY + draw.y;
+         float right = left + draw.width;
+         float bottom = top + draw.height;
+
+         GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture.textureId);
+         GL11.glBegin(GL11.GL_QUADS);
+         GL11.glTexCoord2f(u0, v0);
+         GL11.glVertex2f(left, top);
+         GL11.glTexCoord2f(u1, v0);
+         GL11.glVertex2f(right, top);
+         GL11.glTexCoord2f(u1, v1);
+         GL11.glVertex2f(right, bottom);
+         GL11.glTexCoord2f(u0, v1);
+         GL11.glVertex2f(left, bottom);
+         GL11.glEnd();
+      }
+   }
+
+   private SceneSpriteTexture ensureSceneSpriteTexture(Sprite sprite) {
+      SceneSpriteTexture cached = this.sceneSpriteTextures.get(sprite);
+      if (cached != null
+         && cached.width == sprite.spriteWidth
+         && cached.height == sprite.spriteHeight
+         && cached.pixels == sprite.pixels) {
+         return cached;
+      }
+
+      if (cached != null && cached.textureId != 0) {
+         GL11.glDeleteTextures(cached.textureId);
+      }
+
+      int pixelCount = sprite.spriteWidth * sprite.spriteHeight;
+      if (pixelCount <= 0 || sprite.pixels.length < pixelCount) {
+         this.sceneSpriteTextures.remove(sprite);
+         return null;
+      }
+
+      int requiredBytes = pixelCount * 4;
+      if (this.sceneSpriteUploadBytes == null || this.sceneSpriteUploadBytes.capacity() < requiredBytes) {
+         this.sceneSpriteUploadBytes = BufferUtils.createByteBuffer(requiredBytes);
+      }
+
+      ByteBuffer upload = this.sceneSpriteUploadBytes;
+      upload.clear();
+      for (int i = 0; i < pixelCount; i++) {
+         int pixel = sprite.pixels[i];
+         upload.put((byte)(pixel & 255));
+         upload.put((byte)(pixel >> 8 & 255));
+         upload.put((byte)(pixel >> 16 & 255));
+         upload.put((byte)(pixel == 0 ? 0 : 255));
+      }
+      upload.flip();
+
+      int textureId = GL11.glGenTextures();
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+      GL11.glTexImage2D(
+         GL11.GL_TEXTURE_2D,
+         0,
+         GL11.GL_RGBA8,
+         sprite.spriteWidth,
+         sprite.spriteHeight,
+         0,
+         GL_BGRA,
+         GL11.GL_UNSIGNED_BYTE,
+         upload
+      );
+
+      SceneSpriteTexture texture =
+         new SceneSpriteTexture(textureId, sprite.spriteWidth, sprite.spriteHeight, sprite.pixels);
+      this.sceneSpriteTextures.put(sprite, texture);
+      return texture;
    }
 
    private static void clearOutsideTarget(FrameState frame, int canvasWidth, int canvasHeight) {
@@ -790,6 +976,50 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.uiShadowHeight = 0;
       this.paintingBuffer = -1;
       this.initialClearNeeded = true;
+      this.sceneSpriteTextures.clear();
+      this.sceneSpriteUploadBytes = null;
+   }
+
+   private static final class SceneSpriteDraw {
+      final Sprite sprite;
+      final int x;
+      final int y;
+      final int sourceX;
+      final int sourceY;
+      final int width;
+      final int height;
+
+      SceneSpriteDraw(
+         Sprite sprite,
+         int x,
+         int y,
+         int sourceX,
+         int sourceY,
+         int width,
+         int height
+      ) {
+         this.sprite = sprite;
+         this.x = x;
+         this.y = y;
+         this.sourceX = sourceX;
+         this.sourceY = sourceY;
+         this.width = width;
+         this.height = height;
+      }
+   }
+
+   private static final class SceneSpriteTexture {
+      final int textureId;
+      final int width;
+      final int height;
+      final int[] pixels;
+
+      SceneSpriteTexture(int textureId, int width, int height, int[] pixels) {
+         this.textureId = textureId;
+         this.width = width;
+         this.height = height;
+         this.pixels = pixels;
+      }
    }
 
    private static final class DirtyRect {
@@ -819,6 +1049,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       final int sceneY;
       final int sceneWidth;
       final int sceneHeight;
+      final SceneSpriteDraw[] sceneSprites;
       final DirtyRect[] dirtyRects;
       final int uploadByteCount;
 
@@ -834,6 +1065,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          int sceneY,
          int sceneWidth,
          int sceneHeight,
+         SceneSpriteDraw[] sceneSprites,
          DirtyRect[] dirtyRects,
          int uploadByteCount
       ) {
@@ -848,6 +1080,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.sceneY = sceneY;
          this.sceneWidth = sceneWidth;
          this.sceneHeight = sceneHeight;
+         this.sceneSprites = sceneSprites;
          this.dirtyRects = dirtyRects;
          this.uploadByteCount = uploadByteCount;
       }
