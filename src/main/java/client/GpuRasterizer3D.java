@@ -142,6 +142,7 @@ final class GpuRasterizer3D {
       if (enabled) {
          unavailable = false;
       } else if (presentationCanvas != null) {
+         presentationCanvas.clearSceneSprites();
          presentationCanvas.deactivate();
       }
       System.out.println("Renderer: " + (enabled ? "GPU" : "software"));
@@ -404,6 +405,26 @@ final class GpuRasterizer3D {
          && directFrameReady
          && presentationCanvas != null
          && presentationCanvas.isContextReady();
+   }
+
+   static boolean beginSceneOverlayCapture() {
+      return isDirectUiOverlayPrepared()
+         && presentationCanvas.beginSceneSpriteCapture();
+   }
+
+   static boolean queueSceneOverlaySprite(Sprite sprite, int x, int y) {
+      if (!isDirectUiOverlayPrepared() || sprite == null) {
+         return false;
+      }
+      return presentationCanvas.queueSceneSprite(
+         sprite,
+         x,
+         y,
+         Rasterizer2D.topX,
+         Rasterizer2D.topY,
+         Rasterizer2D.bottomX,
+         Rasterizer2D.bottomY
+      );
    }
 
    private static void finishDirectPresentationFrame() {
@@ -993,6 +1014,7 @@ final class GpuRasterizer3D {
       directFrameReady = false;
       frameDirectPresentation = false;
       directModeLogged = false;
+      canvas.clearSceneSprites();
       if (rendererUsesPresentationContext) {
          resetRendererResourceHandles();
       }
