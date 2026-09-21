@@ -312,7 +312,10 @@ public final class ClientWindow extends Client implements ActionListener {
             }
 
             if (text.equals("Windowed mode")) {
-               Client.getClient().setScreenMode(1);
+               // Leaving fullscreen should return to the same renderer that
+               // entered it. Fixed 317/459/474 modes stay fixed; resizable
+               // modes return to their normal resizable window.
+               Client.getClient().setScreenMode(Client.screenMode == 0 ? 0 : 1);
             }
 
             if (text.equals("474 Gameframe")) {
