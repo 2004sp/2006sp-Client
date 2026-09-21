@@ -15764,35 +15764,38 @@ public class Client extends GameShell {
          frameScale = 5.0;
       }
 
-      // The original 50 Hz camera halves the distance to its target velocity
-      // once per game tick. Convert that damping to elapsed time so 50-240 FPS
-      // has the same camera speed and inertia instead of becoming faster as the
-      // refresh rate rises.
+      // The original 50 Hz camera moves halfway toward its target velocity,
+      // then applies half of the resulting velocity to the angle. Use the
+      // exact elapsed-time form of that update so subdividing a 20 ms tick
+      // into 120/144/240 FPS frames changes smoothness, not camera speed.
       double retention = Math.pow(0.5, frameScale);
-      double approach = 1.0 - retention;
 
+      double yawTarget = 0.0;
       if (super.keyStatus[1] == 1) {
-         this.cameraYawVelocity += (-24.0 - this.cameraYawVelocity) * approach;
+         yawTarget = -24.0;
       } else if (super.keyStatus[2] == 1) {
-         this.cameraYawVelocity += (24.0 - this.cameraYawVelocity) * approach;
-      } else {
-         this.cameraYawVelocity *= retention;
+         yawTarget = 24.0;
       }
-
-      if (super.keyStatus[3] == 1) {
-         this.cameraPitchVelocity += (12.0 - this.cameraPitchVelocity) * approach;
-      } else if (super.keyStatus[4] == 1) {
-         this.cameraPitchVelocity += (-12.0 - this.cameraPitchVelocity) * approach;
-      } else {
-         this.cameraPitchVelocity *= retention;
-      }
-
-      double yawMovement = this.cameraYawFraction + this.cameraYawVelocity * 0.5 * frameScale;
+      double yawBefore = this.cameraYawVelocity;
+      this.cameraYawVelocity = yawTarget + (yawBefore - yawTarget) * retention;
+      double yawMovement = this.cameraYawFraction
+         + 0.5 * (yawBefore - yawTarget) * (1.0 - retention)
+         + 0.5 * yawTarget * frameScale;
       int yawStep = (int)yawMovement;
       this.cameraYawFraction = yawMovement - yawStep;
       this.minimapInt1 = this.minimapInt1 + yawStep & 2047;
 
-      double pitchMovement = this.cameraPitchFraction + this.cameraPitchVelocity * 0.5 * frameScale;
+      double pitchTarget = 0.0;
+      if (super.keyStatus[3] == 1) {
+         pitchTarget = 12.0;
+      } else if (super.keyStatus[4] == 1) {
+         pitchTarget = -12.0;
+      }
+      double pitchBefore = this.cameraPitchVelocity;
+      this.cameraPitchVelocity = pitchTarget + (pitchBefore - pitchTarget) * retention;
+      double pitchMovement = this.cameraPitchFraction
+         + 0.5 * (pitchBefore - pitchTarget) * (1.0 - retention)
+         + 0.5 * pitchTarget * frameScale;
       int pitchStep = (int)pitchMovement;
       this.cameraPitchFraction = pitchMovement - pitchStep;
       this.cameraPitch += pitchStep;
