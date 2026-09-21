@@ -33,6 +33,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    private volatile boolean contextReady;
    private volatile boolean failed;
+   private boolean contextInitializationScheduled;
    private int overlayTexture;
    private int overlayWidth;
    private int overlayHeight;
@@ -60,17 +61,43 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.addFocusListener(owner);
    }
 
+   @Override
+   public void addNotify() {
+      super.addNotify();
+      initializeContextAsync();
+   }
+
+   @Override
+   public void removeNotify() {
+      this.contextReady = false;
+      this.contextInitializationScheduled = false;
+      super.removeNotify();
+   }
+
    void initializeContextAsync() {
+      if (this.contextReady || this.failed || this.contextInitializationScheduled) {
+         return;
+      }
+      this.contextInitializationScheduled = true;
       EventQueue.invokeLater(new Runnable() {
          @Override
          public void run() {
+            contextInitializationScheduled = false;
             initializeContextOnEdt();
          }
       });
    }
 
    private void initializeContextOnEdt() {
-      if (contextReady || failed || !isDisplayable()) {
+      if (this.contextReady || this.failed) {
+         return;
+      }
+
+      // AWT can report the Canvas as displayable slightly before AWTGLCanvas'
+      // native peer is ready for makeCurrent(). Treat that as normal startup
+      // ordering and retry instead of permanently disabling GPU presentation.
+      if (!isDisplayable()) {
+         scheduleContextInitializationRetry();
          return;
       }
 
@@ -78,12 +105,35 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          makeCurrent();
          initializeGlResources();
          setSwapInterval(0);
-         contextReady = true;
+         this.contextReady = true;
          releaseContext();
          System.out.println("GPU direct presentation surface initialized.");
+      } catch (IllegalStateException failure) {
+         String message = failure.getMessage();
+         if (!isDisplayable() || message != null && message.toLowerCase().contains("displayable")) {
+            scheduleContextInitializationRetry();
+            return;
+         }
+         markFailed(failure);
       } catch (Throwable failure) {
          markFailed(failure);
       }
+   }
+
+   private void scheduleContextInitializationRetry() {
+      if (this.contextReady || this.failed || this.contextInitializationScheduled) {
+         return;
+      }
+      this.contextInitializationScheduled = true;
+      javax.swing.Timer retryTimer = new javax.swing.Timer(50, new java.awt.event.ActionListener() {
+         @Override
+         public void actionPerformed(java.awt.event.ActionEvent event) {
+            contextInitializationScheduled = false;
+            initializeContextOnEdt();
+         }
+      });
+      retryTimer.setRepeats(false);
+      retryTimer.start();
    }
 
    boolean isContextReady() {
