@@ -267,21 +267,28 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    public final void mousePressed(MouseEvent mouseEvent) {
       int pendingClickXOrGetX = mouseEvent.getX();
       int pendingClickYOrGetY = mouseEvent.getY();
-      if (Client.screenMode != 0) {
-         pendingClickXOrGetX += 4;
-         pendingClickYOrGetY += 4;
-      }
-
       if (this.gameFrame != null) {
          pendingClickXOrGetX -= 4;
          pendingClickYOrGetY -= 22;
       }
 
+      // Keep the legacy +4 resizable input offset in logical UI space. Applying
+      // it before inverse scaling makes the offset scale-dependent (+8 at 50%,
+      // +2 at 200%), which shifts hitboxes at otherwise valid percentages.
       int rawPendingClickXOrGetX = pendingClickXOrGetX;
       int rawPendingClickYOrGetY = pendingClickYOrGetY;
+      if (Client.screenMode != 0) {
+         rawPendingClickXOrGetX += 4;
+         rawPendingClickYOrGetY += 4;
+      }
+
       long translatedUiPoint = Client.translateUiInputCoordinates(pendingClickXOrGetX, pendingClickYOrGetY);
       pendingClickXOrGetX = (int)(translatedUiPoint >> 32);
       pendingClickYOrGetY = (int)translatedUiPoint;
+      if (Client.screenMode != 0) {
+         pendingClickXOrGetX += 4;
+         pendingClickYOrGetY += 4;
+      }
 
       if (pendingClickXOrGetX >= 0 && pendingClickYOrGetY >= 0 && pendingClickXOrGetX <= Client.clientWidth && pendingClickYOrGetY <= Client.clientHeight) {
          this.idleTime = 0;
@@ -377,11 +384,6 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    public final void mouseDragged(MouseEvent mouseEvent) {
       int mouseXOrGetX = mouseEvent.getX();
       int mouseYOrGetY = mouseEvent.getY();
-      if (Client.screenMode != 0) {
-         mouseXOrGetX += 4;
-         mouseYOrGetY += 4;
-      }
-
       if (this.gameFrame != null) {
          mouseXOrGetX -= 4;
          mouseYOrGetY -= 22;
@@ -389,6 +391,10 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
 
       this.rawMouseX = mouseXOrGetX;
       this.rawMouseY = mouseYOrGetY;
+      if (Client.screenMode != 0) {
+         this.rawMouseX += 4;
+         this.rawMouseY += 4;
+      }
 
       if (this.middleMouseDown) {
          mouseYOrGetY = this.middleMouseX - mouseEvent.getX();
@@ -400,6 +406,10 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          long translatedUiPoint = Client.translateUiInputCoordinates(mouseXOrGetX, mouseYOrGetY);
          mouseXOrGetX = (int)(translatedUiPoint >> 32);
          mouseYOrGetY = (int)translatedUiPoint;
+         if (Client.screenMode != 0) {
+            mouseXOrGetX += 4;
+            mouseYOrGetY += 4;
+         }
          if (System.currentTimeMillis() - this.pendingClickTime >= 250L || Math.abs(this.clickX - mouseXOrGetX) > 5 || Math.abs(this.clickY - mouseYOrGetY) > 5) {
             this.idleTime = 0;
             this.mouseX = mouseXOrGetX;
@@ -414,11 +424,6 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    public final void mouseMoved(MouseEvent mouseEvent) {
       int mouseXOrGetX = mouseEvent.getX();
       int mouseYOrGetY = mouseEvent.getY();
-      if (Client.screenMode != 0) {
-         mouseXOrGetX += 4;
-         mouseYOrGetY += 4;
-      }
-
       if (this.gameFrame != null) {
          mouseXOrGetX -= 4;
          mouseYOrGetY -= 22;
@@ -426,9 +431,18 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
 
       this.rawMouseX = mouseXOrGetX;
       this.rawMouseY = mouseYOrGetY;
+      if (Client.screenMode != 0) {
+         this.rawMouseX += 4;
+         this.rawMouseY += 4;
+      }
+
       long translatedUiPoint = Client.translateUiInputCoordinates(mouseXOrGetX, mouseYOrGetY);
       mouseXOrGetX = (int)(translatedUiPoint >> 32);
       mouseYOrGetY = (int)translatedUiPoint;
+      if (Client.screenMode != 0) {
+         mouseXOrGetX += 4;
+         mouseYOrGetY += 4;
+      }
 
       if (System.currentTimeMillis() - this.pendingClickTime >= 250L || Math.abs(this.clickX - mouseXOrGetX) > 5 || Math.abs(this.clickY - mouseYOrGetY) > 5) {
          this.idleTime = 0;
