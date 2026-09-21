@@ -1,6 +1,5 @@
 package client;
 
-import java.awt.EventQueue;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
@@ -33,7 +32,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    private volatile boolean contextReady;
    private volatile boolean failed;
-   private boolean contextInitializationScheduled;
    private int overlayTexture;
    private int overlayWidth;
    private int overlayHeight;
@@ -64,80 +62,37 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    @Override
    public void addNotify() {
       super.addNotify();
-      initializeContextAsync();
    }
 
    @Override
    public void removeNotify() {
       this.contextReady = false;
-      this.contextInitializationScheduled = false;
       super.removeNotify();
    }
 
-   void initializeContextAsync() {
-      if (this.contextReady || this.failed || this.contextInitializationScheduled) {
-         return;
-      }
-      this.contextInitializationScheduled = true;
-      EventQueue.invokeLater(new Runnable() {
-         @Override
-         public void run() {
-            contextInitializationScheduled = false;
-            initializeContextOnEdt();
-         }
-      });
-   }
-
-   private void initializeContextOnEdt() {
+   /**
+    * AWTGLCanvas creates and makes its OpenGL context current from paint().
+    * Showing the card and requesting a repaint is the safe bootstrap path;
+    * calling makeCurrent() before the first paint races peer creation on Windows.
+    */
+   void requestInitialization() {
       if (this.contextReady || this.failed) {
          return;
       }
-
-      // AWT can report the Canvas as displayable slightly before AWTGLCanvas'
-      // native peer is ready for makeCurrent(). Treat that as normal startup
-      // ordering and retry instead of permanently disabling GPU presentation.
-      if (!isDisplayable()) {
-         scheduleContextInitializationRetry();
-         return;
-      }
-
-      try {
-         makeCurrent();
-         initializeGlResources();
-         setSwapInterval(0);
-         this.contextReady = true;
-         releaseContext();
-         System.out.println("GPU direct presentation surface initialized.");
-      } catch (IllegalStateException failure) {
-         String message = failure.getMessage();
-         if (!isDisplayable() || message != null && message.toLowerCase().contains("displayable")) {
-            scheduleContextInitializationRetry();
-            return;
-         }
-         markFailed(failure);
-      } catch (Throwable failure) {
-         markFailed(failure);
-      }
-   }
-
-   private void scheduleContextInitializationRetry() {
-      if (this.contextReady || this.failed || this.contextInitializationScheduled) {
-         return;
-      }
-      this.contextInitializationScheduled = true;
-      javax.swing.Timer retryTimer = new javax.swing.Timer(50, new java.awt.event.ActionListener() {
-         @Override
-         public void actionPerformed(java.awt.event.ActionEvent event) {
-            contextInitializationScheduled = false;
-            initializeContextOnEdt();
-         }
-      });
-      retryTimer.setRepeats(false);
-      retryTimer.start();
+      this.owner.setGpuPresentationSurface(true);
+      this.repaint();
    }
 
    boolean isContextReady() {
       return contextReady && !failed && isDisplayable();
+   }
+
+   boolean isInitializationPending() {
+      return !contextReady && !failed;
+   }
+
+   boolean hasFailed() {
+      return failed;
    }
 
    void deactivate() {
@@ -215,8 +170,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    protected void initGL() {
       try {
          initializeGlResources();
+         setVSyncEnabled(false);
          setSwapInterval(0);
          this.contextReady = true;
+         System.out.println("GPU direct presentation surface initialized through AWT paint lifecycle.");
       } catch (Throwable failure) {
          markFailed(failure);
       }
@@ -232,6 +189,15 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       synchronized (this) {
          frame = this.pendingFrame;
          if (frame == null) {
+            GL20.glUseProgram(0);
+            GL11.glViewport(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
+            GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+            try {
+               swapBuffers();
+            } catch (LWJGLException failure) {
+               markFailed(failure);
+            }
             return;
          }
          this.pendingFrame = null;
