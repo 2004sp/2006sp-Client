@@ -173,21 +173,46 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          }
 
          long wakeAt = Math.min(nextGameTick, nextRender);
-         long sleepNanos = wakeAt - System.nanoTime();
-         if (sleepNanos > 0L) {
-            long sleepMillis = sleepNanos / 1000000L;
-            int sleepExtraNanos = (int)(sleepNanos % 1000000L);
-            try {
-               Thread.sleep(sleepMillis, sleepExtraNanos);
-            } catch (InterruptedException exception) {
-            }
-         } else {
-            Thread.yield();
-         }
+         waitUntil(wakeAt);
       }
 
       if (this.shutdownCountdown == -1) {
          this.exit();
+      }
+   }
+
+   /**
+    * High-resolution frame pacing for render rates above the original 50 Hz.
+    *
+    * Thread.sleep() alone is too coarse/jittery on some Java 8/Windows
+    * combinations for 120-240 Hz pacing. Sleep for the coarse portion, yield
+    * near the deadline, then spin only for the final fraction of a millisecond.
+    * This keeps CPU use reasonable while avoiding 4 ms render deadlines being
+    * rounded into visibly uneven chunks.
+    */
+   private static void waitUntil(long deadlineNanos) {
+      while (true) {
+         long remaining = deadlineNanos - System.nanoTime();
+         if (remaining <= 0L) {
+            return;
+         }
+
+         if (remaining > 2000000L) {
+            long coarseSleep = remaining - 1000000L;
+            long sleepMillis = coarseSleep / 1000000L;
+            int sleepExtraNanos = (int)(coarseSleep % 1000000L);
+            try {
+               Thread.sleep(sleepMillis, sleepExtraNanos);
+            } catch (InterruptedException exception) {
+               Thread.currentThread().interrupt();
+               return;
+            }
+         } else if (remaining > 250000L) {
+            Thread.yield();
+         } else {
+            // Busy-wait only for the last ~0.25 ms to hit the frame deadline
+            // accurately enough for 120/144/165/240 Hz displays.
+         }
       }
    }
 
