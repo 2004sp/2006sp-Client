@@ -26,14 +26,11 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRootPane;
 import javax.swing.JPopupMenu;
-import javax.swing.JSpinner;
-import javax.swing.SpinnerNumberModel;
 import javax.swing.UIManager;
 public final class ClientWindow extends Client implements ActionListener {
    public static JMenuBar menuBar;
    public JFrame frame;
    public static JMenu gameframeMenu;
-   private static JMenu controlPanelMenu;
    private static JMenu hiscoresMenu;
    private static JMenu lanServerMenu;
    public static JMenu fullscreenMenu;
@@ -94,10 +91,6 @@ public final class ClientWindow extends Client implements ActionListener {
             fullscreenMenu = new JMenu("Fullscreen");
             menuBar = new JMenuBar();
             (lanServerMenu = new JMenu("LAN Server List")).setEnabled(false);
-            controlPanelMenu = new JMenu("Control Panel");
-            JMenuItem cameraRefreshRateMenuItem = new JMenuItem("Camera refresh rate...");
-            cameraRefreshRateMenuItem.addActionListener(clientWindow);
-            controlPanelMenu.add(cameraRefreshRateMenuItem);
             gameframeMenu = new JMenu("Gameframe");
             JMenuItem jMenuItem = new JMenuItem("317 Gameframe");
             JMenuItem jMenuItem7 = new JMenuItem("459 Gameframe");
@@ -140,7 +133,6 @@ public final class ClientWindow extends Client implements ActionListener {
             menuBar.add(hiscoresMenu);
             menuBar.add(jButton4);
             menuBar.add(lanServerMenu);
-            menuBar.add(controlPanelMenu);
             menuBar.add(gameframeMenu);
             if (!showTitlebar) {
                menuBar.add(jButton3);
@@ -284,29 +276,6 @@ public final class ClientWindow extends Client implements ActionListener {
                   JOptionPane.showMessageDialog(this.frame, "Please log out first before closing the client.");
                } else {
                   System.exit(0);
-               }
-            }
-
-            if (text.equals("Camera refresh rate...")) {
-               int currentRefreshRate = Client.clampCameraRefreshRate(Client.cameraRefreshRate);
-               JSpinner refreshRateSpinner = new JSpinner(
-                  new SpinnerNumberModel(currentRefreshRate, 50, 240, 1)
-               );
-               int result = JOptionPane.showConfirmDialog(
-                  this.frame,
-                  refreshRateSpinner,
-                  "Camera refresh rate (FPS)",
-                  JOptionPane.OK_CANCEL_OPTION,
-                  JOptionPane.PLAIN_MESSAGE
-               );
-               if (result == JOptionPane.OK_OPTION) {
-                  Client.cameraRefreshRate = Client.clampCameraRefreshRate(
-                     ((Number)refreshRateSpinner.getValue()).intValue()
-                  );
-                  ClientSettings.saveCameraRefreshRateSetting(
-                     new File("./userConfig.cfg"),
-                     Client.cameraRefreshRate
-                  );
                }
             }
 
