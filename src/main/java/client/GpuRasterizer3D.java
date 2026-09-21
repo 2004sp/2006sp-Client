@@ -320,8 +320,11 @@ final class GpuRasterizer3D {
                directFrameReady = true;
             } else {
                readBackFrameAsync();
-               if (presentationCanvas != null && !isDirectPresentationTransitioning()) {
-                  presentationCanvas.deactivate();
+               if (presentationCanvas != null) {
+                  presentationCanvas.clearSceneSprites();
+                  if (!isDirectPresentationTransitioning()) {
+                     presentationCanvas.deactivate();
+                  }
                }
             }
             completed = true;
