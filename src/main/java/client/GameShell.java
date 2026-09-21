@@ -89,69 +89,33 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
 
       this.drawLoadingText(0, "Loading...");
       this.startUp();
-      int timingSampleIndex2 = 0;
-      int scalar = 256;
-      int scalar2 = 1;
-      int scalar3 = 0;
 
-      for (int timingSampleIndex = 0; timingSampleIndex < 10; timingSampleIndex++) {
-         this.timingSamples[timingSampleIndex] = System.currentTimeMillis();
-      }
+      // Keep the original client/game simulation at 50 Hz, but allow drawing
+      // (and render-only camera rotation) to run faster. Raising the old
+      // delayTime directly would also speed up animations, networking timers,
+      // movement and other game logic, which is not what a camera FPS option
+      // should do.
+      final long gameTickNanos = 20000000L;
+      long now = System.nanoTime();
+      long nextGameTick = now;
+      long nextRender = now;
+      long lastCameraFrame = now;
+      long fpsWindowStart = now;
+      int renderedFrames = 0;
 
-      for (; this.shutdownCountdown >= 0; this.showErrorScreen()) {
-         if (this.shutdownCountdown > 0) {
-            this.shutdownCountdown--;
-            if (this.shutdownCountdown == 0) {
-               this.exit();
-               return;
-            }
-         }
+      while (this.shutdownCountdown >= 0) {
+         now = System.nanoTime();
 
-         int scalar4 = scalar;
-         int scalar5 = scalar2;
-         scalar = 300;
-         scalar2 = 1;
-         long timingSampleOrCurrentTimeMillis = System.currentTimeMillis();
-         if (this.timingSamples[timingSampleIndex2] == 0L) {
-            scalar = scalar4;
-            scalar2 = scalar5;
-         } else if (timingSampleOrCurrentTimeMillis > this.timingSamples[timingSampleIndex2]) {
-            scalar = (int)(2560 * this.delayTime / (timingSampleOrCurrentTimeMillis - this.timingSamples[timingSampleIndex2]));
-         }
-
-         if (scalar < 25) {
-            scalar = 25;
-         }
-
-         if (scalar > 256) {
-            scalar = 256;
-            scalar2 = (int)(this.delayTime - (timingSampleOrCurrentTimeMillis - this.timingSamples[timingSampleIndex2]) / 10L);
-         }
-
-         if (scalar2 > this.delayTime) {
-            scalar2 = this.delayTime;
-         }
-
-         this.timingSamples[timingSampleIndex2] = timingSampleOrCurrentTimeMillis;
-         timingSampleIndex2 = (timingSampleIndex2 + 1) % 10;
-         if (scalar2 > 1) {
-            for (int timingSampleIndex3 = 0; timingSampleIndex3 < 10; timingSampleIndex3++) {
-               if (this.timingSamples[timingSampleIndex3] != 0L) {
-                  this.timingSamples[timingSampleIndex3] = this.timingSamples[timingSampleIndex3] + scalar2;
+         int catchUpTicks = 0;
+         while (now >= nextGameTick && catchUpTicks < 10) {
+            if (this.shutdownCountdown > 0) {
+               this.shutdownCountdown--;
+               if (this.shutdownCountdown == 0) {
+                  this.exit();
+                  return;
                }
             }
-         }
 
-         if (scalar2 < this.minimumSleepTime) {
-            scalar2 = this.minimumSleepTime;
-         }
-
-         try {
-            Thread.sleep(scalar2);
-         } catch (InterruptedException exception) {
-         }
-
-         while (scalar3 < 256) {
             this.clickButton = this.pendingMouseButton;
             this.clickX = this.pendingClickX;
             this.clickY = this.pendingClickY;
@@ -161,12 +125,64 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             this.pendingMouseButton = 0;
             this.processGameLoop();
             this.keyQueueReadIndex = this.keyQueueWriteIndex;
-            scalar3 += scalar;
+
+            nextGameTick += gameTickNanos;
+            catchUpTicks++;
+            now = System.nanoTime();
          }
 
-         scalar3 &= 255;
-         if (this.delayTime > 0) {
-            this.fps = scalar * 1000 / (this.delayTime << 8);
+         // Avoid a long burst of stale simulation ticks after a debugger pause,
+         // window drag, or machine stall.
+         if (catchUpTicks == 10 && now >= nextGameTick) {
+            nextGameTick = now + gameTickNanos;
+         }
+
+         int targetRenderFps = this.getRenderFpsLimit();
+         if (targetRenderFps < 1) {
+            targetRenderFps = 1;
+         } else if (targetRenderFps > 240) {
+            targetRenderFps = 240;
+         }
+         long renderIntervalNanos = 1000000000L / targetRenderFps;
+
+         if (now >= nextRender) {
+            double elapsedSeconds = (now - lastCameraFrame) / 1000000000.0;
+            if (elapsedSeconds < 0.0) {
+               elapsedSeconds = 0.0;
+            } else if (elapsedSeconds > 0.1) {
+               // Camera smoothing should not jump after a long pause.
+               elapsedSeconds = 0.1;
+            }
+
+            this.processCameraFrame(elapsedSeconds);
+            this.showErrorScreen();
+            lastCameraFrame = now;
+
+            renderedFrames++;
+            long fpsWindowNanos = now - fpsWindowStart;
+            if (fpsWindowNanos >= 1000000000L) {
+               this.fps = (int)Math.round(renderedFrames * 1000000000.0 / fpsWindowNanos);
+               renderedFrames = 0;
+               fpsWindowStart = now;
+            }
+
+            nextRender += renderIntervalNanos;
+            if (nextRender <= now) {
+               nextRender = now + renderIntervalNanos;
+            }
+         }
+
+         long wakeAt = Math.min(nextGameTick, nextRender);
+         long sleepNanos = wakeAt - System.nanoTime();
+         if (sleepNanos > 0L) {
+            long sleepMillis = sleepNanos / 1000000L;
+            int sleepExtraNanos = (int)(sleepNanos % 1000000L);
+            try {
+               Thread.sleep(sleepMillis, sleepExtraNanos);
+            } catch (InterruptedException exception) {
+            }
+         } else {
+            Thread.yield();
          }
       }
 
@@ -193,6 +209,13 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    }
    final void setTargetFps(int scalarArgument) {
       this.delayTime = 1000;
+   }
+
+   int getRenderFpsLimit() {
+      return 50;
+   }
+
+   void processCameraFrame(double elapsedSeconds) {
    }
 
    @Override
