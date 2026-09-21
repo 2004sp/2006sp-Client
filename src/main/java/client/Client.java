@@ -64,11 +64,6 @@ public class Client extends GameShell {
    private static final int MAX_UI_SCALE_PERCENT = 200;
    private static final int MIN_CAMERA_REFRESH_RATE = 50;
    private static final int MAX_CAMERA_REFRESH_RATE = 240;
-   // The original software rasterizer scales almost linearly with pixel count.
-   // Above roughly this many pixels, maximized 1080p-class windows can fall to
-   // ~30 FPS. Keep a normal-window-sized logical framebuffer for high-refresh
-   // resizable rendering, then scale the completed frame to the native window.
-   private static final int HIGH_REFRESH_RENDER_PIXEL_BUDGET = 900 * 506;
    private static final int RESIZABLE_CHAT_UI_WIDTH = 520;
    private static final int RESIZABLE_CHAT_UI_HEIGHT = 165;
    private static final int RESIZABLE_TAB_UI_WIDTH = 241;
@@ -1110,35 +1105,10 @@ public class Client extends GameShell {
    }
 
    private static Dimension getResizableRenderSize(int physicalWidth, int physicalHeight) {
-      physicalWidth = Math.max(minimumWindowWidth, physicalWidth);
-      physicalHeight = Math.max(minimumWindowHeight, physicalHeight);
-
-      if (clampCameraRefreshRate(cameraRefreshRate) <= 60
-         || (long)physicalWidth * physicalHeight <= HIGH_REFRESH_RENDER_PIXEL_BUDGET) {
-         return new Dimension(physicalWidth, physicalHeight);
-      }
-
-      double scale = Math.sqrt(
-         (double)HIGH_REFRESH_RENDER_PIXEL_BUDGET / ((double)physicalWidth * physicalHeight)
+      return new Dimension(
+         Math.max(minimumWindowWidth, physicalWidth),
+         Math.max(minimumWindowHeight, physicalHeight)
       );
-      int logicalWidth = Math.max(minimumWindowWidth, (int)Math.floor(physicalWidth * scale));
-      int logicalHeight = Math.max(minimumWindowHeight, (int)Math.floor(physicalHeight * scale));
-
-      // Re-apply the physical aspect ratio after satisfying the legacy minimum
-      // dimensions so the upscaled presentation does not stretch.
-      if ((long)logicalWidth * physicalHeight > (long)logicalHeight * physicalWidth) {
-         logicalHeight = Math.max(
-            minimumWindowHeight,
-            (int)((long)logicalWidth * physicalHeight / physicalWidth)
-         );
-      } else {
-         logicalWidth = Math.max(
-            minimumWindowWidth,
-            (int)((long)logicalHeight * physicalWidth / physicalHeight)
-         );
-      }
-
-      return new Dimension(logicalWidth, logicalHeight);
    }
 
    @Override
@@ -1195,34 +1165,14 @@ public class Client extends GameShell {
 
    public static long translatePresentationInputCoordinates(int x, int y) {
       Client client = clientInstance;
-      // The title/login screen is still the original 765x503 layout and is
-      // drawn directly to the component rather than through the resizable
-      // framebuffer presentation path. Saved resizable dimensions may be much
-      // larger than the login window, so applying presentation scaling before
-      // login moves clicks away from the visible buttons.
-      if (client == null || !loggedIn) {
+      // Resizable gameframes render at the component's native size. Keeping
+      // their input 1:1 is important because the legacy 474/OSRS UI has many
+      // hitboxes derived directly from clientWidth/clientHeight.
+      if (client == null || !loggedIn || screenMode != 0) {
          return ((long)x << 32) | (y & 0xffffffffL);
       }
 
-      int logicalWidth = screenMode == 0 ? fixedWidth : clientWidth;
-      int logicalHeight = screenMode == 0 ? fixedHeight : clientHeight;
-      Rectangle presentation = screenMode == 0
-         ? client.getFixedPresentationBounds()
-         : client.getResizablePresentationBounds();
-
-      if (!isInsideRectangle(x, y, presentation.x, presentation.y, presentation.width, presentation.height)) {
-         return ((long)-1 << 32) | 0xffffffffL;
-      }
-
-      int logicalX = (x - presentation.x) * logicalWidth / presentation.width;
-      int logicalY = (y - presentation.y) * logicalHeight / presentation.height;
-      if (logicalX >= logicalWidth) {
-         logicalX = logicalWidth - 1;
-      }
-      if (logicalY >= logicalHeight) {
-         logicalY = logicalHeight - 1;
-      }
-      return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+      return translateFixedPresentationInputCoordinates(x, y);
    }
 
    private static long translateFixedPresentationInputCoordinates(int x, int y) {
@@ -1248,18 +1198,16 @@ public class Client extends GameShell {
    }
 
    private void drawFrameBufferToWindow() {
-      int logicalWidth = screenMode == 0 ? fixedWidth : clientWidth;
-      int logicalHeight = screenMode == 0 ? fixedHeight : clientHeight;
-      Rectangle presentation = screenMode == 0
-         ? this.getFixedPresentationBounds()
-         : this.getResizablePresentationBounds();
+      if (screenMode != 0) {
+         this.frameBuffer.drawGraphics(0, super.graphics, 0);
+         return;
+      }
 
+      Rectangle presentation = this.getFixedPresentationBounds();
       if (presentation.x == 0
          && presentation.y == 0
-         && presentation.width == logicalWidth
-         && presentation.height == logicalHeight
-         && this.getWidth() == logicalWidth
-         && this.getHeight() == logicalHeight) {
+         && presentation.width == fixedWidth
+         && presentation.height == fixedHeight) {
          this.frameBuffer.drawGraphics(0, super.graphics, 0);
          return;
       }
@@ -1282,8 +1230,8 @@ public class Client extends GameShell {
                presentation.y + presentation.height,
                0,
                0,
-               logicalWidth,
-               logicalHeight,
+               fixedWidth,
+               fixedHeight,
                this.frameBuffer
             );
          } finally {
@@ -1298,8 +1246,8 @@ public class Client extends GameShell {
             presentation.y + presentation.height,
             0,
             0,
-            logicalWidth,
-            logicalHeight,
+            fixedWidth,
+            fixedHeight,
             this.frameBuffer
          );
       }
