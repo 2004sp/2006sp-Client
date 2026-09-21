@@ -305,6 +305,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 317;
                      Client.orbsEnabled = false;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception) {
                      exception.printStackTrace();
@@ -320,6 +321,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 459;
                      Client.orbsEnabled = false;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception11) {
                      exception11.printStackTrace();
@@ -328,7 +330,10 @@ public final class ClientWindow extends Client implements ActionListener {
             }
 
             if (text.equals("Windowed mode")) {
-               Client.getClient().setScreenMode(1);
+               // Leaving fullscreen should return to the same renderer that
+               // entered it. Fixed 317/459/474 modes stay fixed; resizable
+               // modes return to their normal resizable window.
+               Client.getClient().setScreenMode(Client.screenMode == 0 ? 0 : 1);
             }
 
             if (text.equals("474 Gameframe")) {
@@ -339,6 +344,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 474;
                      Client.orbsEnabled = false;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception2) {
                      exception2.printStackTrace();
@@ -354,6 +360,7 @@ public final class ClientWindow extends Client implements ActionListener {
                      Client.getClient().setScreenMode(0);
                      Client.gameframeVersion = 474;
                      Client.orbsEnabled = true;
+                     Client.osrsResizableFrame = false;
                      Client.applyGameframeVersion();
                   } catch (Exception exception3) {
                      exception3.printStackTrace();

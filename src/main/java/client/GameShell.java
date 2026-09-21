@@ -90,8 +90,11 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
       this.drawLoadingText(0, "Loading...");
       this.startUp();
 
-      // Preserve the original 50 Hz game simulation while allowing rendering
-      // (and render-only camera rotation) to run at a higher cadence.
+      // Keep the original client/game simulation at 50 Hz, but allow drawing
+      // (and render-only camera rotation) to run faster. Raising the old
+      // delayTime directly would also speed up animations, networking timers,
+      // movement and other game logic, which is not what a camera FPS option
+      // should do.
       final long gameTickNanos = 20000000L;
       long now = System.nanoTime();
       long nextGameTick = now;
@@ -128,6 +131,8 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             now = System.nanoTime();
          }
 
+         // Avoid a long burst of stale simulation ticks after a debugger pause,
+         // window drag, or machine stall.
          if (catchUpTicks == 10 && now >= nextGameTick) {
             nextGameTick = now + gameTickNanos;
          }
@@ -145,6 +150,7 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             if (elapsedSeconds < 0.0) {
                elapsedSeconds = 0.0;
             } else if (elapsedSeconds > 0.1) {
+               // Camera smoothing should not jump after a long pause.
                elapsedSeconds = 0.1;
             }
 
@@ -175,6 +181,15 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
       }
    }
 
+   /**
+    * High-resolution frame pacing for render rates above the original 50 Hz.
+    *
+    * Thread.sleep() alone is too coarse/jittery on some Java 8/Windows
+    * combinations for 120-240 Hz pacing. Sleep for the coarse portion, yield
+    * near the deadline, then spin only for the final fraction of a millisecond.
+    * This keeps CPU use reasonable while avoiding 4 ms render deadlines being
+    * rounded into visibly uneven chunks.
+    */
    private static void waitUntil(long deadlineNanos) {
       while (true) {
          long remaining = deadlineNanos - System.nanoTime();
@@ -194,6 +209,9 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             }
          } else if (remaining > 250000L) {
             Thread.yield();
+         } else {
+            // Busy-wait only for the last ~0.25 ms to hit the frame deadline
+            // accurately enough for 120/144/165/240 Hz displays.
          }
       }
    }
@@ -297,21 +315,32 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    public final void mousePressed(MouseEvent mouseEvent) {
       int pendingClickXOrGetX = mouseEvent.getX();
       int pendingClickYOrGetY = mouseEvent.getY();
-      if (Client.screenMode != 0) {
-         pendingClickXOrGetX += 4;
-         pendingClickYOrGetY += 4;
-      }
-
       if (this.gameFrame != null) {
          pendingClickXOrGetX -= 4;
          pendingClickYOrGetY -= 22;
       }
 
-      int rawPendingClickXOrGetX = pendingClickXOrGetX;
-      int rawPendingClickYOrGetY = pendingClickYOrGetY;
+      // Keep the legacy +4 resizable input offset in logical UI space. Applying
+      // it before inverse scaling makes the offset scale-dependent (+8 at 50%,
+      // +2 at 200%), which shifts hitboxes at otherwise valid percentages.
+      long rawLogicalPoint = Client.translatePresentationInputCoordinates(
+         pendingClickXOrGetX,
+         pendingClickYOrGetY
+      );
+      int rawPendingClickXOrGetX = (int)(rawLogicalPoint >> 32);
+      int rawPendingClickYOrGetY = (int)rawLogicalPoint;
+      if (Client.screenMode != 0 && rawPendingClickXOrGetX >= 0 && rawPendingClickYOrGetY >= 0) {
+         rawPendingClickXOrGetX += 4;
+         rawPendingClickYOrGetY += 4;
+      }
+
       long translatedUiPoint = Client.translateUiInputCoordinates(pendingClickXOrGetX, pendingClickYOrGetY);
       pendingClickXOrGetX = (int)(translatedUiPoint >> 32);
       pendingClickYOrGetY = (int)translatedUiPoint;
+      if (Client.screenMode != 0) {
+         pendingClickXOrGetX += 4;
+         pendingClickYOrGetY += 4;
+      }
 
       if (pendingClickXOrGetX >= 0 && pendingClickYOrGetY >= 0 && pendingClickXOrGetX <= Client.clientWidth && pendingClickYOrGetY <= Client.clientHeight) {
          this.idleTime = 0;
@@ -325,8 +354,14 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          this.pendingClickTime = System.currentTimeMillis();
          if (mouseEvent.getButton() == 2) {
             this.middleMouseDown = true;
-            this.middleMouseX = pendingClickXOrGetX;
-            this.middleMouseY = pendingClickYOrGetY;
+            // Middle-mouse camera dragging is measured against raw AWT event
+            // coordinates in mouseDragged(). Keep the press origin in that
+            // same coordinate space. Using the translated logical UI point
+            // here causes a large first delta when a fixed gameframe is
+            // presented scaled inside a maximized window, making the camera
+            // appear to spin as soon as the mouse moves.
+            this.middleMouseX = mouseEvent.getX();
+            this.middleMouseY = mouseEvent.getY();
          } else {
             if (pendingClickTime != 0L) {
                if (pendingClickX == this.pendingClickX && pendingClickY == this.pendingClickY) {
@@ -407,18 +442,18 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    public final void mouseDragged(MouseEvent mouseEvent) {
       int mouseXOrGetX = mouseEvent.getX();
       int mouseYOrGetY = mouseEvent.getY();
-      if (Client.screenMode != 0) {
-         mouseXOrGetX += 4;
-         mouseYOrGetY += 4;
-      }
-
       if (this.gameFrame != null) {
          mouseXOrGetX -= 4;
          mouseYOrGetY -= 22;
       }
 
-      this.rawMouseX = mouseXOrGetX;
-      this.rawMouseY = mouseYOrGetY;
+      long rawLogicalPoint = Client.translatePresentationInputCoordinates(mouseXOrGetX, mouseYOrGetY);
+      this.rawMouseX = (int)(rawLogicalPoint >> 32);
+      this.rawMouseY = (int)rawLogicalPoint;
+      if (Client.screenMode != 0 && this.rawMouseX >= 0 && this.rawMouseY >= 0) {
+         this.rawMouseX += 4;
+         this.rawMouseY += 4;
+      }
 
       if (this.middleMouseDown) {
          mouseYOrGetY = this.middleMouseX - mouseEvent.getX();
@@ -430,6 +465,10 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          long translatedUiPoint = Client.translateUiInputCoordinates(mouseXOrGetX, mouseYOrGetY);
          mouseXOrGetX = (int)(translatedUiPoint >> 32);
          mouseYOrGetY = (int)translatedUiPoint;
+         if (Client.screenMode != 0) {
+            mouseXOrGetX += 4;
+            mouseYOrGetY += 4;
+         }
          if (System.currentTimeMillis() - this.pendingClickTime >= 250L || Math.abs(this.clickX - mouseXOrGetX) > 5 || Math.abs(this.clickY - mouseYOrGetY) > 5) {
             this.idleTime = 0;
             this.mouseX = mouseXOrGetX;
@@ -444,21 +483,26 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    public final void mouseMoved(MouseEvent mouseEvent) {
       int mouseXOrGetX = mouseEvent.getX();
       int mouseYOrGetY = mouseEvent.getY();
-      if (Client.screenMode != 0) {
-         mouseXOrGetX += 4;
-         mouseYOrGetY += 4;
-      }
-
       if (this.gameFrame != null) {
          mouseXOrGetX -= 4;
          mouseYOrGetY -= 22;
       }
 
-      this.rawMouseX = mouseXOrGetX;
-      this.rawMouseY = mouseYOrGetY;
+      long rawLogicalPoint = Client.translatePresentationInputCoordinates(mouseXOrGetX, mouseYOrGetY);
+      this.rawMouseX = (int)(rawLogicalPoint >> 32);
+      this.rawMouseY = (int)rawLogicalPoint;
+      if (Client.screenMode != 0 && this.rawMouseX >= 0 && this.rawMouseY >= 0) {
+         this.rawMouseX += 4;
+         this.rawMouseY += 4;
+      }
+
       long translatedUiPoint = Client.translateUiInputCoordinates(mouseXOrGetX, mouseYOrGetY);
       mouseXOrGetX = (int)(translatedUiPoint >> 32);
       mouseYOrGetY = (int)translatedUiPoint;
+      if (Client.screenMode != 0) {
+         mouseXOrGetX += 4;
+         mouseYOrGetY += 4;
+      }
 
       if (System.currentTimeMillis() - this.pendingClickTime >= 250L || Math.abs(this.clickX - mouseXOrGetX) > 5 || Math.abs(this.clickY - mouseYOrGetY) > 5) {
          this.idleTime = 0;

@@ -9,7 +9,9 @@ import java.awt.DisplayMode;
 import java.awt.Font;
 import java.awt.Frame;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.event.MouseWheelEvent;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -26,6 +28,7 @@ import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.text.NumberFormat;
 import java.util.ArrayList;
@@ -882,11 +885,16 @@ public class Client extends GameShell {
       int localScreenMode = screenMode != 0 && !flag ? minimumWindowWidth : fixedWidth;
       int screenMode2 = screenMode != 0 && !flag ? minimumWindowHeight : fixedHeight;
       gameFrame.setMinimumSize(new Dimension(localScreenMode + byteCode, screenMode2 + byteCode2));
-      gameFrame.setResizable(screenMode != 0 && loggedIn);
+      // Fixed gameframes stay at their normal dimensions until the user
+      // maximizes them, but the native maximize button must be available.
+      gameFrame.setResizable(loggedIn);
       gameFrame.setPreferredSize(new Dimension(sourceClientWidth, sourceClientHeight));
       if (ClientWindow.getInstance() != null) {
          gameFrame = ClientWindow.getInstance().frame;
-         if (screenMode != 0 && loggedIn) {
+         if (loggedIn) {
+            // Fullscreen is supported by both resizable and fixed gameframes.
+            // Fixed modes keep their 765x503 renderer and are scaled as one
+            // complete frame while fullscreen.
             ClientWindow.menuBar.add(ClientWindow.fullscreenMenu);
          } else {
             ClientWindow.menuBar.remove(ClientWindow.fullscreenMenu);
@@ -917,14 +925,26 @@ public class Client extends GameShell {
       }
 
       if (newScreenMode == 2) {
-         screenMode = 1;
+         boolean fixedFullscreen = screenMode == 0;
+
          // Borderless windowed fullscreen uses the desktop bounds of the
          // monitor containing the client. Do not switch the monitor's display
          // mode; keeping the desktop mode is what allows focus to move to a
          // second monitor without the game going black/minimizing.
          Rectangle fullscreenBounds = gameFrame.getGraphicsConfiguration().getBounds();
-         clientWidth = fullscreenBounds.width;
-         clientHeight = fullscreenBounds.height;
+         if (!fixedFullscreen) {
+            screenMode = 1;
+            Dimension renderSize = getResizableRenderSize(fullscreenBounds.width, fullscreenBounds.height);
+            clientWidth = renderSize.width;
+            clientHeight = renderSize.height;
+         } else {
+            // Keep the logical fixed framebuffer untouched. drawFrameBufferToWindow()
+            // scales the complete selected 317/459/474 frame to the fullscreen
+            // component, and fixed input translation maps clicks back to 765x503.
+            clientWidth = fixedWidth;
+            clientHeight = fixedHeight;
+         }
+
          cameraZoom = 600;
          Client client = this;
          if (super.clientWindow != null) {
@@ -941,14 +961,13 @@ public class Client extends GameShell {
             ClientWindow.menuBar.add(ClientWindow.windowedModeButton);
          }
 
-         // Fullscreen changes clientWidth/clientHeight immediately, so rebuild
-         // every raster/image buffer before the next draw pass. Previously the
-         // fullscreen branch waited for a later component-resize tick, leaving
-         // gameScreenImageProducer at the old window size for one frame. UI
-         // scaling then copied regions using the new fullscreen stride and
-         // could run past the old pixel buffer (especially at 200% scale).
-         this.rebuildViewportBuffers();
+         // Resizable fullscreen needs buffers matching the desktop dimensions.
+         // Fixed fullscreen deliberately keeps the normal fixed-size buffers.
+         if (!fixedFullscreen) {
+            this.rebuildViewportBuffers();
+         }
       } else {
+         boolean restoredFixedFullscreen = super.fullscreenActive && screenMode == 0 && newScreenMode == 0;
          if (super.fullscreenActive) {
             super.restoreWindowedMode();
             if (ClientWindow.getInstance() != null) {
@@ -957,6 +976,16 @@ public class Client extends GameShell {
             }
          }
 
+         if (restoredFixedFullscreen) {
+            clientWidth = fixedWidth;
+            clientHeight = fixedHeight;
+            cameraZoom = 600;
+            this.rebuildViewportBuffers();
+            this.updateClientWindowSize(true);
+            return;
+         }
+
+         int windowWidthPadding = clientWidthOrGetWidth;
          clientWidthOrGetWidth = gameFrame.getWidth() - clientWidthOrGetWidth;
          int clientHeightOrGetHeight = gameFrame.getHeight() - byteCode;
          if (screenMode != newScreenMode) {
@@ -969,6 +998,13 @@ public class Client extends GameShell {
                clientWidth = fixedWidth;
                clientHeight = fixedHeight;
                cameraZoom = 600;
+            }
+
+            if (loggedIn) {
+               int minimumContentWidth = newScreenMode != 0 ? minimumWindowWidth : fixedWidth;
+               int minimumContentHeight = newScreenMode != 0 ? minimumWindowHeight : fixedHeight;
+               gameFrame.setMinimumSize(new Dimension(minimumContentWidth + windowWidthPadding, minimumContentHeight + byteCode));
+               gameFrame.setResizable(true);
             }
 
             this.rebuildViewportBuffers();
@@ -1068,6 +1104,13 @@ public class Client extends GameShell {
       return loggedIn ? clampCameraRefreshRate(cameraRefreshRate) : 50;
    }
 
+   private static Dimension getResizableRenderSize(int physicalWidth, int physicalHeight) {
+      return new Dimension(
+         Math.max(minimumWindowWidth, physicalWidth),
+         Math.max(minimumWindowHeight, physicalHeight)
+      );
+   }
+
    @Override
    void processCameraFrame(double elapsedSeconds) {
       if (!loggedIn) {
@@ -1082,6 +1125,132 @@ public class Client extends GameShell {
 
    private static boolean isInsideRectangle(int x, int y, int left, int top, int width, int height) {
       return x >= left && y >= top && x < left + width && y < top + height;
+   }
+
+   /**
+    * Fixed gameframes always render into the original 765x503 framebuffer.
+    * When the native window is larger (for example after maximizing), scale
+    * that complete framebuffer as one image and letterbox it so the selected
+    * 317/459/474 layout and aspect ratio never turn into a resizable gameframe.
+    */
+   private Rectangle getPresentationBounds(int logicalWidth, int logicalHeight) {
+      int componentWidth = Math.max(1, this.getWidth());
+      int componentHeight = Math.max(1, this.getHeight());
+      int presentationWidth;
+      int presentationHeight;
+
+      if ((long)componentWidth * logicalHeight <= (long)componentHeight * logicalWidth) {
+         presentationWidth = componentWidth;
+         presentationHeight = Math.max(1, (int)((long)componentWidth * logicalHeight / logicalWidth));
+      } else {
+         presentationHeight = componentHeight;
+         presentationWidth = Math.max(1, (int)((long)componentHeight * logicalWidth / logicalHeight));
+      }
+
+      return new Rectangle(
+         (componentWidth - presentationWidth) / 2,
+         (componentHeight - presentationHeight) / 2,
+         presentationWidth,
+         presentationHeight
+      );
+   }
+
+   private Rectangle getFixedPresentationBounds() {
+      return this.getPresentationBounds(fixedWidth, fixedHeight);
+   }
+
+   private Rectangle getResizablePresentationBounds() {
+      return this.getPresentationBounds(clientWidth, clientHeight);
+   }
+
+   public static long translatePresentationInputCoordinates(int x, int y) {
+      Client client = clientInstance;
+      // Resizable gameframes render at the component's native size. Keeping
+      // their input 1:1 is important because the legacy 474/OSRS UI has many
+      // hitboxes derived directly from clientWidth/clientHeight.
+      if (client == null || !loggedIn || screenMode != 0) {
+         return ((long)x << 32) | (y & 0xffffffffL);
+      }
+
+      return translateFixedPresentationInputCoordinates(x, y);
+   }
+
+   private static long translateFixedPresentationInputCoordinates(int x, int y) {
+      Client client = clientInstance;
+      if (client == null) {
+         return ((long)x << 32) | (y & 0xffffffffL);
+      }
+
+      Rectangle presentation = client.getFixedPresentationBounds();
+      if (!isInsideRectangle(x, y, presentation.x, presentation.y, presentation.width, presentation.height)) {
+         return ((long)-1 << 32) | 0xffffffffL;
+      }
+
+      int logicalX = (x - presentation.x) * fixedWidth / presentation.width;
+      int logicalY = (y - presentation.y) * fixedHeight / presentation.height;
+      if (logicalX >= fixedWidth) {
+         logicalX = fixedWidth - 1;
+      }
+      if (logicalY >= fixedHeight) {
+         logicalY = fixedHeight - 1;
+      }
+      return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+   }
+
+   private void drawFrameBufferToWindow() {
+      if (screenMode != 0) {
+         this.frameBuffer.drawGraphics(0, super.graphics, 0);
+         return;
+      }
+
+      Rectangle presentation = this.getFixedPresentationBounds();
+      if (presentation.x == 0
+         && presentation.y == 0
+         && presentation.width == fixedWidth
+         && presentation.height == fixedHeight) {
+         this.frameBuffer.drawGraphics(0, super.graphics, 0);
+         return;
+      }
+
+      int componentWidth = Math.max(1, this.getWidth());
+      int componentHeight = Math.max(1, this.getHeight());
+      Graphics graphics = super.graphics;
+      graphics.setColor(Color.black);
+      graphics.fillRect(0, 0, componentWidth, componentHeight);
+
+      if (graphics instanceof Graphics2D) {
+         Graphics2D scaledGraphics = (Graphics2D)graphics.create();
+         try {
+            scaledGraphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            scaledGraphics.drawImage(
+               this.frameBuffer.image,
+               presentation.x,
+               presentation.y,
+               presentation.x + presentation.width,
+               presentation.y + presentation.height,
+               0,
+               0,
+               fixedWidth,
+               fixedHeight,
+               this.frameBuffer
+            );
+         } finally {
+            scaledGraphics.dispose();
+         }
+      } else {
+         graphics.drawImage(
+            this.frameBuffer.image,
+            presentation.x,
+            presentation.y,
+            presentation.x + presentation.width,
+            presentation.y + presentation.height,
+            0,
+            0,
+            fixedWidth,
+            fixedHeight,
+            this.frameBuffer
+         );
+      }
    }
 
    /**
@@ -1136,8 +1305,15 @@ public class Client extends GameShell {
       int relativeRight = relativeLeft + sourceWidth;
       int relativeBottom = relativeTop + sourceHeight;
 
-      int scaledLeft = destinationLeft + relativeLeft * destinationWidth / logicalTabWidth;
-      int scaledTop = destinationTop + relativeTop * destinationHeight / RESIZABLE_TAB_UI_HEIGHT;
+      // drawScaledUiRegion chooses source pixels with floor(destination * source / destination).
+      // The first destination pixel belonging to a source sub-rectangle is
+      // therefore ceil(sourceStart * destination / source), not floor(...).
+      // Using the same edge rule keeps hit-testing exact at every integer UI
+      // scale percentage instead of drifting by a pixel at selected sizes.
+      int scaledLeft = destinationLeft
+         + (relativeLeft * destinationWidth + logicalTabWidth - 1) / logicalTabWidth;
+      int scaledTop = destinationTop
+         + (relativeTop * destinationHeight + RESIZABLE_TAB_UI_HEIGHT - 1) / RESIZABLE_TAB_UI_HEIGHT;
       int scaledRight = destinationLeft
          + (relativeRight * destinationWidth + logicalTabWidth - 1) / logicalTabWidth;
       int scaledBottom = destinationTop
@@ -1218,33 +1394,90 @@ public class Client extends GameShell {
       return false;
    }
 
+   private static boolean isInsideVisibleScaledResizableChatUi(int x, int y) {
+      Client client = clientInstance;
+      if (client == null) {
+         return false;
+      }
+
+      int destinationWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
+      int destinationHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+      int destinationTop = clientHeight - destinationHeight;
+      if (client.chatMessagesVisible) {
+         return isInsideRectangle(x, y, 0, destinationTop, destinationWidth, destinationHeight);
+      }
+
+      // When chat is collapsed only the 22-pixel channel-button strip is
+      // rendered. Do not inverse-scale the transparent area above it or world
+      // clicks there will jump into the logical chatbox at non-100% scales.
+      int channelStripSourceTop = RESIZABLE_CHAT_UI_HEIGHT - 22;
+      int channelStripTop = destinationTop
+         + (channelStripSourceTop * destinationHeight + RESIZABLE_CHAT_UI_HEIGHT - 1)
+            / RESIZABLE_CHAT_UI_HEIGHT;
+      return isInsideRectangle(x, y, 0, channelStripTop, destinationWidth, clientHeight - channelStripTop);
+   }
+
    /**
     * Converts physical mouse coordinates over a scaled resizable/fullscreen UI
     * panel back into the original 2006 UI coordinate space. World/viewport
     * coordinates are returned unchanged.
     */
    public static long translateUiInputCoordinates(int x, int y) {
+      long presentationPoint = translatePresentationInputCoordinates(x, y);
+      x = (int)(presentationPoint >> 32);
+      y = (int)presentationPoint;
+      if (x < 0 || y < 0) {
+         return presentationPoint;
+      }
+
       if (screenMode == 0 || clampUiScalePercent(uiScalePercent) == 100) {
-         return ((long)x << 32) | (y & 0xffffffffL);
+         return presentationPoint;
       }
 
-      int minimapWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
-      int minimapHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
-      int minimapLeft = clientWidth - minimapWidth;
-      if (isInsideRectangle(x, y, minimapLeft, 0, minimapWidth, minimapHeight)) {
-         int logicalX = clientWidth - RESIZABLE_MINIMAP_UI_WIDTH
-            + (x - minimapLeft) * RESIZABLE_MINIMAP_UI_WIDTH / minimapWidth;
-         int logicalY = y * RESIZABLE_MINIMAP_UI_HEIGHT / minimapHeight;
-         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
-      }
-
-      // A scaled centered interface can overlap the *bounding rectangle* used
-      // for the wide resizable tab UI. Most of the upper-left part of that tab
-      // rectangle is just transparent/scene space, but treating the whole box
-      // as sidebar input steals clicks from controls near the lower-right edge
-      // of interfaces such as the bank (notably Bank Inventory / Equipment).
-      // Give the visible centered interface priority over the broad tab bounds.
       Client client = clientInstance;
+      boolean resizableUiScaled = client != null && client.shouldScaleResizableUi();
+
+      if (resizableUiScaled) {
+         // The minimap is drawn last, followed by the tab UI and chat UI in
+         // reverse paint priority for hit-testing. This mirrors the final
+         // visible pixels when large scale values make regions overlap.
+         int minimapWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
+         int minimapHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
+         int minimapLeft = clientWidth - minimapWidth;
+         if (isInsideRectangle(x, y, minimapLeft, 0, minimapWidth, minimapHeight)) {
+            int logicalX = clientWidth - RESIZABLE_MINIMAP_UI_WIDTH
+               + (x - minimapLeft) * RESIZABLE_MINIMAP_UI_WIDTH / minimapWidth;
+            int logicalY = y * RESIZABLE_MINIMAP_UI_HEIGHT / minimapHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
+
+         int logicalTabWidth = getResizableTabUiWidth();
+         int tabWidth = scaledUiDimension(logicalTabWidth);
+         int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
+         int tabLeft = clientWidth - tabWidth;
+         int tabTop = clientHeight - tabHeight;
+         if (isInsideVisibleScaledResizableTabUi(x, y, logicalTabWidth)) {
+            int logicalX = clientWidth - logicalTabWidth
+               + (x - tabLeft) * logicalTabWidth / tabWidth;
+            int logicalY = clientHeight - RESIZABLE_TAB_UI_HEIGHT
+               + (y - tabTop) * RESIZABLE_TAB_UI_HEIGHT / tabHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
+
+         int chatWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
+         int chatHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+         int chatTop = clientHeight - chatHeight;
+         if (isInsideVisibleScaledResizableChatUi(x, y)) {
+            int logicalX = x * RESIZABLE_CHAT_UI_WIDTH / chatWidth;
+            int logicalY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT
+               + (y - chatTop) * RESIZABLE_CHAT_UI_HEIGHT / chatHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
+      }
+
+      // Centered interfaces are rendered before the resizable HUD panels, so
+      // test them after the HUD. Visible chat/tab/minimap pixels must win when
+      // high scale percentages cause those regions to overlap.
       if (client != null && client.shouldScaleCenteredOpenInterface()) {
          int interfaceWidth = scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH);
          int interfaceHeight = scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT);
@@ -1257,29 +1490,6 @@ public class Client extends GameShell {
             int logicalY = logicalTop + (y - interfaceTop) * CENTERED_INTERFACE_UI_HEIGHT / interfaceHeight;
             return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
          }
-      }
-
-      int logicalTabWidth = getResizableTabUiWidth();
-      int tabWidth = scaledUiDimension(logicalTabWidth);
-      int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
-      int tabLeft = clientWidth - tabWidth;
-      int tabTop = clientHeight - tabHeight;
-      if (isInsideVisibleScaledResizableTabUi(x, y, logicalTabWidth)) {
-         int logicalX = clientWidth - logicalTabWidth
-            + (x - tabLeft) * logicalTabWidth / tabWidth;
-         int logicalY = clientHeight - RESIZABLE_TAB_UI_HEIGHT
-            + (y - tabTop) * RESIZABLE_TAB_UI_HEIGHT / tabHeight;
-         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
-      }
-
-      int chatWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
-      int chatHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
-      int chatTop = clientHeight - chatHeight;
-      if (isInsideRectangle(x, y, 0, chatTop, chatWidth, chatHeight)) {
-         int logicalX = x * RESIZABLE_CHAT_UI_WIDTH / chatWidth;
-         int logicalY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT
-            + (y - chatTop) * RESIZABLE_CHAT_UI_HEIGHT / chatHeight;
-         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
       }
 
       return ((long)x << 32) | (y & 0xffffffffL);
@@ -2231,6 +2441,7 @@ public class Client extends GameShell {
       if (!new File(text).exists()) {
          ClientSettings.createDefaultConfig();
       }
+      ClientSettings.ensureCameraRefreshRateSetting(new File(text));
 
       String text2 = "";
       BufferedReader bufferedReader = null;
@@ -6817,18 +7028,15 @@ public class Client extends GameShell {
    }
 
    private void mainGameProcessor() {
-      if (screenMode != 0 && (clientWidth != super.getSize().getWidth() || clientHeight != super.getSize().getHeight())) {
-         clientWidth = (int)super.getSize().getWidth();
-         clientHeight = (int)super.getSize().getHeight();
-         if (clientWidth < minimumWindowWidth) {
-            clientWidth = minimumWindowWidth;
+      if (screenMode != 0) {
+         int physicalWidth = Math.max(minimumWindowWidth, (int)super.getSize().getWidth());
+         int physicalHeight = Math.max(minimumWindowHeight, (int)super.getSize().getHeight());
+         Dimension renderSize = getResizableRenderSize(physicalWidth, physicalHeight);
+         if (clientWidth != renderSize.width || clientHeight != renderSize.height) {
+            clientWidth = renderSize.width;
+            clientHeight = renderSize.height;
+            this.rebuildViewportBuffers();
          }
-
-         if (clientHeight < minimumWindowHeight) {
-            clientHeight = minimumWindowHeight;
-         }
-
-         this.rebuildViewportBuffers();
       }
 
       if (this.systemUpdateTime > 1) {
@@ -11395,6 +11603,8 @@ public class Client extends GameShell {
                }
 
                gameframeVersion = 317;
+               orbsEnabled = false;
+               osrsResizableFrame = false;
                applyGameframeVersion();
             }
 
@@ -11614,7 +11824,22 @@ public class Client extends GameShell {
 
             this.login(text, newText, flag);
          }
+      } catch (SocketTimeoutException exception3) {
+         // A stalled login handshake is an expected network failure, not a
+         // client crash. Close the half-open connection so the next login
+         // attempt starts with a fresh socket and report the timeout in the
+         // login UI instead of dumping a stack trace to the console.
+         if (this.connection != null) {
+            this.connection.close();
+            this.connection = null;
+         }
+         this.loginMessage1 = "";
+         this.loginMessage2 = "No response from server. Please try again.";
       } catch (IOException exception3) {
+         if (this.connection != null) {
+            this.connection.close();
+            this.connection = null;
+         }
          exception3.printStackTrace();
          this.loginMessage1 = "";
          this.loginMessage2 = "Error connecting to server.";
@@ -15596,8 +15821,10 @@ public class Client extends GameShell {
          frameScale = 5.0;
       }
 
-      // Preserve the original 50 Hz response curve while subdividing it over
-      // faster render frames, so higher FPS changes smoothness rather than speed.
+      // The original 50 Hz camera moves halfway toward its target velocity,
+      // then applies half of the resulting velocity to the angle. Use the
+      // exact elapsed-time form of that update so subdividing a 20 ms tick
+      // into 120/144/240 FPS frames changes smoothness, not camera speed.
       double retention = Math.pow(0.5, frameScale);
 
       double yawTarget = 0.0;
@@ -15740,7 +15967,7 @@ public class Client extends GameShell {
          } else {
             this.frameBuffer.initDrawingArea();
             this.drawGameScreen();
-            this.frameBuffer.drawGraphics(0, super.graphics, 0);
+            this.drawFrameBufferToWindow();
          }
 
          this.scrollbarClickTicks = 0;
