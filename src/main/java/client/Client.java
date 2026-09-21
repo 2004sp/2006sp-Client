@@ -4521,12 +4521,6 @@ public class Client extends GameShell {
          }
       }
    }
-   private void drawSceneOverlaySprite(Sprite sprite, int x, int y) {
-      if (!GpuRasterizer3D.queueSceneOverlaySprite(sprite, x, y)) {
-         sprite.drawSprite(x, y);
-      }
-   }
-
    private void drawEntityOverlays() {
       try {
          int overheadTextHalfWidthIndex = 0;
@@ -4676,12 +4670,12 @@ public class Client extends GameShell {
                      this.projectActorToScreen(actor, actor.height + 15);
                      if (this.spriteDrawX >= 0) {
                         if (player.skullIcon < 2) {
-                           this.drawSceneOverlaySprite(this.skullIcons[player.skullIcon], this.spriteDrawX - 12, this.spriteDrawY - 30);
+                           this.skullIcons[player.skullIcon].drawSprite(this.spriteDrawX - 12, this.spriteDrawY - 30);
                            byteCode2 += 25;
                         }
 
                         if (player.headIcon < 7) {
-                           this.drawSceneOverlaySprite(this.headIcons[player.headIcon], this.spriteDrawX - 12, this.spriteDrawY - byteCode2);
+                           this.headIcons[player.headIcon].drawSprite(this.spriteDrawX - 12, this.spriteDrawY - byteCode2);
                            byteCode2 += 25;
                         }
                      }
@@ -4690,7 +4684,7 @@ public class Client extends GameShell {
                   if (playerIndex >= 0 && this.hintIconDrawType == 10 && this.hintIconPlayerId == this.playerIndices[playerIndex]) {
                      this.projectActorToScreen(actor, actor.height + 15);
                      if (this.spriteDrawX >= 0) {
-                        this.drawSceneOverlaySprite(this.headIconsHint[0], this.spriteDrawX - 12, this.spriteDrawY - byteCode2);
+                        this.headIconsHint[0].drawSprite(this.spriteDrawX - 12, this.spriteDrawY - byteCode2);
                      }
                   }
                } else {
@@ -4699,7 +4693,7 @@ public class Client extends GameShell {
                   if (definition2.headIcon >= 0 && definition2.headIcon < this.headIcons.length) {
                      this.projectActorToScreen(actor, actor.height + 15);
                      if (this.spriteDrawX >= 0) {
-                        this.drawSceneOverlaySprite(this.headIcons[definition2.headIcon], this.spriteDrawX - 12, this.spriteDrawY - 30);
+                        this.headIcons[definition2.headIcon].drawSprite(this.spriteDrawX - 12, this.spriteDrawY - 30);
                         byteCode3 += 25;
                      }
                   }
@@ -4707,7 +4701,7 @@ public class Client extends GameShell {
                   if (this.hintIconDrawType == 1 && this.hintIconNpcId == this.npcIndices[playerIndex - this.playerCount] && gameCycle % 20 < 10) {
                      this.projectActorToScreen(actor, actor.height + 15);
                      if (this.spriteDrawX >= 0) {
-                        this.drawSceneOverlaySprite(this.headIconsHint[0], this.spriteDrawX - 12, this.spriteDrawY - byteCode3);
+                        this.headIconsHint[0].drawSprite(this.spriteDrawX - 12, this.spriteDrawY - byteCode3);
                         byteCode3 += 25;
                      }
                   }
@@ -4717,11 +4711,7 @@ public class Client extends GameShell {
                         if (definition2.id == fishingSpotNpcIds[fishingSpotNpcIdIndex]) {
                            this.projectActorToScreen(actor, actor.height + 15);
                            if (this.spriteDrawX >= 0) {
-                              this.drawSceneOverlaySprite(
-                                 ItemDefinition.getSprite(fishingSpotItemIds[fishingSpotNpcIdIndex], 1, 0),
-                                 this.spriteDrawX - 12,
-                                 this.spriteDrawY - byteCode3
-                              );
+                              ItemDefinition.getSprite(fishingSpotItemIds[fishingSpotNpcIdIndex], 1, 0).drawSprite(this.spriteDrawX - 12, this.spriteDrawY - byteCode3);
                            }
                         }
                      }
@@ -14234,7 +14224,6 @@ public class Client extends GameShell {
             }
 
             if (redrawSoftwareUi) {
-               GpuRasterizer3D.beginSceneOverlayCapture();
                client.drawEntityOverlays();
                client.drawHeadIcon();
                client.animateTextures(textureUsageCounter);
