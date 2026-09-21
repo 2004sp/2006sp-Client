@@ -1198,12 +1198,48 @@ public class Client extends GameShell {
    }
 
    private void drawFrameBufferToWindow() {
+      Rectangle presentation;
+      if (screenMode == 0) {
+         presentation = this.getFixedPresentationBounds();
+      } else {
+         presentation = new Rectangle(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
+      }
+
+      int logicalWidth = this.frameBuffer.getWidth();
+      int logicalHeight = this.frameBuffer.getHeight();
+      int sceneX = screenMode == 0 ? 4 : 0;
+      int sceneY = screenMode == 0 ? 4 : 0;
+      int sceneWidth = this.gameScreenImageProducer != null ? this.gameScreenImageProducer.getWidth() : logicalWidth;
+      int sceneHeight = this.gameScreenImageProducer != null ? this.gameScreenImageProducer.getHeight() : logicalHeight;
+
+      if (GpuRasterizer3D.presentDirectFrame(
+         this.frameBuffer.pixels,
+         logicalWidth,
+         logicalHeight,
+         presentation.x,
+         presentation.y,
+         presentation.width,
+         presentation.height,
+         sceneX,
+         sceneY,
+         sceneWidth,
+         sceneHeight
+      )) {
+         return;
+      }
+
+      // If direct presentation is temporarily unavailable (context recreation,
+      // driver failure, software renderer selection), immediately expose the
+      // original AWT surface again before drawing the CPU framebuffer.
+      if (ClientWindow.isGpuPresentationVisible() && this instanceof ClientWindow) {
+         ((ClientWindow)this).setGpuPresentationSurface(false);
+      }
+
       if (screenMode != 0) {
          this.frameBuffer.drawGraphics(0, super.graphics, 0);
          return;
       }
 
-      Rectangle presentation = this.getFixedPresentationBounds();
       if (presentation.x == 0
          && presentation.y == 0
          && presentation.width == fixedWidth
