@@ -44,6 +44,12 @@
 
 [UI_SCALE_PERCENT];100
 
+//CAMERA_REFRESH_RATE - Parameters for customization:
+//50-240 = camera/render refresh rate in frames per second.
+//Game simulation remains at 50 Hz; this only makes camera motion/redrawing smoother.
+
+[CAMERA_REFRESH_RATE];120
+
 //FISH_ICONS - Parameters for customization:
 //1 = enable, 0 = disable	//shows fish icons over fishing spots
 
