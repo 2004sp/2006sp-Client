@@ -1193,7 +1193,7 @@ public class Client extends GameShell {
       return this.getPresentationBounds(clientWidth, clientHeight);
    }
 
-   private static long translatePresentationInputCoordinates(int x, int y) {
+   public static long translatePresentationInputCoordinates(int x, int y) {
       Client client = clientInstance;
       if (client == null) {
          return ((long)x << 32) | (y & 0xffffffffL);
@@ -1710,31 +1710,19 @@ public class Client extends GameShell {
    }
 
    private int getMenuMouseX() {
-      if (!this.shouldUseRawMenuCoordinates()) {
-         return super.mouseX;
-      }
-      return (int)(translatePresentationInputCoordinates(super.rawMouseX, super.rawMouseY) >> 32);
+      return this.shouldUseRawMenuCoordinates() ? super.rawMouseX : super.mouseX;
    }
 
    private int getMenuMouseY() {
-      if (!this.shouldUseRawMenuCoordinates()) {
-         return super.mouseY;
-      }
-      return (int)translatePresentationInputCoordinates(super.rawMouseX, super.rawMouseY);
+      return this.shouldUseRawMenuCoordinates() ? super.rawMouseY : super.mouseY;
    }
 
    private int getMenuClickX() {
-      if (!this.shouldUseRawMenuCoordinates()) {
-         return super.clickX;
-      }
-      return (int)(translatePresentationInputCoordinates(super.rawClickX, super.rawClickY) >> 32);
+      return this.shouldUseRawMenuCoordinates() ? super.rawClickX : super.clickX;
    }
 
    private int getMenuClickY() {
-      if (!this.shouldUseRawMenuCoordinates()) {
-         return super.clickY;
-      }
-      return (int)translatePresentationInputCoordinates(super.rawClickX, super.rawClickY);
+      return this.shouldUseRawMenuCoordinates() ? super.rawClickY : super.clickY;
    }
 
    private boolean shouldScaleContextMenu() {
