@@ -453,6 +453,14 @@ final class GpuRasterizer3D {
          && presentationCanvas.hasPresentedFrame();
    }
 
+   static boolean retainPresentedFrameForRegionTransition() {
+      return requested
+         && !unavailable
+         && presentationCanvas != null
+         && !presentationCanvas.hasFailed()
+         && presentationCanvas.retainPresentedFrameForTransition();
+   }
+
    private static boolean canUseDirectPresentation() {
       return presentationCanvas != null && presentationCanvas.isContextReady();
    }
