@@ -44,6 +44,12 @@ public final class ClientSettings {
       this.parameterCount = newParameterCount;
    }
    public static void applySetting(String text, String[] newText) {
+      // Kept for compatibility with userConfig.cfg files created by older builds.
+      // Camera refresh is no longer a configurable client setting.
+      if (text.equals("CAMERA_REFRESH_RATE")) {
+         return;
+      }
+
       int xpDropPositionOrParseInt = 0;
       ClientSettings[] sourceCachedProfiles = cachedProfiles;
       int cachedProfilesLengthOrLength = cachedProfiles.length;
