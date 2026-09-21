@@ -75,9 +75,11 @@ fall back to the software rasterizer for compatibility.
 
 The GPU path keeps the existing scene/model callers and moves flat, Gouraud,
 textured, and depth triangle coverage/interpolation into an off-screen OpenGL
-buffer. Only the affected triangle rectangle is read back into the legacy pixel
-and depth buffers, so the existing UI, fog, screenshots, and 2D renderer continue
-to use the same buffers.
+buffer. The main scene stays on the GPU for the full `renderScene` pass and is
+read back once before fog/overlays; standalone triangle calls outside that pass
+still use a small bounding-box readback. If a legacy-only triangle is encountered
+mid-frame, accumulated GPU output is copied back once and the rest of that frame
+continues in software.
 
 ## Configuration
 

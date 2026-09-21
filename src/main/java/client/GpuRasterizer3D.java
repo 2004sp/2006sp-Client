@@ -11,10 +11,10 @@ import org.lwjgl.opengl.PixelFormat;
 /**
  * GPU-backed triangle rasterizer for the legacy software client.
  *
- * The client still owns the int[] color framebuffer and float[] depth buffer.
- * Each triangle is rasterized by OpenGL into a scissored off-screen Pbuffer and
- * only that triangle's bounding rectangle is copied back. Existing 2D/UI/fog
- * code can therefore keep using the original buffers unchanged.
+ * The main scene is rendered into an off-screen OpenGL Pbuffer and copied back
+ * once at the end of the 3D pass. Triangle calls made outside that pass use a
+ * small bounding-box readback. The legacy int[] color buffer and float[] depth
+ * buffer therefore remain the source of truth for fog, UI and screenshots.
  */
 final class GpuRasterizer3D {
    private static final float DEPTH_SCALE = 1048576.0F;
@@ -24,6 +24,10 @@ final class GpuRasterizer3D {
    private static volatile boolean requested = true;
    private static boolean unavailable;
    private static boolean failureLogged;
+
+   private static boolean frameOpen;
+   private static boolean frameActive;
+   private static boolean frameSoftwareFallback;
 
    private static Pbuffer pbuffer;
    private static int bufferWidth;
@@ -58,6 +62,61 @@ final class GpuRasterizer3D {
       System.out.println("Renderer: " + (enabled ? "GPU" : "software"));
    }
 
+   static void beginFrame() {
+      if (frameOpen) {
+         endFrame();
+      }
+
+      frameOpen = true;
+      frameActive = false;
+      frameSoftwareFallback = false;
+
+      if (!baseAvailable()) {
+         frameSoftwareFallback = true;
+         return;
+      }
+
+      try {
+         ensureContext(Rasterizer2D.width, Rasterizer2D.height);
+         makeCurrent();
+         configureViewport(Rasterizer2D.width, Rasterizer2D.height);
+
+         GL11.glEnable(GL11.GL_SCISSOR_TEST);
+         GL11.glScissor(0, 0, viewportWidth, viewportHeight);
+         GL11.glColorMask(true, true, true, true);
+         GL11.glDisable(GL11.GL_TEXTURE_2D);
+         GL11.glDisable(GL11.GL_ALPHA_TEST);
+         GL11.glDisable(GL11.GL_BLEND);
+         GL11.glEnable(GL11.GL_DEPTH_TEST);
+         GL11.glDepthFunc(GL11.GL_ALWAYS);
+         GL11.glDepthMask(true);
+         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+         frameActive = true;
+      } catch (Throwable failure) {
+         frameSoftwareFallback = true;
+         fail(failure);
+      }
+   }
+
+   static void endFrame() {
+      if (!frameOpen) {
+         return;
+      }
+
+      try {
+         if (frameActive) {
+            readBackFrame();
+         }
+      } catch (Throwable failure) {
+         frameActive = false;
+         fail(failure);
+      } finally {
+         frameOpen = false;
+         frameActive = false;
+         frameSoftwareFallback = false;
+      }
+   }
+
    static void invalidateTexture(int textureId) {
       if (textureId >= 0 && textureId < textureDirty.length) {
          textureDirty[textureId] = true;
@@ -74,13 +133,19 @@ final class GpuRasterizer3D {
 
       // The recovered depth-only walker uses x* as scanline Y and y* as X.
       Bounds bounds = Bounds.of(y0, x0, y1, x1, y2, x2);
-      if (bounds == null || !begin(bounds)) {
+      if (bounds == null) {
+         return true;
+      }
+      if (!prepare(bounds)) {
          return false;
       }
 
+      boolean batched = frameActive;
       try {
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
+         GL11.glDisable(GL11.GL_BLEND);
+         GL11.glColorMask(false, false, false, true);
          GL11.glShadeModel(GL11.GL_FLAT);
          GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
          GL11.glBegin(GL11.GL_TRIANGLES);
@@ -88,10 +153,15 @@ final class GpuRasterizer3D {
          GL11.glVertex3f(y1, x1, -clampDepth(depth1));
          GL11.glVertex3f(y2, x2, -clampDepth(depth2));
          GL11.glEnd();
-         readBack(bounds, false, false);
+         GL11.glColorMask(true, true, true, true);
+
+         if (!batched) {
+            readBack(bounds, false, false);
+         }
          return true;
       } catch (Throwable failure) {
-         fail(failure);
+         GL11.glColorMask(true, true, true, true);
+         failCurrentFrame(failure);
          return false;
       }
    }
@@ -105,24 +175,34 @@ final class GpuRasterizer3D {
       }
 
       Bounds bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
-      if (bounds == null || !begin(bounds)) {
+      if (bounds == null) {
+         return true;
+      }
+      if (!prepare(bounds)) {
          return false;
       }
 
+      boolean batched = frameActive;
       try {
+         GL11.glColorMask(true, true, true, true);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
+         float sourceAlpha = configureLegacyBlend(batched);
          GL11.glShadeModel(GL11.GL_FLAT);
-         setColor(rgb, 1.0F);
+         setColor(rgb, 1.0F, sourceAlpha);
+
          GL11.glBegin(GL11.GL_TRIANGLES);
          GL11.glVertex3f(x0, y0, -clampDepth(depth0));
          GL11.glVertex3f(x1, y1, -clampDepth(depth1));
          GL11.glVertex3f(x2, y2, -clampDepth(depth2));
          GL11.glEnd();
-         readBack(bounds, true, true);
+
+         if (!batched) {
+            readBack(bounds, true, true);
+         }
          return true;
       } catch (Throwable failure) {
-         fail(failure);
+         failCurrentFrame(failure);
          return false;
       }
    }
@@ -138,26 +218,36 @@ final class GpuRasterizer3D {
       }
 
       Bounds bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
-      if (bounds == null || !begin(bounds)) {
+      if (bounds == null) {
+         return true;
+      }
+      if (!prepare(bounds)) {
          return false;
       }
 
+      boolean batched = frameActive;
       try {
+         GL11.glColorMask(true, true, true, true);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
+         float sourceAlpha = configureLegacyBlend(batched);
          GL11.glShadeModel(GL11.GL_SMOOTH);
+
          GL11.glBegin(GL11.GL_TRIANGLES);
-         setColor(Rasterizer3D.HSL_TO_RGB[color0 & 65535], 1.0F);
+         setColor(Rasterizer3D.HSL_TO_RGB[color0 & 65535], 1.0F, sourceAlpha);
          GL11.glVertex3f(x0, y0, -clampDepth(depth0));
-         setColor(Rasterizer3D.HSL_TO_RGB[color1 & 65535], 1.0F);
+         setColor(Rasterizer3D.HSL_TO_RGB[color1 & 65535], 1.0F, sourceAlpha);
          GL11.glVertex3f(x1, y1, -clampDepth(depth1));
-         setColor(Rasterizer3D.HSL_TO_RGB[color2 & 65535], 1.0F);
+         setColor(Rasterizer3D.HSL_TO_RGB[color2 & 65535], 1.0F, sourceAlpha);
          GL11.glVertex3f(x2, y2, -clampDepth(depth2));
          GL11.glEnd();
-         readBack(bounds, true, true);
+
+         if (!batched) {
+            readBack(bounds, true, true);
+         }
          return true;
       } catch (Throwable failure) {
-         fail(failure);
+         failCurrentFrame(failure);
          return false;
       }
    }
@@ -173,17 +263,27 @@ final class GpuRasterizer3D {
       float depth0, float depth1, float depth2
    ) {
       if (!canDraw(depth0, depth1, depth2) || textureId < 0 || textureId >= TEXTURE_COUNT) {
+         if (frameOpen && !frameSoftwareFallback) {
+            fallbackCurrentFrame();
+         }
          return false;
       }
 
       Bounds bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
-      if (bounds == null || !begin(bounds)) {
+      if (bounds == null) {
+         return true;
+      }
+      if (!prepare(bounds)) {
          return false;
       }
 
+      boolean batched = frameActive;
       try {
          int glTexture = ensureTexture(textureId);
          if (glTexture == 0) {
+            if (batched) {
+               fallbackCurrentFrame();
+            }
             return false;
          }
 
@@ -221,6 +321,9 @@ final class GpuRasterizer3D {
 
          double max = maxAbs(pu0, pv0, pw0, pu1, pv1, pw1, pu2, pv2, pw2);
          if (!(max > 0.0D) || Double.isInfinite(max) || Double.isNaN(max)) {
+            if (batched) {
+               fallbackCurrentFrame();
+            }
             return false;
          }
          float coordinateScale = (float)(1.0D / max);
@@ -230,6 +333,8 @@ final class GpuRasterizer3D {
             && Rasterizer3D.renderModeFlag
             && !useFallback;
 
+         GL11.glColorMask(true, true, true, true);
+         GL11.glDisable(GL11.GL_BLEND);
          GL11.glEnable(GL11.GL_TEXTURE_2D);
          GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexture);
          GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
@@ -251,46 +356,123 @@ final class GpuRasterizer3D {
          GL11.glVertex3f(x2, y2, -clampDepth(depth2));
          GL11.glEnd();
 
-         readBack(bounds, true, false);
+         if (!batched) {
+            readBack(bounds, true, false);
+         }
          return true;
       } catch (Throwable failure) {
-         fail(failure);
+         failCurrentFrame(failure);
          return false;
       }
    }
 
-   private static boolean canDraw(float depth0, float depth1, float depth2) {
+   private static boolean baseAvailable() {
       return requested
          && !unavailable
          && Rasterizer2D.pixels != null
          && Rasterizer2D.depthBuffer != null
          && Rasterizer2D.width > 0
-         && Rasterizer2D.height > 0
-         && depth0 >= 0.0F
-         && depth1 >= 0.0F
-         && depth2 >= 0.0F;
+         && Rasterizer2D.height > 0;
    }
 
-   private static boolean begin(Bounds bounds) {
+   private static boolean canDraw(float depth0, float depth1, float depth2) {
+      if (frameOpen && frameSoftwareFallback) {
+         return false;
+      }
+
+      if (!baseAvailable() || depth0 < 0.0F || depth1 < 0.0F || depth2 < 0.0F) {
+         if (frameOpen && !frameSoftwareFallback) {
+            fallbackCurrentFrame();
+         }
+         return false;
+      }
+      return true;
+   }
+
+   private static boolean prepare(Bounds bounds) {
       try {
          ensureContext(Rasterizer2D.width, Rasterizer2D.height);
-         if (!pbuffer.isCurrent()) {
-            pbuffer.makeCurrent();
-         }
+         makeCurrent();
          configureViewport(Rasterizer2D.width, Rasterizer2D.height);
 
          GL11.glEnable(GL11.GL_SCISSOR_TEST);
-         GL11.glScissor(bounds.minX, viewportHeight - bounds.maxY, bounds.width(), bounds.height());
-         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-         GL11.glDisable(GL11.GL_BLEND);
+         if (frameActive) {
+            int minX = Math.max(0, Rasterizer2D.topX);
+            int minY = Math.max(0, Rasterizer2D.topY);
+            int maxX = Math.min(viewportWidth, Rasterizer2D.bottomX);
+            int maxY = Math.min(viewportHeight, Rasterizer2D.bottomY);
+            if (minX >= maxX || minY >= maxY) {
+               return true;
+            }
+            GL11.glScissor(minX, viewportHeight - maxY, maxX - minX, maxY - minY);
+         } else {
+            GL11.glScissor(bounds.minX, viewportHeight - bounds.maxY, bounds.width(), bounds.height());
+            GL11.glColorMask(true, true, true, true);
+            GL11.glDisable(GL11.GL_BLEND);
+            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+         }
+
          GL11.glEnable(GL11.GL_DEPTH_TEST);
          GL11.glDepthFunc(GL11.GL_ALWAYS);
          GL11.glDepthMask(true);
          return true;
       } catch (Throwable failure) {
-         fail(failure);
+         failCurrentFrame(failure);
          return false;
       }
+   }
+
+   private static float configureLegacyBlend(boolean batched) {
+      if (!batched || Rasterizer3D.alpha == 0) {
+         GL11.glDisable(GL11.GL_BLEND);
+         return 1.0F;
+      }
+
+      int alpha = Rasterizer3D.alpha;
+      if (alpha < 0) {
+         alpha = 0;
+      } else if (alpha > 256) {
+         alpha = 256;
+      }
+
+      GL11.glEnable(GL11.GL_BLEND);
+      GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+      return (256 - alpha) / 256.0F;
+   }
+
+   private static void fallbackCurrentFrame() {
+      if (!frameOpen || frameSoftwareFallback) {
+         return;
+      }
+
+      if (frameActive) {
+         try {
+            readBackFrame();
+         } catch (Throwable failure) {
+            frameActive = false;
+            frameSoftwareFallback = true;
+            fail(failure);
+            return;
+         }
+      }
+
+      frameActive = false;
+      frameSoftwareFallback = true;
+   }
+
+   private static void failCurrentFrame(Throwable failure) {
+      if (frameOpen && frameActive) {
+         try {
+            readBackFrame();
+         } catch (Throwable ignored) {
+         }
+      }
+
+      frameActive = false;
+      if (frameOpen) {
+         frameSoftwareFallback = true;
+      }
+      fail(failure);
    }
 
    private static void ensureContext(int width, int height) throws Exception {
@@ -326,6 +508,12 @@ final class GpuRasterizer3D {
       viewportWidth = -1;
       viewportHeight = -1;
       System.out.println("GPU renderer initialized: OpenGL Pbuffer " + bufferWidth + "x" + bufferHeight);
+   }
+
+   private static void makeCurrent() throws Exception {
+      if (!pbuffer.isCurrent()) {
+         pbuffer.makeCurrent();
+      }
    }
 
    private static void configureViewport(int width, int height) {
@@ -394,6 +582,13 @@ final class GpuRasterizer3D {
       return glTexture;
    }
 
+   private static void readBackFrame() {
+      if (viewportWidth <= 0 || viewportHeight <= 0) {
+         return;
+      }
+      readBack(new Bounds(0, 0, viewportWidth, viewportHeight), true, false);
+   }
+
    private static void readBack(Bounds bounds, boolean copyColor, boolean blendLegacyAlpha) {
       int width = bounds.width();
       int height = bounds.height();
@@ -417,16 +612,16 @@ final class GpuRasterizer3D {
 
          for (int x = 0; x < width; x++) {
             int sourcePixel = sourceRow + x;
-            int byteIndex = sourcePixel * 4;
-            int fragmentAlpha = colorReadback.get(byteIndex + 3) & 255;
-            if (fragmentAlpha == 0) {
+            float gpuDepth = depthReadback.get(sourcePixel);
+            if (gpuDepth >= 0.9999999F) {
                continue;
             }
 
             int destinationIndex = destination + x;
-            Rasterizer2D.depthBuffer[destinationIndex] = depthReadback.get(sourcePixel) * DEPTH_SCALE;
+            Rasterizer2D.depthBuffer[destinationIndex] = gpuDepth * DEPTH_SCALE;
 
             if (copyColor) {
+               int byteIndex = sourcePixel * 4;
                int rgb = ((colorReadback.get(byteIndex) & 255) << 16)
                   | ((colorReadback.get(byteIndex + 1) & 255) << 8)
                   | (colorReadback.get(byteIndex + 2) & 255);
@@ -463,11 +658,11 @@ final class GpuRasterizer3D {
       }
    }
 
-   private static void setColor(int rgb, float scale) {
+   private static void setColor(int rgb, float scale, float alpha) {
       float red = ((rgb >> 16) & 255) / 255.0F * scale;
       float green = ((rgb >> 8) & 255) / 255.0F * scale;
       float blue = (rgb & 255) / 255.0F * scale;
-      GL11.glColor4f(red, green, blue, 1.0F);
+      GL11.glColor4f(red, green, blue, alpha);
    }
 
    private static void setTextureShade(int shade, boolean smooth) {

@@ -13855,7 +13855,9 @@ public class Client extends GameShell {
             Model.mouseX = client.mouseX - 4;
             Model.mouseY = client.mouseY - 4;
             Rasterizer2D.clear();
+            GpuRasterizer3D.beginFrame();
             client.scene.renderScene(client.cameraPositionX, client.xCameraPos, client.yCameraPos, client.cameraPositionZ, localGetCameraPlane, client.zCameraPos);
+            GpuRasterizer3D.endFrame();
             client.scene.clearInteractiveObjectCache();
             client.updateFog();
             client.updateParticles();
