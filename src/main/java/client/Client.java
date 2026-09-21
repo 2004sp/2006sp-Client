@@ -1273,7 +1273,7 @@ public class Client extends GameShell {
             // The software fallback used a separate opaque presentation
             // texture. Recompose the keyed software UI on the next direct
             // frame so the retained overlay texture is immediately current.
-            this.softwareUiRefreshRequested = true;
+            this.requestSoftwareUiRefresh();
             return;
          }
 
