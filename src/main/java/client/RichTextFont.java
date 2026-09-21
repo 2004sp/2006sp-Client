@@ -399,14 +399,16 @@ public final class RichTextFont extends Rasterizer2D {
          newTopY = scalarArgument;
          byte[] sourceGlyphPixel = glyphPixel;
          int[] pixels = Rasterizer2D.pixels;
-         newTopY = ((newTopY & 16711935) * scalar3 & -16711936) + ((newTopY & 0xFF00) * scalar3 & 0xFF0000) >> 8;
-         scalar = 256 - scalar3;
 
          for (int loopIndex = -sourcePixelIndex2; loopIndex < 0; loopIndex++) {
             for (int loopIndex2 = -sourceGlyphWidth2; loopIndex2 < 0; loopIndex2++) {
                if (sourceGlyphPixel[glyphWidth++] != 0) {
-                  int pixel = pixels[pixelIndex];
-                  pixels[pixelIndex++] = (((pixel & 16711935) * scalar & -16711936) + ((pixel & 0xFF00) * scalar & 0xFF0000) >> 8) + newTopY;
+                  pixels[pixelIndex] = Rasterizer2D.blendUiPixel(
+                     newTopY,
+                     pixels[pixelIndex],
+                     scalar3
+                  );
+                  pixelIndex++;
                } else {
                   pixelIndex++;
                }
