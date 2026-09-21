@@ -48,6 +48,7 @@ final class GpuRasterizer3D {
    private static boolean frameActive;
    private static boolean frameSoftwareFallback;
    private static boolean directFrameReady;
+   private static boolean directModeLogged;
 
    private static GpuPresentationCanvas presentationCanvas;
    private static boolean contextSharedWithPresentation;
@@ -151,6 +152,12 @@ final class GpuRasterizer3D {
       }
 
       try {
+         if (presentationCanvas != null
+            && !presentationCanvas.isContextReady()
+            && !presentationCanvas.hasFailed()) {
+            presentationCanvas.requestInitialization();
+         }
+
          ensureContext(Rasterizer2D.width, Rasterizer2D.height);
          makeCurrent();
          configureViewport(Rasterizer2D.width, Rasterizer2D.height);
@@ -205,7 +212,7 @@ final class GpuRasterizer3D {
                directFrameReady = true;
             } else {
                readBackFrameAsync();
-               if (presentationCanvas != null) {
+               if (presentationCanvas != null && !isDirectPresentationTransitioning()) {
                   presentationCanvas.deactivate();
                }
             }
@@ -272,6 +279,13 @@ final class GpuRasterizer3D {
          && presentationCanvas.isContextReady();
    }
 
+   static boolean isDirectPresentationTransitioning() {
+      return requested
+         && presentationCanvas != null
+         && !presentationCanvas.hasFailed()
+         && (!presentationCanvas.isContextReady() || !contextSharedWithPresentation);
+   }
+
    private static void copySceneForDirectPresentation() {
       if (viewportWidth <= 0 || viewportHeight <= 0) {
          throw new IllegalStateException("Invalid GPU presentation viewport");
@@ -326,6 +340,10 @@ final class GpuRasterizer3D {
       );
       directFrameTexture = texture;
       presentationTextureWriteIndex ^= 1;
+      if (!directModeLogged) {
+         directModeLogged = true;
+         System.out.println("GPU presentation mode: DIRECT (no scene GPU->CPU readback).");
+      }
 
       // The AWT canvas uses a separate shared context. Flush the copy so the
       // texture contents are visible when the EDT composites this frame.
@@ -1503,6 +1521,7 @@ final class GpuRasterizer3D {
       pbuffer = null;
       contextSharedWithPresentation = false;
       directFrameReady = false;
+      directModeLogged = false;
       Arrays.fill(presentationTextures, 0);
       presentationTextureWriteIndex = 0;
       directFrameTexture = 0;
