@@ -1195,7 +1195,12 @@ public class Client extends GameShell {
 
    public static long translatePresentationInputCoordinates(int x, int y) {
       Client client = clientInstance;
-      if (client == null) {
+      // The title/login screen is still the original 765x503 layout and is
+      // drawn directly to the component rather than through the resizable
+      // framebuffer presentation path. Saved resizable dimensions may be much
+      // larger than the login window, so applying presentation scaling before
+      // login moves clicks away from the visible buttons.
+      if (client == null || !loggedIn) {
          return ((long)x << 32) | (y & 0xffffffffL);
       }
 
