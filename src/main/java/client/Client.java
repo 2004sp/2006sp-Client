@@ -11405,6 +11405,8 @@ public class Client extends GameShell {
                }
 
                gameframeVersion = 317;
+               orbsEnabled = false;
+               osrsResizableFrame = false;
                applyGameframeVersion();
             }
 
