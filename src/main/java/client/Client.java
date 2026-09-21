@@ -1074,6 +1074,109 @@ public class Client extends GameShell {
       return RESIZABLE_TAB_UI_WIDTH;
    }
 
+   private static boolean isInsideScaledTabSourceRectangle(
+      int x,
+      int y,
+      int sourceLeft,
+      int sourceTop,
+      int sourceWidth,
+      int sourceHeight,
+      int logicalTabWidth
+   ) {
+      int destinationWidth = scaledUiDimension(logicalTabWidth);
+      int destinationHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
+      int destinationLeft = clientWidth - destinationWidth;
+      int destinationTop = clientHeight - destinationHeight;
+      int sourceBoundsLeft = clientWidth - logicalTabWidth;
+      int sourceBoundsTop = clientHeight - RESIZABLE_TAB_UI_HEIGHT;
+
+      int relativeLeft = sourceLeft - sourceBoundsLeft;
+      int relativeTop = sourceTop - sourceBoundsTop;
+      int relativeRight = relativeLeft + sourceWidth;
+      int relativeBottom = relativeTop + sourceHeight;
+
+      int scaledLeft = destinationLeft + relativeLeft * destinationWidth / logicalTabWidth;
+      int scaledTop = destinationTop + relativeTop * destinationHeight / RESIZABLE_TAB_UI_HEIGHT;
+      int scaledRight = destinationLeft
+         + (relativeRight * destinationWidth + logicalTabWidth - 1) / logicalTabWidth;
+      int scaledBottom = destinationTop
+         + (relativeBottom * destinationHeight + RESIZABLE_TAB_UI_HEIGHT - 1) / RESIZABLE_TAB_UI_HEIGHT;
+
+      return isInsideRectangle(x, y, scaledLeft, scaledTop, scaledRight - scaledLeft, scaledBottom - scaledTop);
+   }
+
+   /**
+    * The tab scaler renders one bottom-right bounding rectangle, but much of
+    * that rectangle is transparent viewport space when the sidebar panel is
+    * collapsed. Only translate input over pixels that belong to the visible
+    * tab bar, or to the sidebar panel while it is actually open.
+    */
+   private static boolean isInsideVisibleScaledResizableTabUi(int x, int y, int logicalTabWidth) {
+      Client client = clientInstance;
+      if (client == null || customSprites == null) {
+         return false;
+      }
+
+      if (osrsResizableFrame) {
+         if (customSprites.length <= 97 || customSprites[97] == null) {
+            return false;
+         }
+
+         int frameWidth = customSprites[97].canvasWidth;
+         int frameHeight = customSprites[97].canvasHeight;
+         return isInsideScaledTabSourceRectangle(
+            x,
+            y,
+            clientWidth - frameWidth,
+            clientHeight - frameHeight,
+            frameWidth,
+            frameHeight,
+            logicalTabWidth
+         );
+      }
+
+      int backgroundSpriteId = client.tabBarBackgroundSpriteId;
+      if (backgroundSpriteId < 0
+         || backgroundSpriteId >= customSprites.length
+         || customSprites[backgroundSpriteId] == null) {
+         return false;
+      }
+
+      int tabWidth = customSprites[backgroundSpriteId].canvasWidth;
+      int tabHeight = customSprites[backgroundSpriteId].canvasHeight;
+      boolean wide = clientWidth >= client.wideTabBarWidthThreshold;
+      int columns = wide ? 14 : 7;
+      int rows = wide ? 1 : 2;
+      int visibleTabBarWidth = tabWidth * columns;
+      int visibleTabBarHeight = tabHeight * rows;
+
+      if (isInsideScaledTabSourceRectangle(
+         x,
+         y,
+         clientWidth - visibleTabBarWidth,
+         clientHeight - visibleTabBarHeight,
+         visibleTabBarWidth,
+         visibleTabBarHeight,
+         logicalTabWidth
+      )) {
+         return true;
+      }
+
+      if (client.resizableTabPanelVisible) {
+         return isInsideScaledTabSourceRectangle(
+            x,
+            y,
+            clientWidth - 204,
+            clientHeight - visibleTabBarHeight - 274,
+            204,
+            274,
+            logicalTabWidth
+         );
+      }
+
+      return false;
+   }
+
    /**
     * Converts physical mouse coordinates over a scaled resizable/fullscreen UI
     * panel back into the original 2006 UI coordinate space. World/viewport
@@ -1120,7 +1223,7 @@ public class Client extends GameShell {
       int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
       int tabLeft = clientWidth - tabWidth;
       int tabTop = clientHeight - tabHeight;
-      if (isInsideRectangle(x, y, tabLeft, tabTop, tabWidth, tabHeight)) {
+      if (isInsideVisibleScaledResizableTabUi(x, y, logicalTabWidth)) {
          int logicalX = clientWidth - logicalTabWidth
             + (x - tabLeft) * logicalTabWidth / tabWidth;
          int logicalY = clientHeight - RESIZABLE_TAB_UI_HEIGHT
