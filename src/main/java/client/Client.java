@@ -64,6 +64,11 @@ public class Client extends GameShell {
    private static final int MAX_UI_SCALE_PERCENT = 200;
    private static final int MIN_CAMERA_REFRESH_RATE = 50;
    private static final int MAX_CAMERA_REFRESH_RATE = 240;
+   // The original software rasterizer scales almost linearly with pixel count.
+   // Above roughly this many pixels, maximized 1080p-class windows can fall to
+   // ~30 FPS. Keep a normal-window-sized logical framebuffer for high-refresh
+   // resizable rendering, then scale the completed frame to the native window.
+   private static final int HIGH_REFRESH_RENDER_PIXEL_BUDGET = 900 * 506;
    private static final int RESIZABLE_CHAT_UI_WIDTH = 520;
    private static final int RESIZABLE_CHAT_UI_HEIGHT = 165;
    private static final int RESIZABLE_TAB_UI_WIDTH = 241;
@@ -1103,6 +1108,38 @@ public class Client extends GameShell {
       return loggedIn ? clampCameraRefreshRate(cameraRefreshRate) : 50;
    }
 
+   private static Dimension getResizableRenderSize(int physicalWidth, int physicalHeight) {
+      physicalWidth = Math.max(minimumWindowWidth, physicalWidth);
+      physicalHeight = Math.max(minimumWindowHeight, physicalHeight);
+
+      if (clampCameraRefreshRate(cameraRefreshRate) <= 60
+         || (long)physicalWidth * physicalHeight <= HIGH_REFRESH_RENDER_PIXEL_BUDGET) {
+         return new Dimension(physicalWidth, physicalHeight);
+      }
+
+      double scale = Math.sqrt(
+         (double)HIGH_REFRESH_RENDER_PIXEL_BUDGET / ((double)physicalWidth * physicalHeight)
+      );
+      int logicalWidth = Math.max(minimumWindowWidth, (int)Math.floor(physicalWidth * scale));
+      int logicalHeight = Math.max(minimumWindowHeight, (int)Math.floor(physicalHeight * scale));
+
+      // Re-apply the physical aspect ratio after satisfying the legacy minimum
+      // dimensions so the upscaled presentation does not stretch.
+      if ((long)logicalWidth * physicalHeight > (long)logicalHeight * physicalWidth) {
+         logicalHeight = Math.max(
+            minimumWindowHeight,
+            (int)((long)logicalWidth * physicalHeight / physicalWidth)
+         );
+      } else {
+         logicalWidth = Math.max(
+            minimumWindowWidth,
+            (int)((long)logicalHeight * physicalWidth / physicalHeight)
+         );
+      }
+
+      return new Dimension(logicalWidth, logicalHeight);
+   }
+
    @Override
    void processCameraFrame(double elapsedSeconds) {
       if (!loggedIn) {
@@ -1125,18 +1162,18 @@ public class Client extends GameShell {
     * that complete framebuffer as one image and letterbox it so the selected
     * 317/459/474 layout and aspect ratio never turn into a resizable gameframe.
     */
-   private Rectangle getFixedPresentationBounds() {
+   private Rectangle getPresentationBounds(int logicalWidth, int logicalHeight) {
       int componentWidth = Math.max(1, this.getWidth());
       int componentHeight = Math.max(1, this.getHeight());
       int presentationWidth;
       int presentationHeight;
 
-      if ((long)componentWidth * fixedHeight <= (long)componentHeight * fixedWidth) {
+      if ((long)componentWidth * logicalHeight <= (long)componentHeight * logicalWidth) {
          presentationWidth = componentWidth;
-         presentationHeight = Math.max(1, (int)((long)componentWidth * fixedHeight / fixedWidth));
+         presentationHeight = Math.max(1, (int)((long)componentWidth * logicalHeight / logicalWidth));
       } else {
          presentationHeight = componentHeight;
-         presentationWidth = Math.max(1, (int)((long)componentHeight * fixedWidth / fixedHeight));
+         presentationWidth = Math.max(1, (int)((long)componentHeight * logicalWidth / logicalHeight));
       }
 
       return new Rectangle(
@@ -1145,6 +1182,41 @@ public class Client extends GameShell {
          presentationWidth,
          presentationHeight
       );
+   }
+
+   private Rectangle getFixedPresentationBounds() {
+      return this.getPresentationBounds(fixedWidth, fixedHeight);
+   }
+
+   private Rectangle getResizablePresentationBounds() {
+      return this.getPresentationBounds(clientWidth, clientHeight);
+   }
+
+   private static long translatePresentationInputCoordinates(int x, int y) {
+      Client client = clientInstance;
+      if (client == null) {
+         return ((long)x << 32) | (y & 0xffffffffL);
+      }
+
+      int logicalWidth = screenMode == 0 ? fixedWidth : clientWidth;
+      int logicalHeight = screenMode == 0 ? fixedHeight : clientHeight;
+      Rectangle presentation = screenMode == 0
+         ? client.getFixedPresentationBounds()
+         : client.getResizablePresentationBounds();
+
+      if (!isInsideRectangle(x, y, presentation.x, presentation.y, presentation.width, presentation.height)) {
+         return ((long)-1 << 32) | 0xffffffffL;
+      }
+
+      int logicalX = (x - presentation.x) * logicalWidth / presentation.width;
+      int logicalY = (y - presentation.y) * logicalHeight / presentation.height;
+      if (logicalX >= logicalWidth) {
+         logicalX = logicalWidth - 1;
+      }
+      if (logicalY >= logicalHeight) {
+         logicalY = logicalHeight - 1;
+      }
+      return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
    }
 
    private static long translateFixedPresentationInputCoordinates(int x, int y) {
@@ -1170,16 +1242,18 @@ public class Client extends GameShell {
    }
 
    private void drawFrameBufferToWindow() {
-      if (screenMode != 0) {
-         this.frameBuffer.drawGraphics(0, super.graphics, 0);
-         return;
-      }
+      int logicalWidth = screenMode == 0 ? fixedWidth : clientWidth;
+      int logicalHeight = screenMode == 0 ? fixedHeight : clientHeight;
+      Rectangle presentation = screenMode == 0
+         ? this.getFixedPresentationBounds()
+         : this.getResizablePresentationBounds();
 
-      Rectangle presentation = this.getFixedPresentationBounds();
       if (presentation.x == 0
          && presentation.y == 0
-         && presentation.width == fixedWidth
-         && presentation.height == fixedHeight) {
+         && presentation.width == logicalWidth
+         && presentation.height == logicalHeight
+         && this.getWidth() == logicalWidth
+         && this.getHeight() == logicalHeight) {
          this.frameBuffer.drawGraphics(0, super.graphics, 0);
          return;
       }
@@ -1202,8 +1276,8 @@ public class Client extends GameShell {
                presentation.y + presentation.height,
                0,
                0,
-               fixedWidth,
-               fixedHeight,
+               logicalWidth,
+               logicalHeight,
                this.frameBuffer
             );
          } finally {
@@ -1218,8 +1292,8 @@ public class Client extends GameShell {
             presentation.y + presentation.height,
             0,
             0,
-            fixedWidth,
-            fixedHeight,
+            logicalWidth,
+            logicalHeight,
             this.frameBuffer
          );
       }
@@ -1395,11 +1469,15 @@ public class Client extends GameShell {
     * coordinates are returned unchanged.
     */
    public static long translateUiInputCoordinates(int x, int y) {
-      if (screenMode == 0) {
-         return translateFixedPresentationInputCoordinates(x, y);
+      long presentationPoint = translatePresentationInputCoordinates(x, y);
+      x = (int)(presentationPoint >> 32);
+      y = (int)presentationPoint;
+      if (x < 0 || y < 0) {
+         return presentationPoint;
       }
-      if (clampUiScalePercent(uiScalePercent) == 100) {
-         return ((long)x << 32) | (y & 0xffffffffL);
+
+      if (screenMode == 0 || clampUiScalePercent(uiScalePercent) == 100) {
+         return presentationPoint;
       }
 
       Client client = clientInstance;
@@ -1631,19 +1709,31 @@ public class Client extends GameShell {
    }
 
    private int getMenuMouseX() {
-      return this.shouldUseRawMenuCoordinates() ? super.rawMouseX : super.mouseX;
+      if (!this.shouldUseRawMenuCoordinates()) {
+         return super.mouseX;
+      }
+      return (int)(translatePresentationInputCoordinates(super.rawMouseX, super.rawMouseY) >> 32);
    }
 
    private int getMenuMouseY() {
-      return this.shouldUseRawMenuCoordinates() ? super.rawMouseY : super.mouseY;
+      if (!this.shouldUseRawMenuCoordinates()) {
+         return super.mouseY;
+      }
+      return (int)translatePresentationInputCoordinates(super.rawMouseX, super.rawMouseY);
    }
 
    private int getMenuClickX() {
-      return this.shouldUseRawMenuCoordinates() ? super.rawClickX : super.clickX;
+      if (!this.shouldUseRawMenuCoordinates()) {
+         return super.clickX;
+      }
+      return (int)(translatePresentationInputCoordinates(super.rawClickX, super.rawClickY) >> 32);
    }
 
    private int getMenuClickY() {
-      return this.shouldUseRawMenuCoordinates() ? super.rawClickY : super.clickY;
+      if (!this.shouldUseRawMenuCoordinates()) {
+         return super.clickY;
+      }
+      return (int)translatePresentationInputCoordinates(super.rawClickX, super.rawClickY);
    }
 
    private boolean shouldScaleContextMenu() {
@@ -6990,18 +7080,15 @@ public class Client extends GameShell {
    }
 
    private void mainGameProcessor() {
-      if (screenMode != 0 && (clientWidth != super.getSize().getWidth() || clientHeight != super.getSize().getHeight())) {
-         clientWidth = (int)super.getSize().getWidth();
-         clientHeight = (int)super.getSize().getHeight();
-         if (clientWidth < minimumWindowWidth) {
-            clientWidth = minimumWindowWidth;
+      if (screenMode != 0) {
+         int physicalWidth = Math.max(minimumWindowWidth, (int)super.getSize().getWidth());
+         int physicalHeight = Math.max(minimumWindowHeight, (int)super.getSize().getHeight());
+         Dimension renderSize = getResizableRenderSize(physicalWidth, physicalHeight);
+         if (clientWidth != renderSize.width || clientHeight != renderSize.height) {
+            clientWidth = renderSize.width;
+            clientHeight = renderSize.height;
+            this.rebuildViewportBuffers();
          }
-
-         if (clientHeight < minimumWindowHeight) {
-            clientHeight = minimumWindowHeight;
-         }
-
-         this.rebuildViewportBuffers();
       }
 
       if (this.systemUpdateTime > 1) {
