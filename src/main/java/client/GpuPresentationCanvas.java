@@ -149,6 +149,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    }
 
    void deactivate() {
+      this.retainedFrameActive = false;
+      this.everPresentedFrame = false;
       this.owner.setGpuPresentationSurface(false);
    }
 
