@@ -431,6 +431,11 @@ final class GpuRasterizer3D {
             "GPU presentation mode: DIRECT (scene rendered into shared FBO texture)."
          );
       }
+
+      // The AWT presentation canvas owns a separate shared OpenGL context.
+      // Flush the producer context before publishing this texture so camera
+      // motion cannot expose an incompletely submitted FBO render on the EDT.
+      GL11.glFlush();
    }
 
    static void invalidateTexture(int textureId) {
