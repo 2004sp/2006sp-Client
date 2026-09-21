@@ -302,8 +302,14 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          this.pendingClickTime = System.currentTimeMillis();
          if (mouseEvent.getButton() == 2) {
             this.middleMouseDown = true;
-            this.middleMouseX = pendingClickXOrGetX;
-            this.middleMouseY = pendingClickYOrGetY;
+            // Middle-mouse camera dragging is measured against raw AWT event
+            // coordinates in mouseDragged(). Keep the press origin in that
+            // same coordinate space. Using the translated logical UI point
+            // here causes a large first delta when a fixed gameframe is
+            // presented scaled inside a maximized window, making the camera
+            // appear to spin as soon as the mouse moves.
+            this.middleMouseX = mouseEvent.getX();
+            this.middleMouseY = mouseEvent.getY();
          } else {
             if (pendingClickTime != 0L) {
                if (pendingClickX == this.pendingClickX && pendingClickY == this.pendingClickY) {
