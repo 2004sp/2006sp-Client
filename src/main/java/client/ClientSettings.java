@@ -441,6 +441,54 @@ public final class ClientSettings {
       }
    }
 
+   public static void saveCameraRefreshRateSetting(File configFile, int framesPerSecond) {
+      framesPerSecond = Client.clampCameraRefreshRate(framesPerSecond);
+      if (configFile == null) {
+         return;
+      }
+
+      if (!configFile.exists()) {
+         createDefaultConfig();
+      }
+
+      StringBuilder contents = new StringBuilder();
+      boolean replaced = false;
+      try {
+         BufferedReader reader = new BufferedReader(new java.io.FileReader(configFile));
+         try {
+            String line;
+            while ((line = reader.readLine()) != null) {
+               if (line.trim().startsWith("[CAMERA_REFRESH_RATE]")) {
+                  line = "[CAMERA_REFRESH_RATE];" + framesPerSecond;
+                  replaced = true;
+               }
+               contents.append(line).append(System.lineSeparator());
+            }
+         } finally {
+            reader.close();
+         }
+
+         if (!replaced) {
+            contents.append(System.lineSeparator());
+            contents.append("//CAMERA_REFRESH_RATE - Parameters for customization:").append(System.lineSeparator());
+            contents.append("//50-240 = camera/render refresh rate in frames per second.").append(System.lineSeparator());
+            contents.append("//Game simulation remains at 50 Hz; this only makes camera motion/redrawing smoother.").append(System.lineSeparator());
+            contents.append(System.lineSeparator());
+            contents.append("[CAMERA_REFRESH_RATE];").append(framesPerSecond).append(System.lineSeparator());
+         }
+
+         BufferedWriter writer = new BufferedWriter(new FileWriter(configFile, false));
+         try {
+            writer.write(contents.toString());
+            writer.flush();
+         } finally {
+            writer.close();
+         }
+      } catch (IOException exception) {
+         exception.printStackTrace();
+      }
+   }
+
    public static void createDefaultConfig() {
       new File("./userConfig.cfg").delete();
       try (BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter("./userConfig.cfg", true))) {
