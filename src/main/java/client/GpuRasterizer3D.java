@@ -17,11 +17,12 @@ import org.lwjgl.opengl.PixelFormat;
  * GPU-backed triangle rasterizer for the legacy software client.
  *
  * Scene triangles are accumulated into a VBO-backed atlas batch and rasterized
- * by OpenGL. Successful frames keep fog and particle depth testing on the GPU,
- * then pipeline only the color result back through double-buffered pixel buffer
- * objects for the existing Java/AWT UI compositor. Synchronous color/depth
- * readback is retained only for mid-frame software fallback and legacy bounded
- * draws outside the main scene pass.
+ * by OpenGL. When the AWTGL presentation canvas is available, the completed
+ * scene is copied into a shared GPU texture and never crosses back to Java
+ * memory; the legacy software framebuffer is uploaded only as the UI overlay.
+ * The double-PBO color path remains as a compatibility fallback, while
+ * synchronous color/depth readback is reserved for mid-frame software fallback
+ * and legacy bounded draws outside the main scene pass.
  */
 final class GpuRasterizer3D {
    private static final float DEPTH_SCALE = 1048576.0F;
