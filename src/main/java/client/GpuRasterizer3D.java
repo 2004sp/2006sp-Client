@@ -29,10 +29,8 @@ final class GpuRasterizer3D {
    private static final int TEXTURE_GRID_SIZE = 8;
    private static final int WHITE_TEXTURE_CELL = 63;
    private static final int BATCH_NONE = 0;
-   private static final int BATCH_COLOR = 1;
-   private static final int BATCH_TEXTURED = 2;
-   private static final int BATCH_DEPTH = 3;
-   private static final int BATCH_PARTICLE = 4;
+   private static final int BATCH_TEXTURED = 1;
+   private static final int BATCH_PARTICLE = 2;
    private static final int FLOATS_PER_VERTEX = 11;
    private static final int VERTEX_STRIDE_BYTES = FLOATS_PER_VERTEX * 4;
    private static final int MAX_BATCH_VERTICES = 24576;
@@ -56,7 +54,6 @@ final class GpuRasterizer3D {
    private static int scissorWidth = Integer.MIN_VALUE;
    private static int scissorHeight = Integer.MIN_VALUE;
 
-   private static final int[] textureIds = new int[TEXTURE_COUNT];
    private static final boolean[] textureDirty = new boolean[TEXTURE_COUNT];
    private static boolean cachedLowMemory = Rasterizer3D.lowMemory;
    private static int atlasTexture;
@@ -90,16 +87,9 @@ final class GpuRasterizer3D {
    private static boolean frameFogEnabled;
    private static float frameFogStart;
    private static float frameFogEnd;
-   private static final FloatBuffer fogColor = BufferUtils.createFloatBuffer(4);
 
    static {
       Arrays.fill(textureDirty, true);
-      int rgb = 9803416;
-      fogColor.put((rgb >> 16 & 255) / 255.0F);
-      fogColor.put((rgb >> 8 & 255) / 255.0F);
-      fogColor.put((rgb & 255) / 255.0F);
-      fogColor.put(1.0F);
-      fogColor.flip();
    }
 
    private GpuRasterizer3D() {
@@ -655,7 +645,6 @@ final class GpuRasterizer3D {
       pboUnavailable = false;
       resetBatch();
 
-      Arrays.fill(textureIds, 0);
       Arrays.fill(textureDirty, true);
       cachedLowMemory = Rasterizer3D.lowMemory;
       viewportWidth = -1;
@@ -664,7 +653,11 @@ final class GpuRasterizer3D {
       scissorY = Integer.MIN_VALUE;
       scissorWidth = Integer.MIN_VALUE;
       scissorHeight = Integer.MIN_VALUE;
-      System.out.println("GPU renderer initialized: OpenGL Pbuffer " + bufferWidth + "x" + bufferHeight);
+      System.out.println(
+         "GPU renderer initialized: OpenGL Pbuffer "
+            + bufferWidth + "x" + bufferHeight
+            + " [VBO atlas batching, double-PBO color readback, GPU fog/depth]"
+      );
    }
 
    private static void makeCurrent() throws Exception {
@@ -1084,11 +1077,6 @@ final class GpuRasterizer3D {
       GL11.glColor4f(red, green, blue, alpha);
    }
 
-   private static void setTextureShade(int shade, boolean smooth) {
-      float scale = textureShadeScale(shade, smooth);
-      GL11.glColor4f(scale, scale, scale, 1.0F);
-   }
-
    private static float textureShadeScale(int shade, boolean smooth) {
       float scale;
       if (smooth) {
@@ -1241,13 +1229,7 @@ final class GpuRasterizer3D {
       GL11.glDepthFunc(GL11.GL_ALWAYS);
       GL11.glShadeModel(GL11.GL_SMOOTH);
 
-      if (batchMode == BATCH_DEPTH) {
-         GL11.glDisable(GL11.GL_TEXTURE_2D);
-         GL11.glDisable(GL11.GL_ALPHA_TEST);
-         GL11.glDisable(GL11.GL_BLEND);
-         GL11.glDisable(GL11.GL_FOG);
-         GL11.glColorMask(false, false, false, false);
-      } else if (batchMode == BATCH_TEXTURED) {
+      if (batchMode == BATCH_TEXTURED) {
          GL11.glColorMask(true, true, true, false);
          GL11.glEnable(GL11.GL_BLEND);
          GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -1267,13 +1249,6 @@ final class GpuRasterizer3D {
          GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
          GL11.glDepthFunc(GL11.GL_LEQUAL);
          GL11.glDepthMask(false);
-      } else {
-         GL11.glColorMask(true, true, true, false);
-         GL11.glDisable(GL11.GL_TEXTURE_2D);
-         GL11.glDisable(GL11.GL_ALPHA_TEST);
-         GL11.glEnable(GL11.GL_BLEND);
-         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-         configureGpuFog();
       }
 
       GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, batchVertexCount);
@@ -1290,19 +1265,6 @@ final class GpuRasterizer3D {
       GL11.glDepthMask(true);
       GL11.glColorMask(true, true, true, false);
       resetBatch();
-   }
-
-   private static void configureGpuFog() {
-      if (!frameFogEnabled) {
-         GL11.glDisable(GL11.GL_FOG);
-         return;
-      }
-      GL11.glEnable(GL11.GL_FOG);
-      GL11.glFogi(GL11.GL_FOG_MODE, GL11.GL_LINEAR);
-      GL11.glFogf(GL11.GL_FOG_START, frameFogStart);
-      GL11.glFogf(GL11.GL_FOG_END, frameFogEnd);
-      fogColor.rewind();
-      GL11.glFog(GL11.GL_FOG_COLOR, fogColor);
    }
 
    private static void resetBatch() {
@@ -1391,7 +1353,6 @@ final class GpuRasterizer3D {
       colorPboBytes = 0;
       colorPboWriteIndex = 0;
       resetBatch();
-      Arrays.fill(textureIds, 0);
       Arrays.fill(textureDirty, true);
    }
 
