@@ -2,6 +2,7 @@ package client;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 import java.util.Arrays;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
@@ -19,6 +20,7 @@ import org.lwjgl.opengl.PixelFormat;
 final class GpuRasterizer3D {
    private static final float DEPTH_SCALE = 1048576.0F;
    private static final int GL_CLAMP_TO_EDGE = 33071;
+   private static final int GL_BGRA = 32993;
    private static final int TEXTURE_COUNT = 51;
 
    private static volatile boolean requested = true;
@@ -619,7 +621,42 @@ final class GpuRasterizer3D {
       if (viewportWidth <= 0 || viewportHeight <= 0) {
          return;
       }
-      readBack(new Bounds(0, 0, viewportWidth, viewportHeight), true, false, copyDepth);
+
+      int width = viewportWidth;
+      int height = viewportHeight;
+      int count = width * height;
+      ensureReadbackCapacity(count, copyDepth);
+
+      // On little-endian desktop platforms, BGRA/UNSIGNED_BYTE viewed through
+      // a native-order IntBuffer becomes 0xAARRGGBB. Alpha writes are disabled
+      // for the scene, so the high byte stays zero and each row can be copied
+      // straight into the legacy 0x00RRGGBB framebuffer.
+      colorReadback.clear();
+      colorReadback.limit(count * 4);
+      GL11.glReadPixels(0, 0, width, height, GL_BGRA, GL11.GL_UNSIGNED_BYTE, colorReadback);
+      IntBuffer packedColors = colorReadback.asIntBuffer();
+      for (int readRow = 0; readRow < height; readRow++) {
+         packedColors.position(readRow * width);
+         packedColors.get(Rasterizer2D.pixels, (height - 1 - readRow) * width, width);
+      }
+
+      if (!copyDepth) {
+         return;
+      }
+
+      depthReadback.clear();
+      depthReadback.limit(count);
+      GL11.glReadPixels(0, 0, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthReadback);
+      for (int readRow = 0; readRow < height; readRow++) {
+         int destination = (height - 1 - readRow) * width;
+         int source = readRow * width;
+         for (int x = 0; x < width; x++) {
+            float gpuDepth = depthReadback.get(source + x);
+            if (gpuDepth < 0.9999999F) {
+               Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
+            }
+         }
+      }
    }
 
    private static void readBack(Bounds bounds, boolean copyColor, boolean blendLegacyAlpha) {
@@ -660,11 +697,9 @@ final class GpuRasterizer3D {
                   continue;
                }
                Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
-            } else if ((colorReadback.get(byteIndex + 3) & 255) == 0) {
-               // The Pbuffer clears alpha to zero. Rendered scene fragments
-               // write non-zero alpha, so colour-only frames don't need a
-               // second synchronous depth glReadPixels just to find coverage.
-               continue;
+            } else {
+               // Colour-only bounded readbacks are not used by the batched
+               // frame path. Keep this branch conservative if one is added.
             }
 
             int destinationIndex = destination + x;
