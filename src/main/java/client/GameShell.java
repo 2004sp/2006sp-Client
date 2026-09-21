@@ -323,9 +323,13 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
       // Keep the legacy +4 resizable input offset in logical UI space. Applying
       // it before inverse scaling makes the offset scale-dependent (+8 at 50%,
       // +2 at 200%), which shifts hitboxes at otherwise valid percentages.
-      int rawPendingClickXOrGetX = pendingClickXOrGetX;
-      int rawPendingClickYOrGetY = pendingClickYOrGetY;
-      if (Client.screenMode != 0) {
+      long rawLogicalPoint = Client.translatePresentationInputCoordinates(
+         pendingClickXOrGetX,
+         pendingClickYOrGetY
+      );
+      int rawPendingClickXOrGetX = (int)(rawLogicalPoint >> 32);
+      int rawPendingClickYOrGetY = (int)rawLogicalPoint;
+      if (Client.screenMode != 0 && rawPendingClickXOrGetX >= 0 && rawPendingClickYOrGetY >= 0) {
          rawPendingClickXOrGetX += 4;
          rawPendingClickYOrGetY += 4;
       }
@@ -443,9 +447,10 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          mouseYOrGetY -= 22;
       }
 
-      this.rawMouseX = mouseXOrGetX;
-      this.rawMouseY = mouseYOrGetY;
-      if (Client.screenMode != 0) {
+      long rawLogicalPoint = Client.translatePresentationInputCoordinates(mouseXOrGetX, mouseYOrGetY);
+      this.rawMouseX = (int)(rawLogicalPoint >> 32);
+      this.rawMouseY = (int)rawLogicalPoint;
+      if (Client.screenMode != 0 && this.rawMouseX >= 0 && this.rawMouseY >= 0) {
          this.rawMouseX += 4;
          this.rawMouseY += 4;
       }
@@ -483,9 +488,10 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          mouseYOrGetY -= 22;
       }
 
-      this.rawMouseX = mouseXOrGetX;
-      this.rawMouseY = mouseYOrGetY;
-      if (Client.screenMode != 0) {
+      long rawLogicalPoint = Client.translatePresentationInputCoordinates(mouseXOrGetX, mouseYOrGetY);
+      this.rawMouseX = (int)(rawLogicalPoint >> 32);
+      this.rawMouseY = (int)rawLogicalPoint;
+      if (Client.screenMode != 0 && this.rawMouseX >= 0 && this.rawMouseY >= 0) {
          this.rawMouseX += 4;
          this.rawMouseY += 4;
       }
