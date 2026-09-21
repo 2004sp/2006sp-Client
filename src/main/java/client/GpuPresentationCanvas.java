@@ -3,12 +3,16 @@ package client;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.LWJGLException;
 import org.lwjgl.opengl.AWTGLCanvas;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
+import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GL21;
 import org.lwjgl.opengl.PixelFormat;
 
 /**
@@ -25,10 +29,18 @@ import org.lwjgl.opengl.PixelFormat;
  */
 final class GpuPresentationCanvas extends AWTGLCanvas {
    private static final int GL_BGRA = 32993;
+   private static final int DIRTY_TILE_SIZE = 64;
 
    private final ClientWindow owner;
    private final ByteBuffer[] uploadBytes = new ByteBuffer[2];
    private final IntBuffer[] uploadInts = new IntBuffer[2];
+   private final int[] uploadPbos = new int[2];
+   private int uploadPboCapacity;
+   private int uploadPboWriteIndex;
+   private boolean pboUnavailable;
+   private int[] uiShadow;
+   private int uiShadowWidth;
+   private int uiShadowHeight;
 
    private volatile boolean contextReady;
    private volatile boolean failed;
@@ -113,28 +125,89 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       int sceneWidth,
       int sceneHeight
    ) {
-      if (!isContextReady() || sceneTexture == 0 || uiPixels == null || uiWidth <= 0 || uiHeight <= 0) {
+      long pixelCount = (long)uiWidth * (long)uiHeight;
+      if (!isContextReady()
+         || sceneTexture == 0
+         || uiPixels == null
+         || uiWidth <= 0
+         || uiHeight <= 0
+         || pixelCount > Integer.MAX_VALUE / 4L
+         || uiPixels.length < pixelCount) {
          return false;
       }
 
-      int count = uiWidth * uiHeight;
-      int bufferIndex;
+      int count = (int)pixelCount;
       synchronized (this) {
+         int bufferIndex;
          if (this.pendingFrame != null && this.pendingFrame.bufferIndex != this.paintingBuffer) {
             bufferIndex = this.pendingFrame.bufferIndex;
          } else {
             bufferIndex = this.paintingBuffer == 0 ? 1 : 0;
          }
 
-         ensureUploadCapacity(bufferIndex, count);
-         IntBuffer destination = this.uploadInts[bufferIndex];
-         destination.clear();
-         destination.put(uiPixels, 0, Math.min(count, uiPixels.length));
-         destination.flip();
+         int tileColumns = (uiWidth + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
+         int tileRows = (uiHeight + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
+         boolean[] dirtyTiles = new boolean[tileColumns * tileRows];
+         boolean dimensionsChanged = this.uiShadow == null
+            || this.uiShadowWidth != uiWidth
+            || this.uiShadowHeight != uiHeight;
 
-         ByteBuffer byteBuffer = this.uploadBytes[bufferIndex];
-         byteBuffer.position(0);
-         byteBuffer.limit(count * 4);
+         if (dimensionsChanged) {
+            this.uiShadow = new int[count];
+            this.uiShadowWidth = uiWidth;
+            this.uiShadowHeight = uiHeight;
+            System.arraycopy(uiPixels, 0, this.uiShadow, 0, count);
+            Arrays.fill(dirtyTiles, true);
+         } else {
+            detectDirtyTiles(uiPixels, uiWidth, uiHeight, tileColumns, dirtyTiles);
+
+            // If the EDT has not consumed the previous queued frame yet, its
+            // dirty tiles must remain dirty. The CPU shadow already represents
+            // that queued state, so restage those tiles from the newest frame
+            // instead of losing an update when pendingFrame is replaced.
+            if (this.pendingFrame != null
+               && this.pendingFrame.uiWidth == uiWidth
+               && this.pendingFrame.uiHeight == uiHeight
+               && this.pendingFrame.dirtyTiles.length == dirtyTiles.length) {
+               for (int i = 0; i < dirtyTiles.length; i++) {
+                  dirtyTiles[i] |= this.pendingFrame.dirtyTiles[i];
+               }
+            }
+         }
+
+         DirtyRect[] dirtyRects = buildDirtyRectangles(
+            dirtyTiles,
+            tileColumns,
+            tileRows,
+            uiWidth,
+            uiHeight
+         );
+
+         int dirtyPixelCount = 0;
+         for (DirtyRect rect : dirtyRects) {
+            dirtyPixelCount += rect.width * rect.height;
+         }
+
+         int uploadByteCount = dirtyPixelCount * 4;
+         if (dirtyPixelCount > 0) {
+            ensureUploadCapacity(bufferIndex, dirtyPixelCount);
+            IntBuffer destination = this.uploadInts[bufferIndex];
+            destination.clear();
+
+            int packedPixelOffset = 0;
+            for (DirtyRect rect : dirtyRects) {
+               rect.byteOffset = packedPixelOffset * 4;
+               for (int y = rect.y; y < rect.y + rect.height; y++) {
+                  destination.put(uiPixels, y * uiWidth + rect.x, rect.width);
+               }
+               packedPixelOffset += rect.width * rect.height;
+            }
+            destination.flip();
+
+            ByteBuffer byteBuffer = this.uploadBytes[bufferIndex];
+            byteBuffer.position(0);
+            byteBuffer.limit(uploadByteCount);
+         }
 
          this.pendingFrame = new FrameState(
             bufferIndex,
@@ -148,13 +221,117 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             sceneX,
             sceneY,
             Math.max(1, sceneWidth),
-            Math.max(1, sceneHeight)
+            Math.max(1, sceneHeight),
+            dirtyTiles,
+            dirtyRects,
+            uploadByteCount
          );
       }
 
       this.owner.setGpuPresentationSurface(true);
       this.repaint();
       return true;
+   }
+
+   private void detectDirtyTiles(
+      int[] uiPixels,
+      int uiWidth,
+      int uiHeight,
+      int tileColumns,
+      boolean[] dirtyTiles
+   ) {
+      for (int tileY = 0; tileY * DIRTY_TILE_SIZE < uiHeight; tileY++) {
+         int minY = tileY * DIRTY_TILE_SIZE;
+         int maxY = Math.min(uiHeight, minY + DIRTY_TILE_SIZE);
+
+         for (int tileX = 0; tileX * DIRTY_TILE_SIZE < uiWidth; tileX++) {
+            int minX = tileX * DIRTY_TILE_SIZE;
+            int maxX = Math.min(uiWidth, minX + DIRTY_TILE_SIZE);
+            boolean dirty = false;
+
+            for (int y = minY; y < maxY && !dirty; y++) {
+               int row = y * uiWidth;
+               for (int x = minX; x < maxX; x++) {
+                  int index = row + x;
+                  if (uiPixels[index] != this.uiShadow[index]) {
+                     dirty = true;
+                     break;
+                  }
+               }
+            }
+
+            if (!dirty) {
+               continue;
+            }
+
+            dirtyTiles[tileY * tileColumns + tileX] = true;
+            int width = maxX - minX;
+            for (int y = minY; y < maxY; y++) {
+               int offset = y * uiWidth + minX;
+               System.arraycopy(uiPixels, offset, this.uiShadow, offset, width);
+            }
+         }
+      }
+   }
+
+   private static DirtyRect[] buildDirtyRectangles(
+      boolean[] dirtyTiles,
+      int tileColumns,
+      int tileRows,
+      int uiWidth,
+      int uiHeight
+   ) {
+      boolean[] remaining = dirtyTiles.clone();
+      ArrayList<DirtyRect> rectangles = new ArrayList<DirtyRect>();
+
+      for (int tileY = 0; tileY < tileRows; tileY++) {
+         int tileX = 0;
+         while (tileX < tileColumns) {
+            if (!remaining[tileY * tileColumns + tileX]) {
+               tileX++;
+               continue;
+            }
+
+            int endTileX = tileX + 1;
+            while (endTileX < tileColumns
+               && remaining[tileY * tileColumns + endTileX]) {
+               endTileX++;
+            }
+
+            int endTileY = tileY + 1;
+            while (endTileY < tileRows) {
+               boolean completeRow = true;
+               for (int x = tileX; x < endTileX; x++) {
+                  if (!remaining[endTileY * tileColumns + x]) {
+                     completeRow = false;
+                     break;
+                  }
+               }
+               if (!completeRow) {
+                  break;
+               }
+               endTileY++;
+            }
+
+            for (int y = tileY; y < endTileY; y++) {
+               Arrays.fill(
+                  remaining,
+                  y * tileColumns + tileX,
+                  y * tileColumns + endTileX,
+                  false
+               );
+            }
+
+            int x = tileX * DIRTY_TILE_SIZE;
+            int y = tileY * DIRTY_TILE_SIZE;
+            int maxX = Math.min(uiWidth, endTileX * DIRTY_TILE_SIZE);
+            int maxY = Math.min(uiHeight, endTileY * DIRTY_TILE_SIZE);
+            rectangles.add(new DirtyRect(x, y, maxX - x, maxY - y));
+            tileX = endTileX;
+         }
+      }
+
+      return rectangles.toArray(new DirtyRect[rectangles.size()]);
    }
 
    private void ensureUploadCapacity(int index, int pixels) {
@@ -259,25 +436,135 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          );
       }
 
-      ByteBuffer source;
-      synchronized (this) {
-         source = this.uploadBytes[frame.bufferIndex];
-         source.position(0);
-         source.limit(frame.uiWidth * frame.uiHeight * 4);
+      if (frame.uploadByteCount == 0) {
+         return;
       }
 
-      GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.overlayTexture);
-      GL11.glTexSubImage2D(
-         GL11.GL_TEXTURE_2D,
-         0,
-         0,
-         0,
-         frame.uiWidth,
-         frame.uiHeight,
-         GL_BGRA,
-         GL11.GL_UNSIGNED_BYTE,
-         source
+      if (!this.pboUnavailable) {
+         try {
+            uploadOverlayWithPbo(frame);
+            return;
+         } catch (Throwable failure) {
+            try {
+               GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+            } catch (Throwable ignored) {
+            }
+            this.pboUnavailable = true;
+            System.err.println("GPU presentation PBO upload unavailable; using direct dirty-rectangle uploads.");
+         }
+      }
+
+      uploadOverlayDirect(frame);
+   }
+
+   private void uploadOverlayWithPbo(FrameState frame) {
+      ensureUploadPbos(frame.uploadByteCount);
+
+      int pbo = this.uploadPbos[this.uploadPboWriteIndex];
+      GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, pbo);
+
+      // Orphan the selected PBO before mapping so the CPU never waits for the
+      // previous texture upload that used this buffer's old storage.
+      GL15.glBufferData(
+         GL21.GL_PIXEL_UNPACK_BUFFER,
+         (long)this.uploadPboCapacity,
+         GL15.GL_STREAM_DRAW
       );
+
+      ByteBuffer mapped = GL15.glMapBuffer(
+         GL21.GL_PIXEL_UNPACK_BUFFER,
+         GL15.GL_WRITE_ONLY,
+         (long)frame.uploadByteCount,
+         null
+      );
+      if (mapped == null) {
+         throw new IllegalStateException("Unable to map UI upload PBO");
+      }
+
+      boolean mappedBuffer = true;
+      try {
+         ByteBuffer source = this.uploadBytes[frame.bufferIndex].duplicate();
+         source.position(0);
+         source.limit(frame.uploadByteCount);
+         mapped.put(source);
+
+         if (!GL15.glUnmapBuffer(GL21.GL_PIXEL_UNPACK_BUFFER)) {
+            mappedBuffer = false;
+            throw new IllegalStateException("UI upload PBO contents became invalid while mapped");
+         }
+         mappedBuffer = false;
+
+         GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.overlayTexture);
+         for (DirtyRect rect : frame.dirtyRects) {
+            GL11.glTexSubImage2D(
+               GL11.GL_TEXTURE_2D,
+               0,
+               rect.x,
+               rect.y,
+               rect.width,
+               rect.height,
+               GL_BGRA,
+               GL11.GL_UNSIGNED_BYTE,
+               (long)rect.byteOffset
+            );
+         }
+      } finally {
+         if (mappedBuffer) {
+            try {
+               GL15.glUnmapBuffer(GL21.GL_PIXEL_UNPACK_BUFFER);
+            } catch (Throwable ignored) {
+            }
+         }
+         GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+      }
+
+      this.uploadPboWriteIndex ^= 1;
+   }
+
+   private void uploadOverlayDirect(FrameState frame) {
+      GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.overlayTexture);
+
+      for (DirtyRect rect : frame.dirtyRects) {
+         int byteCount = rect.width * rect.height * 4;
+         ByteBuffer region = this.uploadBytes[frame.bufferIndex].duplicate();
+         region.position(rect.byteOffset);
+         region.limit(rect.byteOffset + byteCount);
+         region = region.slice().order(ByteOrder.nativeOrder());
+
+         GL11.glTexSubImage2D(
+            GL11.GL_TEXTURE_2D,
+            0,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            GL_BGRA,
+            GL11.GL_UNSIGNED_BYTE,
+            region
+         );
+      }
+   }
+
+   private void ensureUploadPbos(int requiredBytes) {
+      if (this.uploadPbos[0] == 0 || this.uploadPbos[1] == 0) {
+         this.uploadPbos[0] = GL15.glGenBuffers();
+         this.uploadPbos[1] = GL15.glGenBuffers();
+         this.uploadPboCapacity = 0;
+         this.uploadPboWriteIndex = 0;
+      }
+
+      if (this.uploadPboCapacity >= requiredBytes) {
+         return;
+      }
+
+      int newCapacity = requiredBytes;
+      for (int pbo : this.uploadPbos) {
+         GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, pbo);
+         GL15.glBufferData(GL21.GL_PIXEL_UNPACK_BUFFER, (long)newCapacity, GL15.GL_STREAM_DRAW);
+      }
+      GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+      this.uploadPboCapacity = newCapacity;
    }
 
    private void renderFrame(FrameState frame) {
@@ -401,6 +688,21 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.owner.setGpuPresentationSurface(false);
    }
 
+   private static final class DirtyRect {
+      final int x;
+      final int y;
+      final int width;
+      final int height;
+      int byteOffset;
+
+      DirtyRect(int x, int y, int width, int height) {
+         this.x = x;
+         this.y = y;
+         this.width = width;
+         this.height = height;
+      }
+   }
+
    private static final class FrameState {
       final int bufferIndex;
       final int sceneTexture;
@@ -414,6 +716,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       final int sceneY;
       final int sceneWidth;
       final int sceneHeight;
+      final boolean[] dirtyTiles;
+      final DirtyRect[] dirtyRects;
+      final int uploadByteCount;
 
       FrameState(
          int bufferIndex,
@@ -427,7 +732,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          int sceneX,
          int sceneY,
          int sceneWidth,
-         int sceneHeight
+         int sceneHeight,
+         boolean[] dirtyTiles,
+         DirtyRect[] dirtyRects,
+         int uploadByteCount
       ) {
          this.bufferIndex = bufferIndex;
          this.sceneTexture = sceneTexture;
@@ -441,6 +749,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.sceneY = sceneY;
          this.sceneWidth = sceneWidth;
          this.sceneHeight = sceneHeight;
+         this.dirtyTiles = dirtyTiles;
+         this.dirtyRects = dirtyRects;
+         this.uploadByteCount = uploadByteCount;
       }
    }
+
 }
