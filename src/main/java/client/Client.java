@@ -9,7 +9,9 @@ import java.awt.DisplayMode;
 import java.awt.Font;
 import java.awt.Frame;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.event.MouseWheelEvent;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -1067,6 +1069,112 @@ public class Client extends GameShell {
    }
 
    /**
+    * Fixed gameframes always render into the original 765x503 framebuffer.
+    * When the native window is larger (for example after maximizing), scale
+    * that complete framebuffer as one image and letterbox it so the selected
+    * 317/459/474 layout and aspect ratio never turn into a resizable gameframe.
+    */
+   private Rectangle getFixedPresentationBounds() {
+      int componentWidth = Math.max(1, this.getWidth());
+      int componentHeight = Math.max(1, this.getHeight());
+      int presentationWidth;
+      int presentationHeight;
+
+      if ((long)componentWidth * fixedHeight <= (long)componentHeight * fixedWidth) {
+         presentationWidth = componentWidth;
+         presentationHeight = Math.max(1, (int)((long)componentWidth * fixedHeight / fixedWidth));
+      } else {
+         presentationHeight = componentHeight;
+         presentationWidth = Math.max(1, (int)((long)componentHeight * fixedWidth / fixedHeight));
+      }
+
+      return new Rectangle(
+         (componentWidth - presentationWidth) / 2,
+         (componentHeight - presentationHeight) / 2,
+         presentationWidth,
+         presentationHeight
+      );
+   }
+
+   private static long translateFixedPresentationInputCoordinates(int x, int y) {
+      Client client = clientInstance;
+      if (client == null) {
+         return ((long)x << 32) | (y & 0xffffffffL);
+      }
+
+      Rectangle presentation = client.getFixedPresentationBounds();
+      if (!isInsideRectangle(x, y, presentation.x, presentation.y, presentation.width, presentation.height)) {
+         return ((long)-1 << 32) | 0xffffffffL;
+      }
+
+      int logicalX = (x - presentation.x) * fixedWidth / presentation.width;
+      int logicalY = (y - presentation.y) * fixedHeight / presentation.height;
+      if (logicalX >= fixedWidth) {
+         logicalX = fixedWidth - 1;
+      }
+      if (logicalY >= fixedHeight) {
+         logicalY = fixedHeight - 1;
+      }
+      return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+   }
+
+   private void drawFrameBufferToWindow() {
+      if (screenMode != 0) {
+         this.frameBuffer.drawGraphics(0, super.graphics, 0);
+         return;
+      }
+
+      Rectangle presentation = this.getFixedPresentationBounds();
+      if (presentation.x == 0
+         && presentation.y == 0
+         && presentation.width == fixedWidth
+         && presentation.height == fixedHeight) {
+         this.frameBuffer.drawGraphics(0, super.graphics, 0);
+         return;
+      }
+
+      int componentWidth = Math.max(1, this.getWidth());
+      int componentHeight = Math.max(1, this.getHeight());
+      Graphics graphics = super.graphics;
+      graphics.setColor(Color.black);
+      graphics.fillRect(0, 0, componentWidth, componentHeight);
+
+      if (graphics instanceof Graphics2D) {
+         Graphics2D scaledGraphics = (Graphics2D)graphics.create();
+         try {
+            scaledGraphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+            scaledGraphics.drawImage(
+               this.frameBuffer.image,
+               presentation.x,
+               presentation.y,
+               presentation.x + presentation.width,
+               presentation.y + presentation.height,
+               0,
+               0,
+               fixedWidth,
+               fixedHeight,
+               this.frameBuffer
+            );
+         } finally {
+            scaledGraphics.dispose();
+         }
+      } else {
+         graphics.drawImage(
+            this.frameBuffer.image,
+            presentation.x,
+            presentation.y,
+            presentation.x + presentation.width,
+            presentation.y + presentation.height,
+            0,
+            0,
+            fixedWidth,
+            fixedHeight,
+            this.frameBuffer
+         );
+      }
+   }
+
+   /**
     * Returns the logical width of the complete resizable sidebar/tab region.
     *
     * In the wide 317-style layout all fourteen tab buttons occupy one row,
@@ -1236,7 +1344,10 @@ public class Client extends GameShell {
     * coordinates are returned unchanged.
     */
    public static long translateUiInputCoordinates(int x, int y) {
-      if (screenMode == 0 || clampUiScalePercent(uiScalePercent) == 100) {
+      if (screenMode == 0) {
+         return translateFixedPresentationInputCoordinates(x, y);
+      }
+      if (clampUiScalePercent(uiScalePercent) == 100) {
          return ((long)x << 32) | (y & 0xffffffffL);
       }
 
@@ -15721,7 +15832,7 @@ public class Client extends GameShell {
          } else {
             this.frameBuffer.initDrawingArea();
             this.drawGameScreen();
-            this.frameBuffer.drawGraphics(0, super.graphics, 0);
+            this.drawFrameBufferToWindow();
          }
 
          this.scrollbarClickTicks = 0;
