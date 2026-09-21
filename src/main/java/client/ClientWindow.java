@@ -628,10 +628,13 @@ public final class ClientWindow extends Client implements ActionListener {
       }
 
       try {
-         new Robot();
+         Robot robot = new Robot();
          Point point = clientPanel.getLocationOnScreen();
-         new Rectangle(point.x, point.y, clientPanel.getWidth(), clientPanel.getHeight());
-         bufferedImage = (BufferedImage)Client.getClient().frameBuffer.image;
+         Rectangle rectangle = new Rectangle(point.x, point.y, clientPanel.getWidth(), clientPanel.getHeight());
+         // Screen capture includes the direct OpenGL canvas. The old
+         // frameBuffer image intentionally contains only the software UI when
+         // direct GPU presentation is active.
+         bufferedImage = robot.createScreenCapture(rectangle);
       } catch (Throwable throwable) {
       }
 
