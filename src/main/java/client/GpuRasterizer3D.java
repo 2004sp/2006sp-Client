@@ -402,6 +402,7 @@ final class GpuRasterizer3D {
             int maxX = Math.min(viewportWidth, Rasterizer2D.bottomX);
             int maxY = Math.min(viewportHeight, Rasterizer2D.bottomY);
             if (minX >= maxX || minY >= maxY) {
+               GL11.glScissor(0, 0, 0, 0);
                return true;
             }
             GL11.glScissor(minX, viewportHeight - maxY, maxX - minX, maxY - minY);
