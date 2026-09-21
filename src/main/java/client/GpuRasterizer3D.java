@@ -601,6 +601,8 @@ final class GpuRasterizer3D {
 
       frameActive = false;
       frameSoftwareFallback = true;
+      Arrays.fill(colorPboReady, false);
+      colorPboWriteIndex = 0;
    }
 
    private static void failCurrentFrame(Throwable failure) {
@@ -616,6 +618,8 @@ final class GpuRasterizer3D {
       if (frameOpen) {
          frameSoftwareFallback = true;
       }
+      Arrays.fill(colorPboReady, false);
+      colorPboWriteIndex = 0;
       fail(failure);
    }
 
