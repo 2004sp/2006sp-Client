@@ -14151,6 +14151,7 @@ public class Client extends GameShell {
             Model.mouseY = client.mouseY - 4;
             Rasterizer2D.clear();
             GpuRasterizer3D.beginFrame(fogEnabled, Math.abs(client.cameraPositionZ));
+            GpuRasterizer3D.prepareDirectUiOverlayBuffer();
             client.scene.renderScene(client.cameraPositionX, client.xCameraPos, client.yCameraPos, client.cameraPositionZ, localGetCameraPlane, client.zCameraPos);
 
             // Particles now use the GPU scene depth buffer while the frame is
