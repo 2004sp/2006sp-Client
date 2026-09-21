@@ -3,7 +3,9 @@ package client;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
+import java.awt.Color;
 import java.awt.EventQueue;
+import java.awt.Graphics;
 import java.util.ArrayList;
 import java.util.Arrays;
 import org.lwjgl.BufferUtils;
@@ -57,7 +59,17 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private int paintingBuffer = -1;
    private volatile boolean sceneBackbufferPending;
    private volatile boolean hasPresentedFrame;
+   private boolean everPresentedFrame;
    private boolean initialClearNeeded = true;
+
+   private volatile boolean retainedFrameActive;
+   private ByteBuffer retainedFrameBytes;
+   private int retainedFrameWidth;
+   private int retainedFrameHeight;
+   private int retainedFrameTexture;
+   private int retainedFrameTextureWidth;
+   private int retainedFrameTextureHeight;
+   private boolean retainedFrameTextureDirty;
 
    private int softwareFrameTexture;
    private int softwareFrameWidth;
@@ -68,6 +80,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    GpuPresentationCanvas(ClientWindow owner) throws LWJGLException {
       super(new PixelFormat().withAlphaBits(8).withDepthBits(24));
       this.owner = owner;
+      this.setBackground(Color.BLACK);
       this.setIgnoreRepaint(false);
       this.setFocusable(true);
 
@@ -84,6 +97,17 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    @Override
    public void addNotify() {
       super.addNotify();
+   }
+
+   /**
+    * Canvas.update() normally erases the heavyweight peer to its background
+    * color before paint(). During live resize/peer recreation that erase can
+    * become visible for a compositor frame. Let AWTGLCanvas paint directly so
+    * the previously swapped OpenGL front buffer remains on screen.
+    */
+   @Override
+   public void update(Graphics graphics) {
+      this.paint(graphics);
    }
 
    @Override
@@ -202,6 +226,63 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    void markSceneBackbufferPending() {
       this.sceneBackbufferPending = true;
+   }
+
+   boolean retainPresentedFrameForTransition() {
+      if (!hasPresentedFrame() || this.retainedFrameActive) {
+         return this.retainedFrameActive;
+      }
+
+      final boolean[] captured = new boolean[1];
+      boolean ran = runInContext(new Runnable() {
+         @Override
+         public void run() {
+            int width = Math.max(1, GpuPresentationCanvas.this.getWidth());
+            int height = Math.max(1, GpuPresentationCanvas.this.getHeight());
+            long pixelCount = (long)width * (long)height;
+            if (pixelCount > Integer.MAX_VALUE / 4L) {
+               return;
+            }
+
+            ensureRetainedFrameCapacity((int)pixelCount);
+            ByteBuffer destination = retainedFrameBytes;
+            destination.clear();
+            destination.limit((int)pixelCount * 4);
+
+            GL11.glReadBuffer(GL11.GL_FRONT);
+            GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
+            GL11.glReadPixels(
+               0,
+               0,
+               width,
+               height,
+               GL_BGRA,
+               GL11.GL_UNSIGNED_BYTE,
+               destination
+            );
+            GL11.glReadBuffer(GL11.GL_BACK);
+
+            destination.position(0);
+            destination.limit((int)pixelCount * 4);
+            retainedFrameWidth = width;
+            retainedFrameHeight = height;
+            retainedFrameTextureDirty = true;
+            retainedFrameActive = true;
+            captured[0] = true;
+         }
+      });
+      return ran && captured[0];
+   }
+
+   private void ensureRetainedFrameCapacity(int pixels) {
+      int bytes = pixels * 4;
+      if (this.retainedFrameBytes == null || this.retainedFrameBytes.capacity() < bytes) {
+         this.retainedFrameBytes = BufferUtils.createByteBuffer(bytes).order(ByteOrder.nativeOrder());
+      }
+   }
+
+   private void finishTransitionFrameRetention() {
+      this.retainedFrameActive = false;
    }
 
    boolean presentFrame(
@@ -330,6 +411,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       if (presented) {
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
+         this.everPresentedFrame = true;
+         finishTransitionFrameRetention();
       }
       return presented;
    }
@@ -391,6 +474,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       if (presented) {
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
+         this.everPresentedFrame = true;
+         finishTransitionFrameRetention();
       }
       return presented;
    }
@@ -528,22 +613,176 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    @Override
    protected void paintGL() {
-      if (failed || this.sceneBackbufferPending || !this.initialClearNeeded) {
+      if (failed || this.sceneBackbufferPending) {
          return;
       }
 
-      this.initialClearNeeded = false;
-      GL20.glUseProgram(0);
-      GL11.glColorMask(true, true, true, true);
-      GL11.glDisable(GL11.GL_SCISSOR_TEST);
-      GL11.glViewport(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
-      GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-      GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
       try {
+         if (this.retainedFrameActive && renderRetainedFrame()) {
+            swapBuffers();
+            this.initialClearNeeded = false;
+            this.hasPresentedFrame = true;
+            return;
+         }
+
+         // On the very first handoff from the Java surface, seed the GL canvas
+         // with the already-composed software framebuffer. The first visible
+         // GPU paint therefore matches what was on screen immediately before
+         // the CardLayout switch instead of exposing an empty canvas.
+         if (!this.everPresentedFrame && renderInitialSoftwareFrame()) {
+            swapBuffers();
+            this.initialClearNeeded = false;
+            this.hasPresentedFrame = true;
+            this.everPresentedFrame = true;
+            return;
+         }
+
+         if (!this.initialClearNeeded) {
+            return;
+         }
+
+         this.initialClearNeeded = false;
+         GL20.glUseProgram(0);
+         GL11.glColorMask(true, true, true, true);
+         GL11.glDisable(GL11.GL_SCISSOR_TEST);
+         GL11.glViewport(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
+         GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
          swapBuffers();
       } catch (LWJGLException failure) {
          markFailed(failure);
       }
+   }
+
+   private boolean renderInitialSoftwareFrame() {
+      BufferedImageGraphicsBuffer frameBuffer = this.owner.frameBuffer;
+      if (frameBuffer == null || frameBuffer.pixels == null) {
+         return false;
+      }
+
+      int frameWidth = frameBuffer.getWidth();
+      int frameHeight = frameBuffer.getHeight();
+      long pixelCount = (long)frameWidth * (long)frameHeight;
+      if (frameWidth <= 0
+         || frameHeight <= 0
+         || pixelCount > Integer.MAX_VALUE / 4L
+         || frameBuffer.pixels.length < pixelCount) {
+         return false;
+      }
+
+      int count = (int)pixelCount;
+      ensureSoftwareFrameUploadCapacity(count);
+      this.softwareFrameUploadInts.clear();
+      this.softwareFrameUploadInts.put(frameBuffer.pixels, 0, count);
+      this.softwareFrameUploadInts.flip();
+      this.softwareFrameUploadBytes.position(0);
+      this.softwareFrameUploadBytes.limit(count * 4);
+
+      SoftwareFrameState frame = new SoftwareFrameState(
+         frameWidth,
+         frameHeight,
+         0,
+         0,
+         Math.max(1, this.getWidth()),
+         Math.max(1, this.getHeight())
+      );
+      uploadSoftwareFrame(frame);
+      renderSoftwareFrame(frame);
+      return true;
+   }
+
+   private boolean renderRetainedFrame() {
+      if (!this.retainedFrameActive
+         || this.retainedFrameBytes == null
+         || this.retainedFrameWidth <= 0
+         || this.retainedFrameHeight <= 0) {
+         return false;
+      }
+
+      int texture = ensureRetainedFrameTexture(this.retainedFrameWidth, this.retainedFrameHeight);
+      if (this.retainedFrameTextureDirty) {
+         ByteBuffer upload = this.retainedFrameBytes.duplicate().order(ByteOrder.nativeOrder());
+         upload.position(0);
+         upload.limit(this.retainedFrameWidth * this.retainedFrameHeight * 4);
+         GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+         GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
+         GL11.glTexSubImage2D(
+            GL11.GL_TEXTURE_2D,
+            0,
+            0,
+            0,
+            this.retainedFrameWidth,
+            this.retainedFrameHeight,
+            GL_BGRA,
+            GL11.GL_UNSIGNED_BYTE,
+            upload
+         );
+         this.retainedFrameTextureDirty = false;
+      }
+
+      int canvasWidth = Math.max(1, this.getWidth());
+      int canvasHeight = Math.max(1, this.getHeight());
+      GL20.glUseProgram(0);
+      GL11.glColorMask(true, true, true, true);
+      GL11.glDisable(GL11.GL_DEPTH_TEST);
+      GL11.glDisable(GL11.GL_ALPHA_TEST);
+      GL11.glDisable(GL11.GL_BLEND);
+      GL11.glDisable(GL11.GL_SCISSOR_TEST);
+      GL11.glViewport(0, 0, canvasWidth, canvasHeight);
+      GL11.glMatrixMode(GL11.GL_PROJECTION);
+      GL11.glLoadIdentity();
+      GL11.glOrtho(0.0D, canvasWidth, canvasHeight, 0.0D, -1.0D, 1.0D);
+      GL11.glMatrixMode(GL11.GL_MODELVIEW);
+      GL11.glLoadIdentity();
+      GL11.glEnable(GL11.GL_TEXTURE_2D);
+      GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
+
+      GL11.glBegin(GL11.GL_QUADS);
+      GL11.glTexCoord2f(0.0F, 1.0F);
+      GL11.glVertex2f(0.0F, 0.0F);
+      GL11.glTexCoord2f(1.0F, 1.0F);
+      GL11.glVertex2f(canvasWidth, 0.0F);
+      GL11.glTexCoord2f(1.0F, 0.0F);
+      GL11.glVertex2f(canvasWidth, canvasHeight);
+      GL11.glTexCoord2f(0.0F, 0.0F);
+      GL11.glVertex2f(0.0F, canvasHeight);
+      GL11.glEnd();
+
+      GL11.glDisable(GL11.GL_TEXTURE_2D);
+      return true;
+   }
+
+   private int ensureRetainedFrameTexture(int width, int height) {
+      if (this.retainedFrameTexture == 0) {
+         this.retainedFrameTexture = GL11.glGenTextures();
+         this.retainedFrameTextureWidth = 0;
+         this.retainedFrameTextureHeight = 0;
+      }
+
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.retainedFrameTexture);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+
+      if (this.retainedFrameTextureWidth != width || this.retainedFrameTextureHeight != height) {
+         this.retainedFrameTextureWidth = width;
+         this.retainedFrameTextureHeight = height;
+         GL11.glTexImage2D(
+            GL11.GL_TEXTURE_2D,
+            0,
+            GL11.GL_RGBA8,
+            width,
+            height,
+            0,
+            GL_BGRA,
+            GL11.GL_UNSIGNED_BYTE,
+            (ByteBuffer)null
+         );
+         this.retainedFrameTextureDirty = true;
+      }
+      return this.retainedFrameTexture;
    }
 
    private void initializeGlResources() {
@@ -982,6 +1221,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.paintingBuffer = -1;
       this.initialClearNeeded = true;
       this.hasPresentedFrame = false;
+      this.retainedFrameTexture = 0;
+      this.retainedFrameTextureWidth = 0;
+      this.retainedFrameTextureHeight = 0;
+      this.retainedFrameTextureDirty = this.retainedFrameActive;
       this.softwareFrameTexture = 0;
       this.softwareFrameWidth = 0;
       this.softwareFrameHeight = 0;
