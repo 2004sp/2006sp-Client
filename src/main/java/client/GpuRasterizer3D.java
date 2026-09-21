@@ -8,6 +8,7 @@ import java.util.Arrays;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15;
+import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL21;
 import org.lwjgl.opengl.Pbuffer;
 import org.lwjgl.opengl.PixelFormat;
@@ -25,6 +26,8 @@ final class GpuRasterizer3D {
    private static final int GL_CLAMP_TO_EDGE = 33071;
    private static final int GL_BGRA = 32993;
    private static final int TEXTURE_COUNT = 51;
+   private static final int TEXTURE_GRID_SIZE = 8;
+   private static final int WHITE_TEXTURE_CELL = 63;
    private static final int BATCH_NONE = 0;
    private static final int BATCH_COLOR = 1;
    private static final int BATCH_TEXTURED = 2;
@@ -56,6 +59,17 @@ final class GpuRasterizer3D {
    private static final int[] textureIds = new int[TEXTURE_COUNT];
    private static final boolean[] textureDirty = new boolean[TEXTURE_COUNT];
    private static boolean cachedLowMemory = Rasterizer3D.lowMemory;
+   private static int atlasTexture;
+   private static int atlasTextureSize;
+   private static int legacyTextureSize;
+   private static int shaderProgram;
+   private static int uniformAtlas;
+   private static int uniformTextureSize;
+   private static int uniformFogEnabled;
+   private static int uniformFogStart;
+   private static int uniformFogEnd;
+   private static int uniformDepthScale;
+   private static int uniformFogColor;
 
    private static ByteBuffer colorReadback;
    private static FloatBuffer depthReadback;
@@ -129,6 +143,7 @@ final class GpuRasterizer3D {
          ensureContext(Rasterizer2D.width, Rasterizer2D.height);
          makeCurrent();
          configureViewport(Rasterizer2D.width, Rasterizer2D.height);
+         ensureTextureAtlas();
 
          GL11.glEnable(GL11.GL_SCISSOR_TEST);
          setScissor(0, 0, viewportWidth, viewportHeight);
@@ -443,7 +458,7 @@ final class GpuRasterizer3D {
 
          if (batched) {
             queueTexturedTriangle(
-               glTexture,
+               textureId,
                x0, y0, depth0, textureShadeScale(shade0, smoothTextureLight), (float)(pu0 * coordinateScale), (float)(pv0 * coordinateScale), (float)(pw0 * coordinateScale),
                x1, y1, depth1, textureShadeScale(shade1, smoothTextureLight), (float)(pu1 * coordinateScale), (float)(pv1 * coordinateScale), (float)(pw1 * coordinateScale),
                x2, y2, depth2, textureShadeScale(shade2, smoothTextureLight), (float)(pu2 * coordinateScale), (float)(pv2 * coordinateScale), (float)(pw2 * coordinateScale)
@@ -651,6 +666,12 @@ final class GpuRasterizer3D {
       GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1);
 
       vertexBufferObject = GL15.glGenBuffers();
+      shaderProgram = 0;
+      atlasTexture = 0;
+      atlasTextureSize = 0;
+      legacyTextureSize = 0;
+      initializeSceneShader();
+      ensureTextureAtlas();
       Arrays.fill(colorPbos, 0);
       Arrays.fill(colorPboReady, false);
       colorPboWriteIndex = 0;
@@ -692,34 +713,77 @@ final class GpuRasterizer3D {
    }
 
    private static int ensureTexture(int textureId) {
-      if (batchVertexCount > 0 && batchMode == BATCH_TEXTURED && batchTexture == textureIds[textureId] && textureDirty[textureId]) {
-         flushBatch();
-      }
-      if (cachedLowMemory != Rasterizer3D.lowMemory) {
-         cachedLowMemory = Rasterizer3D.lowMemory;
-         Arrays.fill(textureDirty, true);
-      }
-
-      if (textureIds[textureId] != 0 && !textureDirty[textureId]) {
-         return textureIds[textureId];
-      }
-
-      if (textureIds[textureId] != 0) {
-         GL11.glDeleteTextures(textureIds[textureId]);
-         textureIds[textureId] = 0;
-      }
-
-      int[] pixels = Rasterizer3D.getGpuTexturePixels(textureId);
-      if (pixels == null) {
+      ensureTextureAtlas();
+      if (textureId < 0 || textureId >= TEXTURE_COUNT) {
          return 0;
       }
+      if (textureDirty[textureId]) {
+         uploadTextureCell(textureId);
+      }
+      return atlasTexture;
+   }
 
-      int size = Rasterizer3D.lowMemory ? 64 : 128;
-      int pixelCount = size * size;
+   private static void ensureTextureAtlas() {
+      int wantedTextureSize = Rasterizer3D.lowMemory ? 64 : 128;
+      int wantedAtlasSize = wantedTextureSize * TEXTURE_GRID_SIZE;
+      if (atlasTexture != 0 && legacyTextureSize == wantedTextureSize && atlasTextureSize == wantedAtlasSize) {
+         return;
+      }
+
+      if (atlasTexture != 0) {
+         GL11.glDeleteTextures(atlasTexture);
+      }
+      atlasTexture = GL11.glGenTextures();
+      atlasTextureSize = wantedAtlasSize;
+      legacyTextureSize = wantedTextureSize;
+      cachedLowMemory = Rasterizer3D.lowMemory;
+
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      GL11.glTexImage2D(
+         GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8,
+         atlasTextureSize, atlasTextureSize, 0,
+         GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, (ByteBuffer)null
+      );
+
+      Arrays.fill(textureDirty, true);
+      uploadWhiteTextureCell();
+   }
+
+   private static void uploadWhiteTextureCell() {
+      int pixelCount = legacyTextureSize * legacyTextureSize;
       ensureTextureUploadCapacity(pixelCount * 4);
       textureUploadBuffer.clear();
-      textureUploadBuffer.limit(pixelCount * 4);
+      for (int i = 0; i < pixelCount; i++) {
+         textureUploadBuffer.put((byte)255);
+         textureUploadBuffer.put((byte)255);
+         textureUploadBuffer.put((byte)255);
+         textureUploadBuffer.put((byte)255);
+      }
+      textureUploadBuffer.flip();
 
+      int cellX = (WHITE_TEXTURE_CELL & 7) * legacyTextureSize;
+      int cellY = (WHITE_TEXTURE_CELL >> 3) * legacyTextureSize;
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
+      GL11.glTexSubImage2D(
+         GL11.GL_TEXTURE_2D, 0,
+         cellX, cellY, legacyTextureSize, legacyTextureSize,
+         GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, textureUploadBuffer
+      );
+   }
+
+   private static void uploadTextureCell(int textureId) {
+      int[] pixels = Rasterizer3D.getGpuTexturePixels(textureId);
+      if (pixels == null) {
+         return;
+      }
+
+      int pixelCount = legacyTextureSize * legacyTextureSize;
+      ensureTextureUploadCapacity(pixelCount * 4);
+      textureUploadBuffer.clear();
       for (int i = 0; i < pixelCount; i++) {
          int rgb = pixels[i];
          textureUploadBuffer.put((byte)(rgb >> 16));
@@ -729,20 +793,113 @@ final class GpuRasterizer3D {
       }
       textureUploadBuffer.flip();
 
-      int glTexture = GL11.glGenTextures();
-      GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexture);
-      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
-      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_REPEAT);
-      GL11.glTexImage2D(
-         GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, size, size, 0,
+      int cellX = (textureId & 7) * legacyTextureSize;
+      int cellY = (textureId >> 3) * legacyTextureSize;
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
+      GL11.glTexSubImage2D(
+         GL11.GL_TEXTURE_2D, 0,
+         cellX, cellY, legacyTextureSize, legacyTextureSize,
          GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, textureUploadBuffer
       );
-
-      textureIds[textureId] = glTexture;
       textureDirty[textureId] = false;
-      return glTexture;
+   }
+
+   private static void initializeSceneShader() {
+      if (shaderProgram != 0) {
+         return;
+      }
+
+      String vertexSource =
+         "#version 120\n"
+            + "varying vec4 vLegacyTex;\n"
+            + "varying vec4 vColor;\n"
+            + "void main() {\n"
+            + "  gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex;\n"
+            + "  vLegacyTex = gl_MultiTexCoord0;\n"
+            + "  vColor = gl_Color;\n"
+            + "}\n";
+
+      String fragmentSource =
+         "#version 120\n"
+            + "uniform sampler2D uAtlas;\n"
+            + "uniform float uTextureSize;\n"
+            + "uniform float uFogEnabled;\n"
+            + "uniform float uFogStart;\n"
+            + "uniform float uFogEnd;\n"
+            + "uniform float uDepthScale;\n"
+            + "uniform vec3 uFogColor;\n"
+            + "varying vec4 vLegacyTex;\n"
+            + "varying vec4 vColor;\n"
+            + "void main() {\n"
+            + "  float q = vLegacyTex.w;\n"
+            + "  if (abs(q) < 0.0000001) discard;\n"
+            + "  float inset = 0.5 / uTextureSize;\n"
+            + "  float localS = clamp(vLegacyTex.x / q, inset, 1.0 - inset);\n"
+            + "  float localT = fract(vLegacyTex.y / q);\n"
+            + "  localT = clamp(localT, inset, 1.0 - inset);\n"
+            + "  float cell = floor(vLegacyTex.z + 0.5);\n"
+            + "  vec2 cellXY = vec2(mod(cell, 8.0), floor(cell / 8.0));\n"
+            + "  vec2 uv = (cellXY + vec2(localS, localT)) / 8.0;\n"
+            + "  vec4 texel = texture2D(uAtlas, uv);\n"
+            + "  if (texel.a < 0.5) discard;\n"
+            + "  vec4 color = vec4(texel.rgb * vColor.rgb, vColor.a);\n"
+            + "  if (uFogEnabled > 0.5) {\n"
+            + "    float sceneDepth = gl_FragCoord.z * uDepthScale;\n"
+            + "    float fogAmount = 0.0;\n"
+            + "    if (sceneDepth >= uFogEnd) {\n"
+            + "      fogAmount = 1.0;\n"
+            + "    } else if (sceneDepth >= uFogStart) {\n"
+            + "      fogAmount = clamp((sceneDepth - uFogStart) / 768.0, 0.0, 1.0);\n"
+            + "    }\n"
+            + "    color.rgb = mix(color.rgb, uFogColor, fogAmount);\n"
+            + "  }\n"
+            + "  gl_FragColor = color;\n"
+            + "}\n";
+
+      int vertexShader = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
+      int fragmentShader = compileShader(GL20.GL_FRAGMENT_SHADER, fragmentSource);
+      shaderProgram = GL20.glCreateProgram();
+      GL20.glAttachShader(shaderProgram, vertexShader);
+      GL20.glAttachShader(shaderProgram, fragmentShader);
+      GL20.glLinkProgram(shaderProgram);
+      if (GL20.glGetProgrami(shaderProgram, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
+         throw new IllegalStateException("GPU shader link failed: " + GL20.glGetProgramInfoLog(shaderProgram, 4096));
+      }
+      GL20.glDeleteShader(vertexShader);
+      GL20.glDeleteShader(fragmentShader);
+
+      uniformAtlas = GL20.glGetUniformLocation(shaderProgram, "uAtlas");
+      uniformTextureSize = GL20.glGetUniformLocation(shaderProgram, "uTextureSize");
+      uniformFogEnabled = GL20.glGetUniformLocation(shaderProgram, "uFogEnabled");
+      uniformFogStart = GL20.glGetUniformLocation(shaderProgram, "uFogStart");
+      uniformFogEnd = GL20.glGetUniformLocation(shaderProgram, "uFogEnd");
+      uniformDepthScale = GL20.glGetUniformLocation(shaderProgram, "uDepthScale");
+      uniformFogColor = GL20.glGetUniformLocation(shaderProgram, "uFogColor");
+
+      GL20.glUseProgram(shaderProgram);
+      GL20.glUniform1i(uniformAtlas, 0);
+      GL20.glUniform1f(uniformDepthScale, DEPTH_SCALE);
+      GL20.glUniform3f(uniformFogColor, 149.0F / 255.0F, 150.0F / 255.0F, 152.0F / 255.0F);
+      GL20.glUseProgram(0);
+   }
+
+   private static int compileShader(int type, String source) {
+      int shader = GL20.glCreateShader(type);
+      GL20.glShaderSource(shader, source);
+      GL20.glCompileShader(shader);
+      if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
+         throw new IllegalStateException("GPU shader compile failed: " + GL20.glGetShaderInfoLog(shader, 4096));
+      }
+      return shader;
+   }
+
+   private static void useSceneShader(boolean fogEnabled) {
+      initializeSceneShader();
+      GL20.glUseProgram(shaderProgram);
+      GL20.glUniform1f(uniformTextureSize, legacyTextureSize);
+      GL20.glUniform1f(uniformFogEnabled, fogEnabled ? 1.0F : 0.0F);
+      GL20.glUniform1f(uniformFogStart, frameFogStart);
+      GL20.glUniform1f(uniformFogEnd, frameFogEnd);
    }
 
    private static void readBackFrameAsync() {
@@ -1027,10 +1184,10 @@ final class GpuRasterizer3D {
    private static void queueDepthTriangle(
       float x0, float y0, float d0, float x1, float y1, float d1, float x2, float y2, float d2
    ) {
-      ensureBatch(BATCH_DEPTH, 0, 3);
-      putVertex(x0, y0, -clampDepth(d0), 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F);
-      putVertex(x1, y1, -clampDepth(d1), 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F);
-      putVertex(x2, y2, -clampDepth(d2), 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F);
+      ensureBatch(BATCH_TEXTURED, atlasTexture, 3);
+      putVertex(x0, y0, -clampDepth(d0), 1.0F, 1.0F, 1.0F, 0.0F, 0.5F, 0.5F, WHITE_TEXTURE_CELL, 1.0F);
+      putVertex(x1, y1, -clampDepth(d1), 1.0F, 1.0F, 1.0F, 0.0F, 0.5F, 0.5F, WHITE_TEXTURE_CELL, 1.0F);
+      putVertex(x2, y2, -clampDepth(d2), 1.0F, 1.0F, 1.0F, 0.0F, 0.5F, 0.5F, WHITE_TEXTURE_CELL, 1.0F);
    }
 
    private static void queueColorTriangle(
@@ -1039,7 +1196,7 @@ final class GpuRasterizer3D {
       float x2, float y2, float d2, int rgb2,
       float alpha
    ) {
-      ensureBatch(BATCH_COLOR, 0, 3);
+      ensureBatch(BATCH_TEXTURED, atlasTexture, 3);
       putColorVertex(x0, y0, d0, rgb0, alpha);
       putColorVertex(x1, y1, d1, rgb1, alpha);
       putColorVertex(x2, y2, d2, rgb2, alpha);
@@ -1052,20 +1209,20 @@ final class GpuRasterizer3D {
          (rgb >> 8 & 255) / 255.0F,
          (rgb & 255) / 255.0F,
          alpha,
-         0.0F, 0.0F, 0.0F, 1.0F
+         0.5F, 0.5F, WHITE_TEXTURE_CELL, 1.0F
       );
    }
 
    private static void queueTexturedTriangle(
-      int texture,
+      int textureCell,
       float x0, float y0, float d0, float shade0, float s0, float t0, float q0,
       float x1, float y1, float d1, float shade1, float s1, float t1, float q1,
       float x2, float y2, float d2, float shade2, float s2, float t2, float q2
    ) {
-      ensureBatch(BATCH_TEXTURED, texture, 3);
-      putVertex(x0, y0, -clampDepth(d0), shade0, shade0, shade0, 1.0F, s0, t0, 0.0F, q0);
-      putVertex(x1, y1, -clampDepth(d1), shade1, shade1, shade1, 1.0F, s1, t1, 0.0F, q1);
-      putVertex(x2, y2, -clampDepth(d2), shade2, shade2, shade2, 1.0F, s2, t2, 0.0F, q2);
+      ensureBatch(BATCH_TEXTURED, atlasTexture, 3);
+      putVertex(x0, y0, -clampDepth(d0), shade0, shade0, shade0, 1.0F, s0, t0, textureCell, q0);
+      putVertex(x1, y1, -clampDepth(d1), shade1, shade1, shade1, 1.0F, s1, t1, textureCell, q1);
+      putVertex(x2, y2, -clampDepth(d2), shade2, shade2, shade2, 1.0F, s2, t2, textureCell, q2);
    }
 
    private static void ensureBatch(int mode, int texture, int verticesNeeded) {
@@ -1115,13 +1272,13 @@ final class GpuRasterizer3D {
          GL11.glColorMask(false, false, false, false);
       } else if (batchMode == BATCH_TEXTURED) {
          GL11.glColorMask(true, true, true, false);
-         GL11.glDisable(GL11.GL_BLEND);
+         GL11.glEnable(GL11.GL_BLEND);
+         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
          GL11.glEnable(GL11.GL_TEXTURE_2D);
-         GL11.glBindTexture(GL11.GL_TEXTURE_2D, batchTexture);
-         GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
-         GL11.glEnable(GL11.GL_ALPHA_TEST);
-         GL11.glAlphaFunc(GL11.GL_GREATER, 0.001F);
-         configureGpuFog();
+         GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
+         GL11.glDisable(GL11.GL_ALPHA_TEST);
+         GL11.glDisable(GL11.GL_FOG);
+         useSceneShader(frameFogEnabled);
          GL11.glEnableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
          GL11.glTexCoordPointer(4, GL11.GL_FLOAT, VERTEX_STRIDE_BYTES, 28L);
       } else if (batchMode == BATCH_PARTICLE) {
@@ -1146,6 +1303,7 @@ final class GpuRasterizer3D {
 
       if (batchMode == BATCH_TEXTURED) {
          GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
+         GL20.glUseProgram(0);
       }
       GL11.glDisableClientState(GL11.GL_COLOR_ARRAY);
       GL11.glDisableClientState(GL11.GL_VERTEX_ARRAY);
@@ -1223,6 +1381,12 @@ final class GpuRasterizer3D {
             if (vertexBufferObject != 0) {
                GL15.glDeleteBuffers(vertexBufferObject);
             }
+            if (shaderProgram != 0) {
+               GL20.glDeleteProgram(shaderProgram);
+            }
+            if (atlasTexture != 0) {
+               GL11.glDeleteTextures(atlasTexture);
+            }
             for (int pbo : colorPbos) {
                if (pbo != 0) {
                   GL15.glDeleteBuffers(pbo);
@@ -1241,6 +1405,10 @@ final class GpuRasterizer3D {
       viewportWidth = -1;
       viewportHeight = -1;
       vertexBufferObject = 0;
+      shaderProgram = 0;
+      atlasTexture = 0;
+      atlasTextureSize = 0;
+      legacyTextureSize = 0;
       Arrays.fill(colorPbos, 0);
       Arrays.fill(colorPboReady, false);
       colorPboBytes = 0;
