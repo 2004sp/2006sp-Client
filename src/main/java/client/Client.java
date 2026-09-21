@@ -1230,9 +1230,9 @@ public class Client extends GameShell {
          return;
       }
 
-      // Keep the GPU card visible while AWT creates its native GL context or
-      // while the Pbuffer is doing the one-frame transition to a shared
-      // context. Hiding it here would destroy the initialization handshake.
+      // Keep the GPU card visible while AWT creates its native GL context.
+      // Hiding it here would destroy the initialization handshake before the
+      // scene can start rendering directly into the canvas backbuffer.
       if (ClientWindow.isGpuPresentationVisible() && GpuRasterizer3D.isDirectPresentationTransitioning()) {
          return;
       }

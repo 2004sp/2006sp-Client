@@ -243,6 +243,13 @@ final class GpuRasterizer3D {
          configureViewport(Rasterizer2D.width, Rasterizer2D.height);
          ensureTextureAtlas();
 
+         // The UI compositor also uses GL_SCISSOR_TEST in this same context.
+         // Invalidate the rasterizer's cached rectangle before restoring the
+         // scene scissor for a new frame.
+         scissorX = Integer.MIN_VALUE;
+         scissorY = Integer.MIN_VALUE;
+         scissorWidth = Integer.MIN_VALUE;
+         scissorHeight = Integer.MIN_VALUE;
          GL11.glEnable(GL11.GL_SCISSOR_TEST);
          setLogicalScissor(0, 0, viewportWidth, viewportHeight);
          GL11.glColorMask(true, true, true, true);
