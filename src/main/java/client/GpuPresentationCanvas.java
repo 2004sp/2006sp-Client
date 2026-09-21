@@ -31,6 +31,7 @@ import org.lwjgl.opengl.PixelFormat;
 final class GpuPresentationCanvas extends AWTGLCanvas {
    private static final int GL_BGRA = 32993;
    private static final int DIRTY_TILE_SIZE = 64;
+   private static final DirtyRect[] NO_DIRTY_RECTS = new DirtyRect[0];
 
    private final ClientWindow owner;
    private final ByteBuffer[] uploadBytes = new ByteBuffer[2];
@@ -161,6 +162,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    boolean presentFrame(
       int[] uiPixels,
+      boolean softwareUiChanged,
       int uiWidth,
       int uiHeight,
       int targetX,
@@ -188,28 +190,36 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          int bufferIndex = this.paintingBuffer == 0 ? 1 : 0;
          int tileColumns = (uiWidth + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
          int tileRows = (uiHeight + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
-         boolean[] dirtyTiles = new boolean[tileColumns * tileRows];
          boolean dimensionsChanged = this.uiShadow == null
             || this.uiShadowWidth != uiWidth
             || this.uiShadowHeight != uiHeight;
+         DirtyRect[] dirtyRects;
 
-         if (dimensionsChanged) {
-            this.uiShadow = new int[count];
-            this.uiShadowWidth = uiWidth;
-            this.uiShadowHeight = uiHeight;
-            System.arraycopy(uiPixels, 0, this.uiShadow, 0, count);
-            Arrays.fill(dirtyTiles, true);
+         if (dimensionsChanged || softwareUiChanged) {
+            boolean[] dirtyTiles = new boolean[tileColumns * tileRows];
+            if (dimensionsChanged) {
+               this.uiShadow = new int[count];
+               this.uiShadowWidth = uiWidth;
+               this.uiShadowHeight = uiHeight;
+               System.arraycopy(uiPixels, 0, this.uiShadow, 0, count);
+               Arrays.fill(dirtyTiles, true);
+            } else {
+               detectDirtyTiles(uiPixels, uiWidth, uiHeight, tileColumns, dirtyTiles);
+            }
+
+            dirtyRects = buildDirtyRectangles(
+               dirtyTiles,
+               tileColumns,
+               tileRows,
+               uiWidth,
+               uiHeight
+            );
          } else {
-            detectDirtyTiles(uiPixels, uiWidth, uiHeight, tileColumns, dirtyTiles);
+            // No software composition happened on this high-FPS scene frame,
+            // so the retained overlay texture is already current. Avoid a
+            // full framebuffer comparison just to rediscover that fact.
+            dirtyRects = NO_DIRTY_RECTS;
          }
-
-         DirtyRect[] dirtyRects = buildDirtyRectangles(
-            dirtyTiles,
-            tileColumns,
-            tileRows,
-            uiWidth,
-            uiHeight
-         );
 
          int dirtyPixelCount = 0;
          for (DirtyRect rect : dirtyRects) {
@@ -249,7 +259,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             sceneY,
             Math.max(1, sceneWidth),
             Math.max(1, sceneHeight),
-            dirtyTiles,
             dirtyRects,
             uploadByteCount
          );
@@ -772,7 +781,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       final int sceneY;
       final int sceneWidth;
       final int sceneHeight;
-      final boolean[] dirtyTiles;
       final DirtyRect[] dirtyRects;
       final int uploadByteCount;
 
@@ -788,7 +796,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          int sceneY,
          int sceneWidth,
          int sceneHeight,
-         boolean[] dirtyTiles,
          DirtyRect[] dirtyRects,
          int uploadByteCount
       ) {
@@ -803,7 +810,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.sceneY = sceneY;
          this.sceneWidth = sceneWidth;
          this.sceneHeight = sceneHeight;
-         this.dirtyTiles = dirtyTiles;
          this.dirtyRects = dirtyRects;
          this.uploadByteCount = uploadByteCount;
       }

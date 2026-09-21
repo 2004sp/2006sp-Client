@@ -1222,7 +1222,7 @@ public class Client extends GameShell {
       return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
    }
 
-   private void drawFrameBufferToWindow() {
+   private void drawFrameBufferToWindow(boolean softwareUiChanged) {
       Rectangle presentation = this.getCurrentPresentationBounds();
 
       int logicalWidth = this.frameBuffer.getWidth();
@@ -1234,6 +1234,7 @@ public class Client extends GameShell {
 
       if (GpuRasterizer3D.presentDirectFrame(
          this.frameBuffer.pixels,
+         softwareUiChanged,
          logicalWidth,
          logicalHeight,
          presentation.x,
@@ -13914,7 +13915,7 @@ public class Client extends GameShell {
       }
    }
 
-   private void drawGameScreen() {
+   private boolean drawGameScreen() {
       this.ensureGameScreenBufferMatchesViewport();
       boolean redrawSoftwareUi = this.shouldRedrawSoftwareUi();
       if (this.fullscreenInterfaceId == -1 || this.loadingStage != 2 && super.graphicsBuffer == null) {
@@ -15002,6 +15003,7 @@ public class Client extends GameShell {
          super.graphicsBuffer.drawToBuffer(0, this.frameBuffer, 0);
          }
       }
+      return redrawSoftwareUi;
    }
    private void createStationaryGraphics() {
       for (SpotAnimation spotAnimation = (SpotAnimation)this.incompleteAnimables.first(); spotAnimation != null; spotAnimation = (SpotAnimation)this.incompleteAnimables.next()) {
@@ -16072,8 +16074,8 @@ public class Client extends GameShell {
             this.drawLoginScreen(false);
          } else {
             this.frameBuffer.initDrawingArea();
-            this.drawGameScreen();
-            this.drawFrameBufferToWindow();
+            boolean softwareUiChanged = this.drawGameScreen();
+            this.drawFrameBufferToWindow(softwareUiChanged);
          }
 
          this.scrollbarClickTicks = 0;

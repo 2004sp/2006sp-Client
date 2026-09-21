@@ -320,6 +320,7 @@ final class GpuRasterizer3D {
 
    static boolean presentDirectFrame(
       int[] uiPixels,
+      boolean softwareUiChanged,
       int uiWidth,
       int uiHeight,
       int targetX,
@@ -340,6 +341,7 @@ final class GpuRasterizer3D {
 
       boolean queued = presentationCanvas.presentFrame(
          uiPixels,
+         softwareUiChanged,
          uiWidth,
          uiHeight,
          targetX,
