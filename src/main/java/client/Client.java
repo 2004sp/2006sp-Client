@@ -2403,6 +2403,7 @@ public class Client extends GameShell {
       if (!new File(text).exists()) {
          ClientSettings.createDefaultConfig();
       }
+      ClientSettings.ensureCameraRefreshRateSetting(new File(text));
 
       String text2 = "";
       BufferedReader bufferedReader = null;
