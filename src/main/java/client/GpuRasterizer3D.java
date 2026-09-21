@@ -1688,6 +1688,15 @@ final class GpuRasterizer3D {
       vertexBatch.flip();
       GL15.glBufferData(GL15.GL_ARRAY_BUFFER, vertexBatch, GL15.GL_STREAM_DRAW);
       GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, batchVertexCount);
+
+      // The scene renderer shares this GL context with the AWT presentation
+      // compositor and texture upload path. Do not carry cached client-array,
+      // shader, blend, texture, or depth state across batch boundaries: code
+      // between flushes may legitimately mutate that shared state. A stale
+      // scene shader is especially visible as intermittent fog-grey frames
+      // while the camera is moving. Larger batches still keep this teardown
+      // infrequent while making each submitted batch self-contained.
+      finishBatchPipeline();
       resetBatch();
    }
 
