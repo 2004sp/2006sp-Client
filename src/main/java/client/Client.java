@@ -1249,15 +1249,40 @@ public class Client extends GameShell {
          return;
       }
 
-      // Keep the GPU card visible while AWT creates its native GL context.
-      // Hiding it here would destroy the initialization handshake before the
-      // scene can start rendering directly into the canvas backbuffer.
-      if (ClientWindow.isGpuPresentationVisible() && GpuRasterizer3D.isDirectPresentationTransitioning()) {
-         return;
+      if (ClientWindow.isGpuPresentationVisible()) {
+         // Region rebuilds do not produce a new 3D frame. Keep the last
+         // completed GPU frame on screen rather than exposing the keyed
+         // software overlay (which appears as a black transition).
+         if (this.loadingStage != 2 && GpuRasterizer3D.canRetainPresentedFrame()) {
+            return;
+         }
+
+         // A scene can intentionally fall back to the software rasterizer for
+         // one frame (for example when an unsupported triangle is encountered).
+         // Present that completed software framebuffer through the same GL
+         // canvas so resizable mode never flashes the Swing/software card.
+         if (this.loadingStage == 2 && GpuRasterizer3D.presentSoftwareFrame(
+            this.frameBuffer.pixels,
+            logicalWidth,
+            logicalHeight,
+            presentation.x,
+            presentation.y,
+            presentation.width,
+            presentation.height
+         )) {
+            return;
+         }
+
+         // Keep the GPU card visible while AWT creates or recreates its native
+         // GL context. Hiding it here destroys the initialization handshake and
+         // widens the peer-recreation race.
+         if (GpuRasterizer3D.isDirectPresentationTransitioning()) {
+            return;
+         }
       }
 
-      // A real failure or explicit software-renderer selection falls back to
-      // the original AWT framebuffer immediately.
+      // A real presentation failure or explicit software-renderer selection
+      // falls back to the original AWT framebuffer immediately.
       if (ClientWindow.isGpuPresentationVisible() && this instanceof ClientWindow) {
          ((ClientWindow)this).setGpuPresentationSurface(false);
       }
