@@ -885,7 +885,10 @@ public class Client extends GameShell {
       gameFrame.setPreferredSize(new Dimension(sourceClientWidth, sourceClientHeight));
       if (ClientWindow.getInstance() != null) {
          gameFrame = ClientWindow.getInstance().frame;
-         if (screenMode != 0 && loggedIn) {
+         if (loggedIn) {
+            // Fullscreen is supported by both resizable and fixed gameframes.
+            // Fixed modes keep their 765x503 renderer and are scaled as one
+            // complete frame while fullscreen.
             ClientWindow.menuBar.add(ClientWindow.fullscreenMenu);
          } else {
             ClientWindow.menuBar.remove(ClientWindow.fullscreenMenu);
@@ -916,14 +919,25 @@ public class Client extends GameShell {
       }
 
       if (newScreenMode == 2) {
-         screenMode = 1;
+         boolean fixedFullscreen = screenMode == 0;
+
          // Borderless windowed fullscreen uses the desktop bounds of the
          // monitor containing the client. Do not switch the monitor's display
          // mode; keeping the desktop mode is what allows focus to move to a
          // second monitor without the game going black/minimizing.
          Rectangle fullscreenBounds = gameFrame.getGraphicsConfiguration().getBounds();
-         clientWidth = fullscreenBounds.width;
-         clientHeight = fullscreenBounds.height;
+         if (!fixedFullscreen) {
+            screenMode = 1;
+            clientWidth = fullscreenBounds.width;
+            clientHeight = fullscreenBounds.height;
+         } else {
+            // Keep the logical fixed framebuffer untouched. drawFrameBufferToWindow()
+            // scales the complete selected 317/459/474 frame to the fullscreen
+            // component, and fixed input translation maps clicks back to 765x503.
+            clientWidth = fixedWidth;
+            clientHeight = fixedHeight;
+         }
+
          cameraZoom = 600;
          Client client = this;
          if (super.clientWindow != null) {
@@ -940,20 +954,28 @@ public class Client extends GameShell {
             ClientWindow.menuBar.add(ClientWindow.windowedModeButton);
          }
 
-         // Fullscreen changes clientWidth/clientHeight immediately, so rebuild
-         // every raster/image buffer before the next draw pass. Previously the
-         // fullscreen branch waited for a later component-resize tick, leaving
-         // gameScreenImageProducer at the old window size for one frame. UI
-         // scaling then copied regions using the new fullscreen stride and
-         // could run past the old pixel buffer (especially at 200% scale).
-         this.rebuildViewportBuffers();
+         // Resizable fullscreen needs buffers matching the desktop dimensions.
+         // Fixed fullscreen deliberately keeps the normal fixed-size buffers.
+         if (!fixedFullscreen) {
+            this.rebuildViewportBuffers();
+         }
       } else {
+         boolean restoredFixedFullscreen = super.fullscreenActive && screenMode == 0 && newScreenMode == 0;
          if (super.fullscreenActive) {
             super.restoreWindowedMode();
             if (ClientWindow.getInstance() != null) {
                gameFrame = ClientWindow.getInstance().frame;
                ClientWindow.menuBar.remove(ClientWindow.windowedModeButton);
             }
+         }
+
+         if (restoredFixedFullscreen) {
+            clientWidth = fixedWidth;
+            clientHeight = fixedHeight;
+            cameraZoom = 600;
+            this.rebuildViewportBuffers();
+            this.updateClientWindowSize(true);
+            return;
          }
 
          int windowWidthPadding = clientWidthOrGetWidth;
