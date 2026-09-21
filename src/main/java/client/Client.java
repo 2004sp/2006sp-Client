@@ -18768,6 +18768,12 @@ public class Client extends GameShell {
                this.inPlayerOwnedHouse = true;
             }
 
+            // Preserve the exact frame currently visible on the GPU surface
+            // before region rebuilding begins. AWT can repaint or recreate the
+            // heavyweight canvas while the game thread is loading terrain; the
+            // retained front-buffer snapshot prevents those repaints from
+            // exposing a cleared/black backbuffer.
+            GpuRasterizer3D.retainPresentedFrameForRegionTransition();
             this.loadingStage = 1;
             this.lastRegionLoadActivityMillis = System.currentTimeMillis();
             this.gameScreenImageProducer.initDrawingArea();
