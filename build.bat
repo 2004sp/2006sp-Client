@@ -13,6 +13,9 @@ set "CLEAN_MANIFEST=%OUTPUT_DIR%\clean-manifest.mf"
 set "OUTPUT_JAR=%OUTPUT_DIR%\Client.jar"
 set "BASE_JAR=lib\client-runtime.jar"
 set "THEME_JAR=lib\theme.jar"
+set "LWJGL_JAR=lib\lwjgl-2.9.3.jar"
+set "LWJGL_NATIVES_JAR=lib\lwjgl-platform-2.9.3-natives-windows.jar"
+set "LWJGL_NATIVES_DIR=runtime\natives"
 set "SOURCE_LIST=%OUTPUT_DIR%\override-sources.txt"
 set "FAILED_LIST=%OUTPUT_DIR%\compile-failures.txt"
 set "COMPILE_LOG=%OUTPUT_DIR%\compile-errors.txt"
@@ -49,6 +52,38 @@ if not exist "%SOURCE_DIR%" (
     echo ERROR: Source directory is missing: %SOURCE_DIR%
     pause
     exit /b 1
+)
+
+if not exist "%LWJGL_JAR%" (
+    call :download_file "%LWJGL_JAR%" "https://repo1.maven.org/maven2/org/lwjgl/lwjgl/lwjgl/2.9.3/lwjgl-2.9.3.jar"
+    if errorlevel 1 (
+        echo ERROR: Could not download LWJGL 2.9.3.
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "%LWJGL_NATIVES_JAR%" (
+    call :download_file "%LWJGL_NATIVES_JAR%" "https://repo1.maven.org/maven2/org/lwjgl/lwjgl/lwjgl-platform/2.9.3/lwjgl-platform-2.9.3-natives-windows.jar"
+    if errorlevel 1 (
+        echo ERROR: Could not download LWJGL Windows natives.
+        pause
+        exit /b 1
+    )
+)
+
+if not exist "%LWJGL_NATIVES_DIR%" mkdir "%LWJGL_NATIVES_DIR%"
+if not exist "%LWJGL_NATIVES_DIR%\lwjgl.dll" if not exist "%LWJGL_NATIVES_DIR%\lwjgl64.dll" (
+    echo Extracting LWJGL native libraries...
+    pushd "%LWJGL_NATIVES_DIR%"
+    jar xf "..\..\%LWJGL_NATIVES_JAR%"
+    set "NATIVE_EXTRACT_ERROR=!ERRORLEVEL!"
+    popd
+    if not "!NATIVE_EXTRACT_ERROR!"=="0" (
+        echo ERROR: Could not extract LWJGL native libraries.
+        pause
+        exit /b 1
+    )
 )
 
 if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
@@ -106,7 +141,7 @@ for /f "usebackq delims=" %%F in ("%SOURCE_LIST%") do (
 if exist "%TEMP_CLASSES%" rmdir /s /q "%TEMP_CLASSES%"
 mkdir "%TEMP_CLASSES%"
 echo Attempting grouped source compilation...
-javac -encoding UTF-8 -source 8 -target 8 -Xmaxerrs 2000 -implicit:none -cp "%THEME_JAR%" -d "%TEMP_CLASSES%" @"%GROUP_SOURCE_LIST%" > "%GROUP_LOG%" 2>&1
+javac -encoding UTF-8 -source 8 -target 8 -Xmaxerrs 2000 -implicit:none -cp "%THEME_JAR%;%LWJGL_JAR%" -d "%TEMP_CLASSES%" @"%GROUP_SOURCE_LIST%" > "%GROUP_LOG%" 2>&1
 if not errorlevel 1 (
     xcopy /e /i /y /q "%TEMP_CLASSES%\*" "%CLASSES_DIR%\" >nul 2>nul
     xcopy /e /i /y /q "%TEMP_CLASSES%\*" "%SEMANTIC_CLASSES%\" >nul 2>nul
@@ -137,7 +172,7 @@ for /f "usebackq delims=" %%F in ("%PENDING_LIST%") do (
         mkdir "%TEMP_CLASSES%"
 
         rem Prefer already recovered semantic classes over the preserved runtime JAR.
-        javac -encoding UTF-8 -source 8 -target 8 -Xmaxerrs 2000 -implicit:none -sourcepath "%EMPTY_SOURCEPATH%" -cp "%CLASSES_DIR%;%SEMANTIC_CLASSES%;%THEME_JAR%" -d "%TEMP_CLASSES%" "%%F" > "%LAST_COMPILE_LOG%" 2>&1
+        javac -encoding UTF-8 -source 8 -target 8 -Xmaxerrs 2000 -implicit:none -sourcepath "%EMPTY_SOURCEPATH%" -cp "%CLASSES_DIR%;%SEMANTIC_CLASSES%;%THEME_JAR%;%LWJGL_JAR%" -d "%TEMP_CLASSES%" "%%F" > "%LAST_COMPILE_LOG%" 2>&1
         if errorlevel 1 (
             echo %%F>>"%NEXT_PENDING_LIST%"
             >>"%PASS_LOG%" echo ============================================================
@@ -176,7 +211,7 @@ if !PASS_SUCCESS! GTR 0 (
     if exist "%TEMP_CLASSES%" rmdir /s /q "%TEMP_CLASSES%"
     mkdir "%TEMP_CLASSES%"
     echo Retrying !GROUP_COUNT! unresolved files as a group...
-    javac -encoding UTF-8 -source 8 -target 8 -Xmaxerrs 2000 -implicit:none -cp "%CLASSES_DIR%;%SEMANTIC_CLASSES%;%THEME_JAR%" -d "%TEMP_CLASSES%" @"%GROUP_SOURCE_LIST%" > "%GROUP_LOG%" 2>&1
+    javac -encoding UTF-8 -source 8 -target 8 -Xmaxerrs 2000 -implicit:none -cp "%CLASSES_DIR%;%SEMANTIC_CLASSES%;%THEME_JAR%;%LWJGL_JAR%" -d "%TEMP_CLASSES%" @"%GROUP_SOURCE_LIST%" > "%GROUP_LOG%" 2>&1
     if not errorlevel 1 (
         xcopy /e /i /y /q "%TEMP_CLASSES%\*" "%CLASSES_DIR%\" >nul 2>nul
     xcopy /e /i /y /q "%TEMP_CLASSES%\*" "%SEMANTIC_CLASSES%\" >nul 2>nul
@@ -215,11 +250,20 @@ if errorlevel 1 (
     exit /b 1
 )
 popd
+copy /y "%PACKAGE_DIR%\META-INF\MANIFEST.MF" "%CLEAN_MANIFEST%" >nul
+pushd "%PACKAGE_DIR%"
+jar xf "..\..\%LWJGL_JAR%"
+if errorlevel 1 (
+    popd
+    echo ERROR: Failed to package LWJGL classes into %OUTPUT_JAR%.
+    pause
+    exit /b 1
+)
+popd
 if exist "%PACKAGE_DIR%\client" rmdir /s /q "%PACKAGE_DIR%\client"
 if exist "%PACKAGE_DIR%\a" rmdir /s /q "%PACKAGE_DIR%\a"
 if exist "%PACKAGE_DIR%\b" rmdir /s /q "%PACKAGE_DIR%\b"
 xcopy /e /i /y /q "%CLASSES_DIR%\*" "%PACKAGE_DIR%\" >nul 2>nul
-copy /y "%PACKAGE_DIR%\META-INF\MANIFEST.MF" "%CLEAN_MANIFEST%" >nul
 if exist "%PACKAGE_DIR%\META-INF" rmdir /s /q "%PACKAGE_DIR%\META-INF"
 if exist "%OUTPUT_JAR%" del /q "%OUTPUT_JAR%"
 jar cfm "%OUTPUT_JAR%" "%CLEAN_MANIFEST%" -C "%PACKAGE_DIR%" .
@@ -251,4 +295,14 @@ if %FAILED% GTR 0 (
 echo.
 echo Every Java source under %SOURCE_DIR% was included in this build.
 pause
+exit /b 0
+
+:download_file
+echo Downloading %~nx1...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('%~2', '%~f1')"
+if errorlevel 1 (
+    if exist "%~1" del /q "%~1"
+    exit /b 1
+)
+if not exist "%~1" exit /b 1
 exit /b 0

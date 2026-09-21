@@ -10,6 +10,7 @@ public final class ClientSettings {
    private static ClientSettings[] cachedProfiles = new ClientSettings[]{
       new ClientSettings("XP_DROPS", 3),
       new ClientSettings("SMOOTH_RENDER", 1),
+      new ClientSettings("GPU_RENDERING", 1),
       new ClientSettings("SHOW_TITLEBAR", 1),
       new ClientSettings("UI_SCALE_PERCENT", 1),
       new ClientSettings("WILDY_LVL_RANGE", 2),
@@ -184,6 +185,8 @@ public final class ClientSettings {
                         Rasterizer3D.smoothShading = true;
                      }
                   }
+               } else if (sourceText.equals("GPU_RENDERING")) {
+                  GpuRasterizer3D.setEnabled(Integer.parseInt(newText[0]) == 1);
                } else if (sourceText.equals("FOG")) {
                   Client.fogEnabled = Integer.parseInt(newText[0]) == 1;
                } else if (sourceText.equals("ATTACK_OPTION")) {
@@ -489,6 +492,12 @@ public final class ClientSettings {
             writeLine(bufferedWriter, "//0 = disable, 1 = enable, 2 = adds smoother shadows on ground/water etc.\t//smoother rendering");
             writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "[SMOOTH_RENDER];1");
+            writeLine(bufferedWriter, "");
+            writeLine(bufferedWriter, "//GPU_RENDERING - Parameters for customization:");
+            writeLine(bufferedWriter, "//1 = GPU triangle rasterizer, 0 = original software rasterizer");
+            writeLine(bufferedWriter, "//GPU mode automatically falls back to software if OpenGL cannot initialize.");
+            writeLine(bufferedWriter, "");
+            writeLine(bufferedWriter, "[GPU_RENDERING];1");
             writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "//FOG - Parameters for customization:");
             writeLine(bufferedWriter, "//1 = enable, 0 = disable\t//adds fog");

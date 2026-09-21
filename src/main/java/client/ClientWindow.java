@@ -17,6 +17,7 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import javax.imageio.ImageIO;
+import javax.swing.ButtonGroup;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
@@ -24,6 +25,7 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JRootPane;
 import javax.swing.JPopupMenu;
 import javax.swing.UIManager;
@@ -33,6 +35,9 @@ public final class ClientWindow extends Client implements ActionListener {
    public static JMenu gameframeMenu;
    private static JMenu hiscoresMenu;
    private static JMenu lanServerMenu;
+   private static JMenu rendererMenu;
+   private static JRadioButtonMenuItem gpuRendererMenuItem;
+   private static JRadioButtonMenuItem softwareRendererMenuItem;
    public static JMenu fullscreenMenu;
    private static JPanel clientPanel;
    public static JButton windowedModeButton;
@@ -91,6 +96,18 @@ public final class ClientWindow extends Client implements ActionListener {
             fullscreenMenu = new JMenu("Fullscreen");
             menuBar = new JMenuBar();
             (lanServerMenu = new JMenu("LAN Server List")).setEnabled(false);
+            rendererMenu = new JMenu("Renderer");
+            gpuRendererMenuItem = new JRadioButtonMenuItem("GPU Rendering");
+            softwareRendererMenuItem = new JRadioButtonMenuItem("Software Rendering");
+            ButtonGroup rendererGroup = new ButtonGroup();
+            rendererGroup.add(gpuRendererMenuItem);
+            rendererGroup.add(softwareRendererMenuItem);
+            gpuRendererMenuItem.setSelected(GpuRasterizer3D.isRequested());
+            softwareRendererMenuItem.setSelected(!GpuRasterizer3D.isRequested());
+            gpuRendererMenuItem.addActionListener(clientWindow);
+            softwareRendererMenuItem.addActionListener(clientWindow);
+            rendererMenu.add(gpuRendererMenuItem);
+            rendererMenu.add(softwareRendererMenuItem);
             gameframeMenu = new JMenu("Gameframe");
             JMenuItem jMenuItem = new JMenuItem("317 Gameframe");
             JMenuItem jMenuItem7 = new JMenuItem("459 Gameframe");
@@ -133,6 +150,7 @@ public final class ClientWindow extends Client implements ActionListener {
             menuBar.add(hiscoresMenu);
             menuBar.add(jButton4);
             menuBar.add(lanServerMenu);
+            menuBar.add(rendererMenu);
             menuBar.add(gameframeMenu);
             if (!showTitlebar) {
                menuBar.add(jButton3);
@@ -410,6 +428,16 @@ public final class ClientWindow extends Client implements ActionListener {
                WorldMapViewer.showWorldMap();
             }
 
+            if (text.equals("GPU Rendering")) {
+               GpuRasterizer3D.setEnabled(true);
+               gpuRendererMenuItem.setSelected(true);
+            }
+
+            if (text.equals("Software Rendering")) {
+               GpuRasterizer3D.setEnabled(false);
+               softwareRendererMenuItem.setSelected(true);
+            }
+
             captureScreenshot:
             if (text.equalsIgnoreCase("Screenshot")) {
                boolean flag = true;
@@ -471,6 +499,10 @@ public final class ClientWindow extends Client implements ActionListener {
 
             if (text.equalsIgnoreCase("Reload Userconfig")) {
                Client.loadUserConfig();
+               if (gpuRendererMenuItem != null && softwareRendererMenuItem != null) {
+                  gpuRendererMenuItem.setSelected(GpuRasterizer3D.isRequested());
+                  softwareRendererMenuItem.setSelected(!GpuRasterizer3D.isRequested());
+               }
             }
 
             if (text.equalsIgnoreCase("Hiscores (normal)")) {

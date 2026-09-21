@@ -80,6 +80,10 @@ final class Rasterizer3D extends Rasterizer2D {
    }
 
    public static void drawDepthTriangle(int y0, int y1, int y2, int x0, int x1, int x2, float depth0, float depth1, float depth2) {
+      if (GpuRasterizer3D.drawDepthTriangle(y0, y1, y2, x0, x1, x2, depth0, depth1, depth2)) {
+         return;
+      }
+
       int ySlope10 = 0;
       if (x1 != x0) {
          ySlope10 = (y1 - y0 << 16) / (x1 - x0);
@@ -2483,6 +2487,7 @@ final class Rasterizer3D extends Rasterizer2D {
       return adjustBrightnessResult;
    }
    public static void releaseTexture(int texturePixelIndex) {
+      GpuRasterizer3D.invalidateTexture(texturePixelIndex);
       if (texturePixels[texturePixelIndex] != null) {
          texturePixelPool[texturePoolSize++] = texturePixels[texturePixelIndex];
          texturePixels[texturePixelIndex] = null;
@@ -2559,6 +2564,11 @@ final class Rasterizer3D extends Rasterizer2D {
 
       return texturePixelOrTexturePixelPool;
    }
+
+   static int[] getGpuTexturePixels(int textureId) {
+      return getTexturePixels(textureId);
+   }
+
    public static void setBrightness(double calculationArgument) {
       calculationArgument += Math.random() * 0.03 - 0.015;
       int scalar = 0;
@@ -2667,6 +2677,10 @@ final class Rasterizer3D extends Rasterizer2D {
    public static void drawShadedTriangle(
       boolean useFallback, int y0, int y1, int y2, int x0, int x1, int x2, int color0, int color1, int color2, float depth0, float depth1, float depth2
    ) {
+      if (GpuRasterizer3D.drawShadedTriangle(useFallback, y0, y1, y2, x0, x1, x2, color0, color1, color2, depth0, depth1, depth2)) {
+         return;
+      }
+
       if (Client.smoothRendering) {
          if (smoothShading && !useFallback) {
             drawSmoothShadedTriangle(y0, y1, y2, x0, x1, x2, color0, color1, color2, depth0, depth1, depth2);
@@ -3349,6 +3363,10 @@ final class Rasterizer3D extends Rasterizer2D {
       }
    }
    public static void drawFlatTriangle(int y0, int y1, int y2, int x0, int x1, int x2, int rgb, float depth0, float depth1, float depth2) {
+      if (GpuRasterizer3D.drawFlatTriangle(y0, y1, y2, x0, x1, x2, rgb, depth0, depth1, depth2)) {
+         return;
+      }
+
       if (Client.smoothRendering) {
          if (!(depth0 < 0.0F) && !(depth1 < 0.0F) && !(depth2 < 0.0F)) {
             int xSlope10 = 0;
@@ -4154,6 +4172,34 @@ final class Rasterizer3D extends Rasterizer2D {
       float depth1,
       float depth2
    ) {
+      if (GpuRasterizer3D.drawTexturedTriangle(
+         useFallback,
+         y0,
+         y1,
+         y2,
+         x0,
+         x1,
+         x2,
+         shade0,
+         shade1,
+         shade2,
+         textureX0,
+         textureX1,
+         textureX2,
+         textureY0,
+         textureY1,
+         textureY2,
+         textureZ0,
+         textureZ1,
+         textureZ2,
+         textureId,
+         depth0,
+         depth1,
+         depth2
+      )) {
+         return;
+      }
+
       if (Client.smoothRendering) {
          if (smoothShading && renderModeFlag && !useFallback) {
             drawSmoothTexturedTriangle(

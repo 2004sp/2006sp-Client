@@ -17,7 +17,7 @@ pushd "%~dp0runtime"
 echo Preparing lossless tiled control-panel map...
 java -Xms128m -Xmx768m -cp "..\build\Client.jar" worldmap.WorldMapTileExporter ".\cache"
 if errorlevel 1 echo WARNING: Control-panel map export failed; the client will still start.
-java -Xms256m -Xmx1024m -jar "..\build\Client.jar"
+java -Xms256m -Xmx1024m -Djava.library.path="%~dp0runtime\natives" -jar "..\build\Client.jar"
 set "EXIT_CODE=%ERRORLEVEL%"
 popd
 

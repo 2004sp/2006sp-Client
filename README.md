@@ -14,11 +14,14 @@ running on the same computer. The normal game port is `43594`.
 - `java`, `javac`, and `jar` available on `PATH`
 - The matching `2006sp-Server` project if you want to play locally
 
-No dependency download or package manager is required. The repository already
-contains the required files:
+The normal client/runtime files are kept in the repository. The first GPU-enabled
+build also downloads LWJGL 2.9.3 and its Windows native library bundle directly
+from Maven Central; later builds reuse the downloaded copies.
 
 - `lib/theme.jar` - compile-time theme library
 - `lib/client-runtime.jar` - launcher and packaging base
+- `lib/lwjgl-2.9.3.jar` - downloaded OpenGL binding used by the GPU rasterizer
+- `runtime/natives/` - extracted LWJGL Windows native libraries
 - `runtime/cache/` - game cache and runtime assets
 
 JDK 8 is recommended because the source uses the legacy `sun.audio.AudioPlayer`
@@ -61,18 +64,33 @@ before launching `build/Client.jar`.
 If the JAR is missing, run `build.bat` first. If the client cannot connect,
 confirm that the server is online and listening on port `43594`.
 
+## Renderer modes
+
+The client now defaults to **GPU Rendering**. The `Renderer` menu can switch at
+runtime between the OpenGL triangle rasterizer and the original software
+`Rasterizer3D` implementation. The same preference is available as
+`[GPU_RENDERING];1` (GPU) or `[GPU_RENDERING];0` (software) in `userConfig.cfg`.
+If OpenGL or its native library cannot initialize, triangle calls automatically
+fall back to the software rasterizer for compatibility.
+
+The GPU path keeps the existing scene/model callers and moves flat, Gouraud,
+textured, and depth triangle coverage/interpolation into an off-screen OpenGL
+buffer. Only the affected triangle rectangle is read back into the legacy pixel
+and depth buffers, so the existing UI, fog, screenshots, and 2D renderer continue
+to use the same buffers.
+
 ## Configuration
 
 Client preferences are stored in `runtime/userConfig.cfg`. This includes display
-options, loot highlighting, XP drops, key bindings, audio, and optional saved
-login details. Close the client before changing settings marked that way in the
-file.
+options, renderer selection, loot highlighting, XP drops, key bindings, audio,
+and optional saved login details. Close the client before changing settings
+marked that way in the file.
 
 ## Project layout
 
 ```text
 src/main/java/       Client, renderer, networking, audio, UI, and world-map source
-lib/                 Bundled Java dependencies and packaging base
+lib/                 Bundled dependencies plus downloaded LWJGL jar
 runtime/cache/       Required game cache and assets
 runtime/userConfig.cfg
 build.bat            Compiles and packages the client
