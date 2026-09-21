@@ -970,8 +970,8 @@ public class Client extends GameShell {
             }
 
             if (loggedIn) {
-               int minimumContentWidth = newScreenMode != 0 ? minimumResizableWidth : fixedWidth;
-               int minimumContentHeight = newScreenMode != 0 ? minimumResizableHeight : fixedHeight;
+               int minimumContentWidth = newScreenMode != 0 ? minimumWindowWidth : fixedWidth;
+               int minimumContentHeight = newScreenMode != 0 ? minimumWindowHeight : fixedHeight;
                gameFrame.setMinimumSize(new Dimension(minimumContentWidth + windowWidthPadding, minimumContentHeight + byteCode));
                gameFrame.setResizable(true);
             }
