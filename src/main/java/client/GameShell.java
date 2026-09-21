@@ -251,6 +251,10 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
       return requested;
    }
 
+   final void requestSoftwareUiRefresh() {
+      this.softwareUiRefreshRequested = true;
+   }
+
    void processCameraFrame(double elapsedSeconds) {
    }
 
