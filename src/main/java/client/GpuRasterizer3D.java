@@ -388,6 +388,45 @@ final class GpuRasterizer3D {
       return queued;
    }
 
+   static boolean presentSoftwareFrame(
+      int[] pixels,
+      int frameWidth,
+      int frameHeight,
+      int targetX,
+      int targetY,
+      int targetWidth,
+      int targetHeight
+   ) {
+      if (!requested
+         || presentationCanvas == null
+         || presentationCanvas.hasFailed()
+         || !presentationCanvas.isContextReady()) {
+         return false;
+      }
+
+      directFrameReady = false;
+      boolean presented = presentationCanvas.presentSoftwareFrame(
+         pixels,
+         frameWidth,
+         frameHeight,
+         targetX,
+         targetY,
+         targetWidth,
+         targetHeight
+      );
+      if (!presented && !presentationCanvas.hasFailed()) {
+         presentationCanvas.requestInitialization();
+      }
+      return presented;
+   }
+
+   static boolean canRetainPresentedFrame() {
+      return requested
+         && presentationCanvas != null
+         && !presentationCanvas.hasFailed()
+         && presentationCanvas.hasPresentedFrame();
+   }
+
    private static boolean canUseDirectPresentation() {
       return presentationCanvas != null && presentationCanvas.isContextReady();
    }
