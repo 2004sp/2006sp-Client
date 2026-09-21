@@ -1163,6 +1163,13 @@ public class Client extends GameShell {
       return this.getPresentationBounds(clientWidth, clientHeight);
    }
 
+   private Rectangle getCurrentPresentationBounds() {
+      if (screenMode == 0) {
+         return this.getFixedPresentationBounds();
+      }
+      return new Rectangle(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
+   }
+
    public static long translatePresentationInputCoordinates(int x, int y) {
       Client client = clientInstance;
       // Resizable gameframes render at the component's native size. Keeping
@@ -1198,12 +1205,7 @@ public class Client extends GameShell {
    }
 
    private void drawFrameBufferToWindow() {
-      Rectangle presentation;
-      if (screenMode == 0) {
-         presentation = this.getFixedPresentationBounds();
-      } else {
-         presentation = new Rectangle(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
-      }
+      Rectangle presentation = this.getCurrentPresentationBounds();
 
       int logicalWidth = this.frameBuffer.getWidth();
       int logicalHeight = this.frameBuffer.getHeight();
@@ -14156,14 +14158,37 @@ public class Client extends GameShell {
             Model.mouseX = client.mouseX - 4;
             Model.mouseY = client.mouseY - 4;
             Rasterizer2D.clear();
-            GpuRasterizer3D.beginFrame(fogEnabled, Math.abs(client.cameraPositionZ));
-            GpuRasterizer3D.prepareDirectUiOverlayBuffer();
-            client.scene.renderScene(client.cameraPositionX, client.xCameraPos, client.yCameraPos, client.cameraPositionZ, localGetCameraPlane, client.zCameraPos);
+            Rectangle gpuPresentation = client.getCurrentPresentationBounds();
+            final int gpuScenePlane = localGetCameraPlane;
+            boolean gpuFrameCompleted = GpuRasterizer3D.renderSceneFrame(
+               client.frameBuffer.getWidth(),
+               client.frameBuffer.getHeight(),
+               gpuPresentation.x,
+               gpuPresentation.y,
+               gpuPresentation.width,
+               gpuPresentation.height,
+               screenMode == 0 ? 4 : 0,
+               screenMode == 0 ? 4 : 0,
+               fogEnabled,
+               Math.abs(client.cameraPositionZ),
+               new Runnable() {
+                  @Override
+                  public void run() {
+                     client.scene.renderScene(
+                        client.cameraPositionX,
+                        client.xCameraPos,
+                        client.yCameraPos,
+                        client.cameraPositionZ,
+                        gpuScenePlane,
+                        client.zCameraPos
+                     );
 
-            // Particles now use the GPU scene depth buffer while the frame is
-            // still open. This removes the full-frame depth readback entirely.
-            client.updateParticles();
-            boolean gpuFrameCompleted = GpuRasterizer3D.endFrame();
+                     // Particles share the same canvas depth buffer as the
+                     // scene while direct GPU presentation is active.
+                     client.updateParticles();
+                  }
+               }
+            );
 
             client.scene.clearInteractiveObjectCache();
             if (!gpuFrameCompleted) {

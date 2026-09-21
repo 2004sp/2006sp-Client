@@ -3,6 +3,7 @@ package client;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
+import java.awt.EventQueue;
 import java.util.ArrayList;
 import java.util.Arrays;
 import org.lwjgl.BufferUtils;
@@ -18,9 +19,9 @@ import org.lwjgl.opengl.PixelFormat;
 /**
  * AWT-hosted OpenGL presentation surface.
  *
- * The scene texture is shared with GpuRasterizer3D's Pbuffer, so the 3D frame
- * never has to cross back to Java memory in the normal GPU path. The existing
- * software framebuffer is uploaded as a UI texture and composited over it.
+ * The 3D scene is rendered directly into this canvas' backbuffer. The existing
+ * software framebuffer is uploaded as a UI texture and composited over that
+ * backbuffer before the canvas swaps.
  *
  * The old client does not maintain per-pixel alpha for its software UI. During
  * direct presentation the untouched 3D viewport is filled with a dedicated
@@ -52,8 +53,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private int uniformSceneRect;
    private int uniformUseSceneKey;
 
-   private FrameState pendingFrame;
    private int paintingBuffer = -1;
+   private volatile boolean sceneBackbufferPending;
+   private boolean initialClearNeeded = true;
 
    GpuPresentationCanvas(ClientWindow owner) throws LWJGLException {
       super(new PixelFormat().withAlphaBits(8).withDepthBits(24));
@@ -79,6 +81,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    @Override
    public void removeNotify() {
       this.contextReady = false;
+      this.sceneBackbufferPending = false;
+      resetContextState();
+      GpuRasterizer3D.presentationContextLost(this);
       super.removeNotify();
    }
 
@@ -111,8 +116,50 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.owner.setGpuPresentationSurface(false);
    }
 
-   boolean queueFrame(
-      int sceneTexture,
+   boolean runInContext(final Runnable action) {
+      if (action == null || !isContextReady()) {
+         return false;
+      }
+
+      final Throwable[] failure = new Throwable[1];
+      Runnable contextAction = new Runnable() {
+         @Override
+         public void run() {
+            try {
+               makeCurrent();
+               try {
+                  action.run();
+               } finally {
+                  releaseContext();
+               }
+            } catch (Throwable throwable) {
+               failure[0] = throwable;
+            }
+         }
+      };
+
+      try {
+         if (EventQueue.isDispatchThread()) {
+            contextAction.run();
+         } else {
+            EventQueue.invokeAndWait(contextAction);
+         }
+      } catch (Throwable throwable) {
+         failure[0] = throwable;
+      }
+
+      if (failure[0] != null) {
+         markFailed(failure[0]);
+         return false;
+      }
+      return true;
+   }
+
+   void markSceneBackbufferPending() {
+      this.sceneBackbufferPending = true;
+   }
+
+   boolean presentFrame(
       int[] uiPixels,
       int uiWidth,
       int uiHeight,
@@ -127,7 +174,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    ) {
       long pixelCount = (long)uiWidth * (long)uiHeight;
       if (!isContextReady()
-         || sceneTexture == 0
          || uiPixels == null
          || uiWidth <= 0
          || uiHeight <= 0
@@ -136,15 +182,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          return false;
       }
 
-      int count = (int)pixelCount;
+      final FrameState frame;
       synchronized (this) {
-         int bufferIndex;
-         if (this.pendingFrame != null && this.pendingFrame.bufferIndex != this.paintingBuffer) {
-            bufferIndex = this.pendingFrame.bufferIndex;
-         } else {
-            bufferIndex = this.paintingBuffer == 0 ? 1 : 0;
-         }
-
+         int count = (int)pixelCount;
+         int bufferIndex = this.paintingBuffer == 0 ? 1 : 0;
          int tileColumns = (uiWidth + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
          int tileRows = (uiHeight + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
          boolean[] dirtyTiles = new boolean[tileColumns * tileRows];
@@ -160,19 +201,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             Arrays.fill(dirtyTiles, true);
          } else {
             detectDirtyTiles(uiPixels, uiWidth, uiHeight, tileColumns, dirtyTiles);
-
-            // If the EDT has not consumed the previous queued frame yet, its
-            // dirty tiles must remain dirty. The CPU shadow already represents
-            // that queued state, so restage those tiles from the newest frame
-            // instead of losing an update when pendingFrame is replaced.
-            if (this.pendingFrame != null
-               && this.pendingFrame.uiWidth == uiWidth
-               && this.pendingFrame.uiHeight == uiHeight
-               && this.pendingFrame.dirtyTiles.length == dirtyTiles.length) {
-               for (int i = 0; i < dirtyTiles.length; i++) {
-                  dirtyTiles[i] |= this.pendingFrame.dirtyTiles[i];
-               }
-            }
          }
 
          DirtyRect[] dirtyRects = buildDirtyRectangles(
@@ -209,9 +237,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             byteBuffer.limit(uploadByteCount);
          }
 
-         this.pendingFrame = new FrameState(
+         frame = new FrameState(
             bufferIndex,
-            sceneTexture,
             uiWidth,
             uiHeight,
             targetX,
@@ -226,11 +253,31 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             dirtyRects,
             uploadByteCount
          );
+         this.paintingBuffer = bufferIndex;
       }
 
       this.owner.setGpuPresentationSurface(true);
-      this.repaint();
-      return true;
+      boolean presented = runInContext(new Runnable() {
+         @Override
+         public void run() {
+            initializeGlResources();
+            uploadOverlay(frame);
+            renderFrame(frame);
+            try {
+               swapBuffers();
+            } catch (LWJGLException failure) {
+               throw new RuntimeException(failure);
+            }
+         }
+      });
+
+      synchronized (this) {
+         this.paintingBuffer = -1;
+      }
+      if (presented) {
+         this.sceneBackbufferPending = false;
+      }
+      return presented;
    }
 
    private void detectDirtyTiles(
@@ -358,40 +405,21 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    @Override
    protected void paintGL() {
-      if (failed) {
+      if (failed || this.sceneBackbufferPending || !this.initialClearNeeded) {
          return;
       }
 
-      FrameState frame;
-      synchronized (this) {
-         frame = this.pendingFrame;
-         if (frame == null) {
-            GL20.glUseProgram(0);
-            GL11.glViewport(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
-            GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
-            try {
-               swapBuffers();
-            } catch (LWJGLException failure) {
-               markFailed(failure);
-            }
-            return;
-         }
-         this.pendingFrame = null;
-         this.paintingBuffer = frame.bufferIndex;
-      }
-
+      this.initialClearNeeded = false;
+      GL20.glUseProgram(0);
+      GL11.glColorMask(true, true, true, true);
+      GL11.glDisable(GL11.GL_SCISSOR_TEST);
+      GL11.glViewport(0, 0, Math.max(1, this.getWidth()), Math.max(1, this.getHeight()));
+      GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+      GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
       try {
-         initializeGlResources();
-         uploadOverlay(frame);
-         renderFrame(frame);
          swapBuffers();
-      } catch (Throwable failure) {
+      } catch (LWJGLException failure) {
          markFailed(failure);
-      } finally {
-         synchronized (this) {
-            this.paintingBuffer = -1;
-         }
       }
    }
 
@@ -572,37 +600,21 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       int canvasHeight = Math.max(1, this.getHeight());
 
       GL20.glUseProgram(0);
+      GL11.glColorMask(true, true, true, true);
       GL11.glDisable(GL11.GL_DEPTH_TEST);
       GL11.glDisable(GL11.GL_ALPHA_TEST);
       GL11.glDisable(GL11.GL_BLEND);
-      GL11.glDisable(GL11.GL_SCISSOR_TEST);
-      GL11.glViewport(0, 0, canvasWidth, canvasHeight);
-      GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
-      GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+      clearOutsideTarget(frame, canvasWidth, canvasHeight);
 
       int viewportY = canvasHeight - frame.targetY - frame.targetHeight;
+      GL11.glDisable(GL11.GL_SCISSOR_TEST);
       GL11.glViewport(frame.targetX, viewportY, frame.targetWidth, frame.targetHeight);
       GL11.glMatrixMode(GL11.GL_PROJECTION);
       GL11.glLoadIdentity();
       GL11.glOrtho(0.0D, frame.uiWidth, frame.uiHeight, 0.0D, -1.0D, 1.0D);
       GL11.glMatrixMode(GL11.GL_MODELVIEW);
       GL11.glLoadIdentity();
-
-      // Scene texture is copied from an OpenGL framebuffer, so its vertical
-      // orientation is opposite the Java top-down UI texture.
       GL11.glEnable(GL11.GL_TEXTURE_2D);
-      GL11.glBindTexture(GL11.GL_TEXTURE_2D, frame.sceneTexture);
-      GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-      GL11.glBegin(GL11.GL_QUADS);
-      GL11.glTexCoord2f(0.0F, 1.0F);
-      GL11.glVertex2f(frame.sceneX, frame.sceneY);
-      GL11.glTexCoord2f(1.0F, 1.0F);
-      GL11.glVertex2f(frame.sceneX + frame.sceneWidth, frame.sceneY);
-      GL11.glTexCoord2f(1.0F, 0.0F);
-      GL11.glVertex2f(frame.sceneX + frame.sceneWidth, frame.sceneY + frame.sceneHeight);
-      GL11.glTexCoord2f(0.0F, 0.0F);
-      GL11.glVertex2f(frame.sceneX, frame.sceneY + frame.sceneHeight);
-      GL11.glEnd();
 
       GL20.glUseProgram(this.overlayProgram);
       GL20.glUniform4f(
@@ -628,6 +640,29 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
       GL20.glUseProgram(0);
       GL11.glDisable(GL11.GL_TEXTURE_2D);
+   }
+
+   private static void clearOutsideTarget(FrameState frame, int canvasWidth, int canvasHeight) {
+      int left = Math.max(0, frame.targetX);
+      int bottom = Math.max(0, canvasHeight - frame.targetY - frame.targetHeight);
+      int right = Math.min(canvasWidth, frame.targetX + frame.targetWidth);
+      int top = Math.min(canvasHeight, canvasHeight - frame.targetY);
+
+      GL11.glEnable(GL11.GL_SCISSOR_TEST);
+      GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
+      clearRect(0, 0, left, canvasHeight);
+      clearRect(right, 0, canvasWidth - right, canvasHeight);
+      clearRect(left, 0, Math.max(0, right - left), bottom);
+      clearRect(left, top, Math.max(0, right - left), canvasHeight - top);
+      GL11.glDisable(GL11.GL_SCISSOR_TEST);
+   }
+
+   private static void clearRect(int x, int y, int width, int height) {
+      if (width <= 0 || height <= 0) {
+         return;
+      }
+      GL11.glScissor(x, y, width, height);
+      GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
    }
 
    private static int createOverlayProgram() {
@@ -683,9 +718,31 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private void markFailed(Throwable failure) {
       this.failed = true;
       this.contextReady = false;
+      this.sceneBackbufferPending = false;
+      resetContextState();
+      GpuRasterizer3D.presentationContextLost(this);
       System.err.println("GPU direct presentation failed; returning to the Java framebuffer presentation path.");
       failure.printStackTrace();
       this.owner.setGpuPresentationSurface(false);
+   }
+
+   private void resetContextState() {
+      this.overlayTexture = 0;
+      this.overlayWidth = 0;
+      this.overlayHeight = 0;
+      this.overlayProgram = 0;
+      this.uniformOverlay = 0;
+      this.uniformSceneRect = 0;
+      this.uniformUseSceneKey = 0;
+      Arrays.fill(this.uploadPbos, 0);
+      this.uploadPboCapacity = 0;
+      this.uploadPboWriteIndex = 0;
+      this.pboUnavailable = false;
+      this.uiShadow = null;
+      this.uiShadowWidth = 0;
+      this.uiShadowHeight = 0;
+      this.paintingBuffer = -1;
+      this.initialClearNeeded = true;
    }
 
    private static final class DirtyRect {
@@ -705,7 +762,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    private static final class FrameState {
       final int bufferIndex;
-      final int sceneTexture;
       final int uiWidth;
       final int uiHeight;
       final int targetX;
@@ -722,7 +778,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
       FrameState(
          int bufferIndex,
-         int sceneTexture,
          int uiWidth,
          int uiHeight,
          int targetX,
@@ -738,7 +793,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          int uploadByteCount
       ) {
          this.bufferIndex = bufferIndex;
-         this.sceneTexture = sceneTexture;
          this.uiWidth = uiWidth;
          this.uiHeight = uiHeight;
          this.targetX = targetX;

@@ -10,7 +10,6 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL21;
-import org.lwjgl.opengl.EXTFramebufferObject;
 import org.lwjgl.opengl.Pbuffer;
 import org.lwjgl.opengl.PixelFormat;
 
@@ -18,18 +17,16 @@ import org.lwjgl.opengl.PixelFormat;
  * GPU-backed triangle rasterizer for the legacy software client.
  *
  * Scene triangles are accumulated into a VBO-backed atlas batch and rasterized
- * by OpenGL. When the AWTGL presentation canvas is available, the scene is
- * rendered directly into a shared texture-backed FBO and never crosses back to
- * Java memory; the legacy software framebuffer is uploaded only as the UI overlay.
- * The double-PBO color path remains as a compatibility fallback, while
- * synchronous color/depth readback is reserved for mid-frame software fallback
- * and legacy bounded draws outside the main scene pass.
+ * by OpenGL. When the AWTGL presentation canvas is available, the main scene is
+ * rendered straight into that canvas' backbuffer; only the legacy software UI is
+ * uploaded before the same backbuffer is swapped. A Pbuffer remains as the GPU
+ * compatibility path when the AWT canvas is unavailable. Synchronous readback is
+ * reserved for mid-frame software fallback and legacy bounded draws.
  */
 final class GpuRasterizer3D {
    private static final float DEPTH_SCALE = 1048576.0F;
    private static final int GL_CLAMP_TO_EDGE = 33071;
    private static final int GL_BGRA = 32993;
-   private static final int GL_DEPTH_COMPONENT24 = 33190;
    private static final int TEXTURE_COUNT = 51;
    private static final int TEXTURE_GRID_SIZE = 8;
    private static final int WHITE_TEXTURE_CELL = 63;
@@ -54,15 +51,17 @@ final class GpuRasterizer3D {
    private static boolean directModeLogged;
 
    private static GpuPresentationCanvas presentationCanvas;
-   private static boolean contextSharedWithPresentation;
-   private static final int[] presentationTextures = new int[2];
-   private static int presentationTextureWriteIndex;
-   private static int directFrameTexture;
-   private static int presentationTextureWidth;
-   private static int presentationTextureHeight;
-   private static int presentationFramebuffer;
-   private static int presentationDepthRenderbuffer;
-   private static boolean presentationFramebufferUnavailable;
+   private static boolean directPresentationExecution;
+   private static boolean rendererUsesPresentationContext;
+   private static int directUiWidth;
+   private static int directUiHeight;
+   private static int directTargetX;
+   private static int directTargetY;
+   private static int directTargetWidth;
+   private static int directTargetHeight;
+   private static int directSceneX;
+   private static int directSceneY;
+   private static int directCanvasHeight;
 
    private static Pbuffer pbuffer;
    private static int bufferWidth;
@@ -134,6 +133,73 @@ final class GpuRasterizer3D {
       System.out.println("Renderer: " + (enabled ? "GPU" : "software"));
    }
 
+   static boolean renderSceneFrame(
+      final int uiWidth,
+      final int uiHeight,
+      final int targetX,
+      final int targetY,
+      final int targetWidth,
+      final int targetHeight,
+      final int sceneX,
+      final int sceneY,
+      final boolean fogEnabled,
+      final float fogDistanceOffset,
+      final Runnable renderer
+   ) {
+      if (renderer == null) {
+         return false;
+      }
+
+      if (requested
+         && !unavailable
+         && presentationCanvas != null
+         && presentationCanvas.isContextReady()) {
+         if (pbuffer != null) {
+            destroyContext();
+         }
+
+         final boolean[] rendered = new boolean[1];
+         final boolean[] completed = new boolean[1];
+         presentationCanvas.runInContext(new Runnable() {
+            @Override
+            public void run() {
+               directPresentationExecution = true;
+               directUiWidth = Math.max(1, uiWidth);
+               directUiHeight = Math.max(1, uiHeight);
+               directTargetX = targetX;
+               directTargetY = targetY;
+               directTargetWidth = Math.max(1, targetWidth);
+               directTargetHeight = Math.max(1, targetHeight);
+               directSceneX = sceneX;
+               directSceneY = sceneY;
+               directCanvasHeight = Math.max(1, presentationCanvas.getHeight());
+
+               try {
+                  beginFrame(fogEnabled, fogDistanceOffset);
+                  prepareDirectUiOverlayBuffer();
+                  rendered[0] = true;
+                  renderer.run();
+                  completed[0] = endFrame();
+               } finally {
+                  if (frameOpen) {
+                     endFrame();
+                  }
+                  directPresentationExecution = false;
+               }
+            }
+         });
+
+         if (rendered[0]) {
+            return completed[0];
+         }
+      }
+
+      beginFrame(fogEnabled, fogDistanceOffset);
+      prepareDirectUiOverlayBuffer();
+      renderer.run();
+      return endFrame();
+   }
+
    static void beginFrame() {
       beginFrame(false, 0.0F);
    }
@@ -159,20 +225,26 @@ final class GpuRasterizer3D {
       }
 
       try {
-         if (presentationCanvas != null
-            && !presentationCanvas.isContextReady()
-            && !presentationCanvas.hasFailed()) {
-            presentationCanvas.requestInitialization();
+         if (directPresentationExecution) {
+            ensurePresentationContextResources();
+            frameDirectPresentation = true;
+         } else {
+            if (presentationCanvas != null
+               && !presentationCanvas.isContextReady()
+               && !presentationCanvas.hasFailed()) {
+               presentationCanvas.requestInitialization();
+            }
+
+            ensureContext(Rasterizer2D.width, Rasterizer2D.height);
+            makeCurrent();
+            frameDirectPresentation = false;
          }
 
-         ensureContext(Rasterizer2D.width, Rasterizer2D.height);
-         makeCurrent();
          configureViewport(Rasterizer2D.width, Rasterizer2D.height);
          ensureTextureAtlas();
-         frameDirectPresentation = bindFrameRenderTarget();
 
          GL11.glEnable(GL11.GL_SCISSOR_TEST);
-         setScissor(0, 0, viewportWidth, viewportHeight);
+         setLogicalScissor(0, 0, viewportWidth, viewportHeight);
          GL11.glColorMask(true, true, true, true);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
@@ -254,15 +326,12 @@ final class GpuRasterizer3D {
    ) {
       if (!requested
          || !directFrameReady
-         || !contextSharedWithPresentation
          || presentationCanvas == null
-         || !presentationCanvas.isContextReady()
-         || directFrameTexture == 0) {
+         || !presentationCanvas.isContextReady()) {
          return false;
       }
 
-      boolean queued = presentationCanvas.queueFrame(
-         directFrameTexture,
+      boolean queued = presentationCanvas.presentFrame(
          uiPixels,
          uiWidth,
          uiHeight,
@@ -275,167 +344,34 @@ final class GpuRasterizer3D {
          sceneWidth,
          sceneHeight
       );
+      directFrameReady = false;
       if (!queued) {
-         directFrameReady = false;
          presentationCanvas.deactivate();
       }
       return queued;
    }
 
    private static boolean canUseDirectPresentation() {
-      return !presentationFramebufferUnavailable
-         && contextSharedWithPresentation
-         && presentationCanvas != null
-         && presentationCanvas.isContextReady();
+      return presentationCanvas != null && presentationCanvas.isContextReady();
    }
 
    static boolean isDirectPresentationTransitioning() {
       return requested
          && presentationCanvas != null
          && !presentationCanvas.hasFailed()
-         && (!presentationCanvas.isContextReady() || !contextSharedWithPresentation);
-   }
-
-   private static boolean bindFrameRenderTarget() {
-      if (!canUseDirectPresentation()) {
-         if (presentationFramebuffer != 0) {
-            EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
-         }
-         return false;
-      }
-
-      try {
-         ensurePresentationFramebuffer();
-         int texture = presentationTextures[presentationTextureWriteIndex];
-         EXTFramebufferObject.glBindFramebufferEXT(
-            EXTFramebufferObject.GL_FRAMEBUFFER_EXT,
-            presentationFramebuffer
-         );
-         EXTFramebufferObject.glFramebufferTexture2DEXT(
-            EXTFramebufferObject.GL_FRAMEBUFFER_EXT,
-            EXTFramebufferObject.GL_COLOR_ATTACHMENT0_EXT,
-            GL11.GL_TEXTURE_2D,
-            texture,
-            0
-         );
-
-         int status = EXTFramebufferObject.glCheckFramebufferStatusEXT(
-            EXTFramebufferObject.GL_FRAMEBUFFER_EXT
-         );
-         if (status != EXTFramebufferObject.GL_FRAMEBUFFER_COMPLETE_EXT) {
-            throw new IllegalStateException("Incomplete GPU presentation framebuffer: 0x"
-               + Integer.toHexString(status));
-         }
-         return true;
-      } catch (Throwable failure) {
-         presentationFramebufferUnavailable = true;
-         directFrameTexture = 0;
-         try {
-            if (presentationFramebuffer != 0) {
-               EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
-            }
-         } catch (Throwable ignored) {
-         }
-         System.err.println(
-            "GPU direct FBO presentation unavailable; using GPU readback fallback: "
-               + failure.getMessage()
-         );
-         return false;
-      }
-   }
-
-   private static void ensurePresentationFramebuffer() {
-      if (viewportWidth <= 0 || viewportHeight <= 0) {
-         throw new IllegalStateException("Invalid GPU presentation viewport");
-      }
-
-      boolean resized = presentationTextures[0] == 0
-         || presentationTextures[1] == 0
-         || presentationTextureWidth != viewportWidth
-         || presentationTextureHeight != viewportHeight;
-
-      if (resized) {
-         for (int texture : presentationTextures) {
-            if (texture != 0) {
-               GL11.glDeleteTextures(texture);
-            }
-         }
-
-         presentationTextures[0] = GL11.glGenTextures();
-         presentationTextures[1] = GL11.glGenTextures();
-         presentationTextureWidth = viewportWidth;
-         presentationTextureHeight = viewportHeight;
-         presentationTextureWriteIndex = 0;
-         directFrameTexture = 0;
-
-         for (int texture : presentationTextures) {
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            GL11.glTexImage2D(
-               GL11.GL_TEXTURE_2D,
-               0,
-               GL11.GL_RGBA8,
-               presentationTextureWidth,
-               presentationTextureHeight,
-               0,
-               GL11.GL_RGBA,
-               GL11.GL_UNSIGNED_BYTE,
-               (ByteBuffer)null
-            );
-         }
-      }
-
-      if (presentationFramebuffer == 0) {
-         presentationFramebuffer = EXTFramebufferObject.glGenFramebuffersEXT();
-      }
-
-      boolean allocateDepth = presentationDepthRenderbuffer == 0 || resized;
-      if (presentationDepthRenderbuffer == 0) {
-         presentationDepthRenderbuffer = EXTFramebufferObject.glGenRenderbuffersEXT();
-      }
-      if (allocateDepth) {
-         EXTFramebufferObject.glBindRenderbufferEXT(
-            EXTFramebufferObject.GL_RENDERBUFFER_EXT,
-            presentationDepthRenderbuffer
-         );
-         EXTFramebufferObject.glRenderbufferStorageEXT(
-            EXTFramebufferObject.GL_RENDERBUFFER_EXT,
-            GL_DEPTH_COMPONENT24,
-            presentationTextureWidth,
-            presentationTextureHeight
-         );
-         EXTFramebufferObject.glBindRenderbufferEXT(EXTFramebufferObject.GL_RENDERBUFFER_EXT, 0);
-      }
-
-      EXTFramebufferObject.glBindFramebufferEXT(
-         EXTFramebufferObject.GL_FRAMEBUFFER_EXT,
-         presentationFramebuffer
-      );
-      EXTFramebufferObject.glFramebufferRenderbufferEXT(
-         EXTFramebufferObject.GL_FRAMEBUFFER_EXT,
-         EXTFramebufferObject.GL_DEPTH_ATTACHMENT_EXT,
-         EXTFramebufferObject.GL_RENDERBUFFER_EXT,
-         presentationDepthRenderbuffer
-      );
+         && !presentationCanvas.isContextReady();
    }
 
    private static void finishDirectPresentationFrame() {
-      directFrameTexture = presentationTextures[presentationTextureWriteIndex];
-      presentationTextureWriteIndex ^= 1;
+      if (presentationCanvas != null) {
+         presentationCanvas.markSceneBackbufferPending();
+      }
       if (!directModeLogged) {
          directModeLogged = true;
          System.out.println(
-            "GPU presentation mode: DIRECT (scene rendered into shared FBO texture)."
+            "GPU presentation mode: DIRECT (scene rendered into AWTGLCanvas backbuffer)."
          );
       }
-
-      // The AWT presentation canvas owns a separate shared OpenGL context.
-      // Flush the producer context before publishing this texture so camera
-      // motion cannot expose an incompletely submitted FBO render on the EDT.
-      GL11.glFlush();
    }
 
    static void invalidateTexture(int textureId) {
@@ -725,6 +661,9 @@ final class GpuRasterizer3D {
    }
 
    private static boolean canDraw(float depth0, float depth1, float depth2) {
+      if (!frameOpen && rendererUsesPresentationContext) {
+         return false;
+      }
       if (frameOpen && frameSoftwareFallback) {
          return false;
       }
@@ -759,7 +698,7 @@ final class GpuRasterizer3D {
                setScissor(0, 0, 0, 0);
                return true;
             }
-            setScissor(minX, viewportHeight - maxY, maxX - minX, maxY - minY);
+            setLogicalScissor(minX, minY, maxX, maxY);
          } else {
             setScissor(bounds.minX, viewportHeight - bounds.maxY, bounds.width(), bounds.height());
             GL11.glColorMask(true, true, true, true);
@@ -775,6 +714,30 @@ final class GpuRasterizer3D {
          failCurrentFrame(failure);
          return false;
       }
+   }
+
+   private static void setLogicalScissor(int minX, int minY, int maxX, int maxY) {
+      if (!frameDirectPresentation) {
+         setScissor(minX, viewportHeight - maxY, maxX - minX, maxY - minY);
+         return;
+      }
+
+      int uiLeft = directSceneX + minX;
+      int uiTop = directSceneY + minY;
+      int uiRight = directSceneX + maxX;
+      int uiBottom = directSceneY + maxY;
+
+      int left = directTargetX + scaleFloor(uiLeft, directUiWidth, directTargetWidth);
+      int right = directTargetX + scaleCeil(uiRight, directUiWidth, directTargetWidth);
+      int top = directTargetY + scaleFloor(uiTop, directUiHeight, directTargetHeight);
+      int bottom = directTargetY + scaleCeil(uiBottom, directUiHeight, directTargetHeight);
+
+      left = Math.max(directTargetX, Math.min(directTargetX + directTargetWidth, left));
+      right = Math.max(left, Math.min(directTargetX + directTargetWidth, right));
+      top = Math.max(directTargetY, Math.min(directTargetY + directTargetHeight, top));
+      bottom = Math.max(top, Math.min(directTargetY + directTargetHeight, bottom));
+
+      setScissor(left, directCanvasHeight - bottom, right - left, bottom - top);
    }
 
    private static void setScissor(int x, int y, int width, int height) {
@@ -855,12 +818,14 @@ final class GpuRasterizer3D {
    }
 
    private static void ensureContext(int width, int height) throws Exception {
-      boolean wantSharedPresentation = presentationCanvas != null && presentationCanvas.isContextReady();
+      if (rendererUsesPresentationContext) {
+         resetRendererResourceHandles();
+      }
+
       boolean recreate = pbuffer == null
          || pbuffer.isBufferLost()
          || width > bufferWidth
-         || height > bufferHeight
-         || wantSharedPresentation != contextSharedWithPresentation;
+         || height > bufferHeight;
       if (!recreate) {
          return;
       }
@@ -874,11 +839,35 @@ final class GpuRasterizer3D {
          bufferWidth,
          bufferHeight,
          pixelFormat,
-         wantSharedPresentation ? presentationCanvas : null
+         null
       );
-      contextSharedWithPresentation = wantSharedPresentation;
       pbuffer.makeCurrent();
+      initializeCurrentContextResources(false);
 
+      System.out.println(
+         "GPU renderer initialized: OpenGL Pbuffer "
+            + bufferWidth + "x" + bufferHeight
+            + " [VBO atlas batching, double-PBO color readback, GPU fog/depth]"
+      );
+   }
+
+   private static void ensurePresentationContextResources() {
+      if (rendererUsesPresentationContext && vertexBufferObject != 0) {
+         return;
+      }
+      if (pbuffer != null) {
+         throw new IllegalStateException("Pbuffer remained active while entering direct canvas rendering");
+      }
+
+      resetRendererResourceHandles();
+      initializeCurrentContextResources(true);
+      System.out.println(
+         "GPU renderer initialized in AWTGLCanvas context "
+            + "[VBO atlas batching, direct backbuffer presentation, GPU fog/depth]"
+      );
+   }
+
+   private static void initializeCurrentContextResources(boolean presentationContext) {
       GL11.glDisable(GL11.GL_DITHER);
       GL11.glDisable(GL11.GL_CULL_FACE);
       GL11.glDisable(GL11.GL_LIGHTING);
@@ -914,13 +903,41 @@ final class GpuRasterizer3D {
       scissorY = Integer.MIN_VALUE;
       scissorWidth = Integer.MIN_VALUE;
       scissorHeight = Integer.MIN_VALUE;
-      System.out.println(
-         "GPU renderer initialized: OpenGL Pbuffer "
-            + bufferWidth + "x" + bufferHeight
-            + (contextSharedWithPresentation
-               ? " [VBO atlas batching, direct AWTGL presentation, GPU fog/depth]"
-               : " [VBO atlas batching, double-PBO color readback, GPU fog/depth]")
-      );
+      rendererUsesPresentationContext = presentationContext;
+   }
+
+   static void presentationContextLost(GpuPresentationCanvas canvas) {
+      if (presentationCanvas != canvas) {
+         return;
+      }
+      directFrameReady = false;
+      frameDirectPresentation = false;
+      directModeLogged = false;
+      if (rendererUsesPresentationContext) {
+         resetRendererResourceHandles();
+      }
+   }
+
+   private static void resetRendererResourceHandles() {
+      rendererUsesPresentationContext = false;
+      vertexBufferObject = 0;
+      shaderProgram = 0;
+      atlasTexture = 0;
+      atlasTextureSize = 0;
+      legacyTextureSize = 0;
+      Arrays.fill(colorPbos, 0);
+      Arrays.fill(colorPboReady, false);
+      colorPboWriteIndex = 0;
+      colorPboBytes = 0;
+      pboUnavailable = false;
+      viewportWidth = -1;
+      viewportHeight = -1;
+      scissorX = Integer.MIN_VALUE;
+      scissorY = Integer.MIN_VALUE;
+      scissorWidth = Integer.MIN_VALUE;
+      scissorHeight = Integer.MIN_VALUE;
+      resetBatch();
+      Arrays.fill(textureDirty, true);
    }
 
    private static void makeCurrent() throws Exception {
@@ -930,12 +947,31 @@ final class GpuRasterizer3D {
    }
 
    private static void configureViewport(int width, int height) {
-      if (viewportWidth == width && viewportHeight == height) {
+      viewportWidth = width;
+      viewportHeight = height;
+
+      if (frameDirectPresentation) {
+         GL11.glViewport(
+            directTargetX,
+            directCanvasHeight - directTargetY - directTargetHeight,
+            directTargetWidth,
+            directTargetHeight
+         );
+         GL11.glMatrixMode(GL11.GL_PROJECTION);
+         GL11.glLoadIdentity();
+         GL11.glOrtho(
+            -directSceneX,
+            directUiWidth - directSceneX,
+            directUiHeight - directSceneY,
+            -directSceneY,
+            0.0D,
+            DEPTH_SCALE
+         );
+         GL11.glMatrixMode(GL11.GL_MODELVIEW);
+         GL11.glLoadIdentity();
          return;
       }
 
-      viewportWidth = width;
-      viewportHeight = height;
       GL11.glViewport(0, 0, width, height);
       GL11.glMatrixMode(GL11.GL_PROJECTION);
       GL11.glLoadIdentity();
@@ -1191,6 +1227,10 @@ final class GpuRasterizer3D {
    }
 
    private static void readBackFrameSynchronous(boolean copyDepth) {
+      if (frameDirectPresentation) {
+         readBackDirectFrameSynchronous(copyDepth);
+         return;
+      }
       if (viewportWidth <= 0 || viewportHeight <= 0) {
          return;
       }
@@ -1221,6 +1261,101 @@ final class GpuRasterizer3D {
             }
          }
       }
+   }
+
+   private static void readBackDirectFrameSynchronous(boolean copyDepth) {
+      if (viewportWidth <= 0
+         || viewportHeight <= 0
+         || directUiWidth <= 0
+         || directUiHeight <= 0
+         || directTargetWidth <= 0
+         || directTargetHeight <= 0) {
+         return;
+      }
+
+      long physicalCountLong = (long)directTargetWidth * (long)directTargetHeight;
+      if (physicalCountLong > Integer.MAX_VALUE / 4L) {
+         throw new IllegalStateException("Direct presentation target is too large to read back");
+      }
+      int physicalCount = (int)physicalCountLong;
+      ensureReadbackCapacity(physicalCount, copyDepth);
+      int readY = directCanvasHeight - directTargetY - directTargetHeight;
+
+      GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
+      colorReadback.clear();
+      colorReadback.limit(physicalCount * 4);
+      GL11.glReadPixels(
+         directTargetX,
+         readY,
+         directTargetWidth,
+         directTargetHeight,
+         GL_BGRA,
+         GL11.GL_UNSIGNED_BYTE,
+         colorReadback
+      );
+
+      if (copyDepth) {
+         depthReadback.clear();
+         depthReadback.limit(physicalCount);
+         GL11.glReadPixels(
+            directTargetX,
+            readY,
+            directTargetWidth,
+            directTargetHeight,
+            GL11.GL_DEPTH_COMPONENT,
+            GL11.GL_FLOAT,
+            depthReadback
+         );
+      }
+
+      colorReadback.rewind();
+      IntBuffer packedColors = colorReadback.order(ByteOrder.nativeOrder()).asIntBuffer();
+      for (int y = 0; y < viewportHeight; y++) {
+         int physicalTopY = sampleScaledCoordinate(
+            directSceneY + y,
+            directUiHeight,
+            directTargetHeight
+         );
+         int sourceY = directTargetHeight - 1 - physicalTopY;
+         int destination = y * viewportWidth;
+
+         for (int x = 0; x < viewportWidth; x++) {
+            int sourceX = sampleScaledCoordinate(
+               directSceneX + x,
+               directUiWidth,
+               directTargetWidth
+            );
+            int sourceIndex = sourceY * directTargetWidth + sourceX;
+            Rasterizer2D.pixels[destination + x] = packedColors.get(sourceIndex) & 0x00FFFFFF;
+
+            if (copyDepth) {
+               float gpuDepth = depthReadback.get(sourceIndex);
+               if (gpuDepth < 0.9999999F) {
+                  Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
+               }
+            }
+         }
+      }
+   }
+
+   private static int sampleScaledCoordinate(int logicalCoordinate, int logicalSize, int physicalSize) {
+      long numerator = ((long)logicalCoordinate * 2L + 1L) * physicalSize;
+      int coordinate = (int)(numerator / (2L * logicalSize));
+      if (coordinate < 0) {
+         return 0;
+      }
+      if (coordinate >= physicalSize) {
+         return physicalSize - 1;
+      }
+      return coordinate;
+   }
+
+   private static int scaleFloor(int value, int sourceSize, int targetSize) {
+      return (int)((long)value * targetSize / sourceSize);
+   }
+
+   private static int scaleCeil(int value, int sourceSize, int targetSize) {
+      return (int)(((long)value * targetSize + sourceSize - 1L) / sourceSize);
    }
 
    private static void copyColorReadback(ByteBuffer sourceBuffer, int width, int height) {
@@ -1589,17 +1724,6 @@ final class GpuRasterizer3D {
             if (atlasTexture != 0) {
                GL11.glDeleteTextures(atlasTexture);
             }
-            if (presentationFramebuffer != 0) {
-               EXTFramebufferObject.glDeleteFramebuffersEXT(presentationFramebuffer);
-            }
-            if (presentationDepthRenderbuffer != 0) {
-               EXTFramebufferObject.glDeleteRenderbuffersEXT(presentationDepthRenderbuffer);
-            }
-            for (int presentationTexture : presentationTextures) {
-               if (presentationTexture != 0) {
-                  GL11.glDeleteTextures(presentationTexture);
-               }
-            }
             for (int pbo : colorPbos) {
                if (pbo != 0) {
                   GL15.glDeleteBuffers(pbo);
@@ -1613,18 +1737,10 @@ final class GpuRasterizer3D {
          }
       }
       pbuffer = null;
-      contextSharedWithPresentation = false;
+      rendererUsesPresentationContext = false;
       directFrameReady = false;
       frameDirectPresentation = false;
       directModeLogged = false;
-      Arrays.fill(presentationTextures, 0);
-      presentationTextureWriteIndex = 0;
-      directFrameTexture = 0;
-      presentationTextureWidth = 0;
-      presentationTextureHeight = 0;
-      presentationFramebuffer = 0;
-      presentationDepthRenderbuffer = 0;
-      presentationFramebufferUnavailable = false;
       bufferWidth = 0;
       bufferHeight = 0;
       viewportWidth = -1;
