@@ -14,12 +14,9 @@ final class ClientResizeListener extends ComponentAdapter {
    public final void componentResized(ComponentEvent componentEvent) {
       // Do not call setSize() while the JFrame is transitioning to
       // MAXIMIZED_BOTH; doing so can cancel the native maximize operation.
-      // Fixed gameframes use the same resizable renderer once maximized, so
-      // promote them before returning and keep the selected frame skin/orbs.
+      // The fixed renderer is presented at the larger window size by Client,
+      // so maximizing must not change screenMode or the selected gameframe.
       if ((this.clientWindow.frame.getExtendedState() & java.awt.Frame.MAXIMIZED_BOTH) != 0) {
-         if (Client.loggedIn && Client.screenMode == 0) {
-            Client.getClient().setScreenMode(1);
-         }
          return;
       }
 
