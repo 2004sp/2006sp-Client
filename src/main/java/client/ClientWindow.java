@@ -86,6 +86,9 @@ public final class ClientWindow extends Client implements ActionListener {
             clientWindow.frame.addWindowListener(new ClientWindowListener(clientWindow));
             clientCardLayout = new CardLayout();
             (clientPanel = new JPanel()).setLayout(clientCardLayout);
+            clientPanel.setBackground(Color.BLACK);
+            clientPanel.setOpaque(true);
+            clientWindow.setBackground(Color.BLACK);
             clientPanel.add(clientWindow, "software");
             try {
                gpuPresentationCanvas = new GpuPresentationCanvas(clientWindow);
