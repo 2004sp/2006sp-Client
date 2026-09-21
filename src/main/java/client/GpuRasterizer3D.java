@@ -89,7 +89,7 @@ final class GpuRasterizer3D {
 
          GL11.glEnable(GL11.GL_SCISSOR_TEST);
          GL11.glScissor(0, 0, viewportWidth, viewportHeight);
-         GL11.glColorMask(true, true, true, true);
+         GL11.glColorMask(true, true, true, false);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
          GL11.glDisable(GL11.GL_BLEND);
@@ -97,6 +97,9 @@ final class GpuRasterizer3D {
          GL11.glDepthFunc(GL11.GL_ALWAYS);
          GL11.glDepthMask(true);
          GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+         // Keep alpha at the clear value (zero) so BGRA readback maps directly
+         // to the legacy 0x00RRGGBB int framebuffer on little-endian Windows.
+         GL11.glColorMask(true, true, true, false);
          frameActive = true;
       } catch (Throwable failure) {
          frameSoftwareFallback = true;
@@ -155,7 +158,7 @@ final class GpuRasterizer3D {
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
          GL11.glDisable(GL11.GL_BLEND);
-         GL11.glColorMask(false, false, false, true);
+         GL11.glColorMask(false, false, false, false);
          GL11.glShadeModel(GL11.GL_FLAT);
          GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
          GL11.glBegin(GL11.GL_TRIANGLES);
@@ -163,7 +166,7 @@ final class GpuRasterizer3D {
          GL11.glVertex3f(y1, x1, -clampDepth(depth1));
          GL11.glVertex3f(y2, x2, -clampDepth(depth2));
          GL11.glEnd();
-         GL11.glColorMask(true, true, true, true);
+         GL11.glColorMask(true, true, true, false);
 
          if (!batched) {
             readBack(bounds, false, false);
@@ -194,7 +197,7 @@ final class GpuRasterizer3D {
 
       boolean batched = frameActive;
       try {
-         GL11.glColorMask(true, true, true, true);
+         GL11.glColorMask(true, true, true, false);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
          float sourceAlpha = configureLegacyBlend(batched);
@@ -237,7 +240,7 @@ final class GpuRasterizer3D {
 
       boolean batched = frameActive;
       try {
-         GL11.glColorMask(true, true, true, true);
+         GL11.glColorMask(true, true, true, false);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
          GL11.glDisable(GL11.GL_ALPHA_TEST);
          float sourceAlpha = configureLegacyBlend(batched);
@@ -343,7 +346,7 @@ final class GpuRasterizer3D {
             && Rasterizer3D.renderModeFlag
             && !useFallback;
 
-         GL11.glColorMask(true, true, true, true);
+         GL11.glColorMask(true, true, true, false);
          GL11.glDisable(GL11.GL_BLEND);
          GL11.glEnable(GL11.GL_TEXTURE_2D);
          GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexture);
