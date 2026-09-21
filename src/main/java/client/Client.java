@@ -13863,7 +13863,11 @@ public class Client extends GameShell {
             Rasterizer2D.clear();
             GpuRasterizer3D.beginFrame();
             client.scene.renderScene(client.cameraPositionX, client.xCameraPos, client.yCameraPos, client.cameraPositionZ, localGetCameraPlane, client.zCameraPos);
-            GpuRasterizer3D.endFrame();
+            // Fog and particles are the post-scene users of the legacy depth
+            // buffer. When neither is active, avoid a second full-frame,
+            // synchronous GPU readback solely for depth.
+            boolean needsGpuDepth = fogEnabled || (client.particles != null && !client.particles.isEmpty());
+            GpuRasterizer3D.endFrame(needsGpuDepth);
             client.scene.clearInteractiveObjectCache();
             client.updateFog();
             client.updateParticles();
