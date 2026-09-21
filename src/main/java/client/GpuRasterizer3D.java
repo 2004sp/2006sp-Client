@@ -717,8 +717,8 @@ final class GpuRasterizer3D {
       if (textureId < 0 || textureId >= TEXTURE_COUNT) {
          return 0;
       }
-      if (textureDirty[textureId]) {
-         uploadTextureCell(textureId);
+      if (textureDirty[textureId] && !uploadTextureCell(textureId)) {
+         return 0;
       }
       return atlasTexture;
    }
@@ -775,10 +775,10 @@ final class GpuRasterizer3D {
       );
    }
 
-   private static void uploadTextureCell(int textureId) {
+   private static boolean uploadTextureCell(int textureId) {
       int[] pixels = Rasterizer3D.getGpuTexturePixels(textureId);
       if (pixels == null) {
-         return;
+         return false;
       }
 
       int pixelCount = legacyTextureSize * legacyTextureSize;
@@ -802,6 +802,7 @@ final class GpuRasterizer3D {
          GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, textureUploadBuffer
       );
       textureDirty[textureId] = false;
+      return true;
    }
 
    private static void initializeSceneShader() {
