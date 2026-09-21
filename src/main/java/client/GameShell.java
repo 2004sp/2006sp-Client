@@ -26,6 +26,7 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    private final long[] timingSamples = new long[10];
    int fps;
    private boolean unusedFlag = false;
+   private boolean softwareUiRefreshRequested = true;
    int canvasWidth;
    int canvasHeight;
    Graphics graphics;
@@ -124,6 +125,10 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             this.clickTime = this.pendingClickTime;
             this.pendingMouseButton = 0;
             this.processGameLoop();
+            // The legacy software UI advances with the 50 Hz game tick. The
+            // high-FPS renderer consumes this flag once, so intermediate
+            // camera/scene frames can reuse the last composed UI.
+            this.softwareUiRefreshRequested = true;
             this.keyQueueReadIndex = this.keyQueueWriteIndex;
 
             nextGameTick += gameTickNanos;
@@ -238,6 +243,12 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
 
    int getRenderFpsLimit() {
       return 50;
+   }
+
+   final boolean consumeSoftwareUiRefreshRequested() {
+      boolean requested = this.softwareUiRefreshRequested;
+      this.softwareUiRefreshRequested = false;
+      return requested;
    }
 
    void processCameraFrame(double elapsedSeconds) {
