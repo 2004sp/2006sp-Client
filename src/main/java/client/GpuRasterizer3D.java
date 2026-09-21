@@ -19,8 +19,10 @@ import org.lwjgl.opengl.PixelFormat;
  * Scene triangles are accumulated into a VBO-backed atlas batch and rasterized
  * by OpenGL. When the AWTGL presentation canvas is available, the main scene is
  * rendered straight into that canvas' backbuffer; only the legacy software UI is
- * uploaded before the same backbuffer is swapped. A Pbuffer remains as the GPU
- * compatibility path when the AWT canvas is unavailable. Synchronous readback is
+ * uploaded before the same backbuffer is swapped. While that canvas is starting,
+ * transitional frames stay on the software rasterizer instead of constructing a
+ * throwaway Pbuffer. A Pbuffer remains as the GPU compatibility path when direct
+ * AWT presentation is unavailable. Synchronous readback is
  * reserved for mid-frame software fallback and legacy bounded draws.
  */
 final class GpuRasterizer3D {
@@ -54,6 +56,7 @@ final class GpuRasterizer3D {
 
    private static GpuPresentationCanvas presentationCanvas;
    private static boolean directPresentationExecution;
+   private static boolean presentationTransitionSoftware;
    private static boolean rendererUsesPresentationContext;
    private static int directUiWidth;
    private static int directUiHeight;
@@ -161,6 +164,29 @@ final class GpuRasterizer3D {
       final Runnable renderer
    ) {
       if (renderer == null) {
+         return false;
+      }
+
+      if (requested
+         && !unavailable
+         && presentationCanvas != null
+         && !presentationCanvas.hasFailed()
+         && !presentationCanvas.isContextReady()) {
+         // The direct AWT canvas is the destination we actually want. Do not
+         // allocate or resize a temporary Pbuffer while its peer/context is
+         // coming up; that context and all of its GL resources would be thrown
+         // away as soon as direct presentation becomes ready. Render this
+         // transitional frame with the existing software rasterizer instead.
+         if (pbuffer != null) {
+            destroyContext();
+         }
+         presentationCanvas.requestInitialization();
+         presentationTransitionSoftware = true;
+         try {
+            renderer.run();
+         } finally {
+            presentationTransitionSoftware = false;
+         }
          return false;
       }
 
@@ -761,6 +787,7 @@ final class GpuRasterizer3D {
    private static boolean baseAvailable() {
       return requested
          && !unavailable
+         && !presentationTransitionSoftware
          && Rasterizer2D.pixels != null
          && Rasterizer2D.depthBuffer != null
          && Rasterizer2D.width > 0
