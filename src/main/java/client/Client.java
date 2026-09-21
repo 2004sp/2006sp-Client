@@ -2193,7 +2193,12 @@ public class Client extends GameShell {
       osrsResizableFrame = dataInputStream.readBoolean();
       dataInputStream.close();
    }
+   private static boolean userConfigLoaded;
    public static void loadUserConfig() throws IOException {
+      if (userConfigLoaded) {
+         return;
+      }
+
       String text = "./userConfig.cfg";
       if (!new File(text).exists()) {
          ClientSettings.createDefaultConfig();
@@ -2229,6 +2234,7 @@ public class Client extends GameShell {
       }
 
       bufferedReader.close();
+      userConfigLoaded = true;
    }
    private static String formatAmountLong(int inventoryAmount) {
       String text = String.valueOf(inventoryAmount);
