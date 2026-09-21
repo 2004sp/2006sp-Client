@@ -1094,6 +1094,27 @@ public class Client extends GameShell {
          return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
       }
 
+      // A scaled centered interface can overlap the *bounding rectangle* used
+      // for the wide resizable tab UI. Most of the upper-left part of that tab
+      // rectangle is just transparent/scene space, but treating the whole box
+      // as sidebar input steals clicks from controls near the lower-right edge
+      // of interfaces such as the bank (notably Bank Inventory / Equipment).
+      // Give the visible centered interface priority over the broad tab bounds.
+      Client client = clientInstance;
+      if (client != null && client.shouldScaleCenteredOpenInterface()) {
+         int interfaceWidth = scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH);
+         int interfaceHeight = scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT);
+         int interfaceLeft = (clientWidth - interfaceWidth) / 2;
+         int interfaceTop = (clientHeight - interfaceHeight) / 2;
+         if (isInsideRectangle(x, y, interfaceLeft, interfaceTop, interfaceWidth, interfaceHeight)) {
+            int logicalLeft = clientWidth / 2 - CENTERED_INTERFACE_UI_WIDTH / 2;
+            int logicalTop = clientHeight / 2 - CENTERED_INTERFACE_UI_HEIGHT / 2;
+            int logicalX = logicalLeft + (x - interfaceLeft) * CENTERED_INTERFACE_UI_WIDTH / interfaceWidth;
+            int logicalY = logicalTop + (y - interfaceTop) * CENTERED_INTERFACE_UI_HEIGHT / interfaceHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
+      }
+
       int logicalTabWidth = getResizableTabUiWidth();
       int tabWidth = scaledUiDimension(logicalTabWidth);
       int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
@@ -1115,21 +1136,6 @@ public class Client extends GameShell {
          int logicalY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT
             + (y - chatTop) * RESIZABLE_CHAT_UI_HEIGHT / chatHeight;
          return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
-      }
-
-      Client client = clientInstance;
-      if (client != null && client.shouldScaleCenteredOpenInterface()) {
-         int interfaceWidth = scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH);
-         int interfaceHeight = scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT);
-         int interfaceLeft = (clientWidth - interfaceWidth) / 2;
-         int interfaceTop = (clientHeight - interfaceHeight) / 2;
-         if (isInsideRectangle(x, y, interfaceLeft, interfaceTop, interfaceWidth, interfaceHeight)) {
-            int logicalLeft = clientWidth / 2 - CENTERED_INTERFACE_UI_WIDTH / 2;
-            int logicalTop = clientHeight / 2 - CENTERED_INTERFACE_UI_HEIGHT / 2;
-            int logicalX = logicalLeft + (x - interfaceLeft) * CENTERED_INTERFACE_UI_WIDTH / interfaceWidth;
-            int logicalY = logicalTop + (y - interfaceTop) * CENTERED_INTERFACE_UI_HEIGHT / interfaceHeight;
-            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
-         }
       }
 
       return ((long)x << 32) | (y & 0xffffffffL);
