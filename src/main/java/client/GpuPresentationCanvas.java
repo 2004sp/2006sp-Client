@@ -123,9 +123,18 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
 
       final Throwable[] failure = new Throwable[1];
+      final boolean[] displayabilityLost = new boolean[1];
       Runnable contextAction = new Runnable() {
          @Override
          public void run() {
+            // isContextReady() was checked on the render thread, but AWT can
+            // recreate a heavyweight Canvas peer before this runnable reaches
+            // the EDT. Recheck here, immediately before makeCurrent().
+            if (!contextReady || failed || !isDisplayable()) {
+               displayabilityLost[0] = true;
+               return;
+            }
+
             try {
                makeCurrent();
                try {
@@ -134,7 +143,16 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
                   releaseContext();
                }
             } catch (Throwable throwable) {
-               failure[0] = throwable;
+               // AWTGLCanvas throws this while a peer is being recreated.
+               // Losing displayability is transient and must not permanently
+               // disable GPU presentation.
+               if (!isDisplayable()
+                  || throwable instanceof IllegalStateException
+                     && "Canvas not yet displayable".equals(throwable.getMessage())) {
+                  displayabilityLost[0] = true;
+               } else {
+                  failure[0] = throwable;
+               }
             }
          }
       };
@@ -149,11 +167,26 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          failure[0] = throwable;
       }
 
+      if (displayabilityLost[0]) {
+         handleTransientDisplayabilityLoss();
+         return false;
+      }
       if (failure[0] != null) {
          markFailed(failure[0]);
          return false;
       }
       return true;
+   }
+
+   private void handleTransientDisplayabilityLoss() {
+      this.contextReady = false;
+      this.sceneBackbufferPending = false;
+      resetContextState();
+      GpuRasterizer3D.presentationContextLost(this);
+
+      // Keep the requested GPU card alive and let the normal AWT paint
+      // lifecycle recreate the context once the peer is displayable again.
+      requestInitialization();
    }
 
    void markSceneBackbufferPending() {
