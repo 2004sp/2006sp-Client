@@ -375,7 +375,15 @@ final class GpuRasterizer3D {
       );
       directFrameReady = false;
       if (!queued) {
-         presentationCanvas.deactivate();
+         if (presentationCanvas.hasFailed()) {
+            presentationCanvas.deactivate();
+         } else {
+            // AWT can temporarily recreate the heavyweight canvas peer (for
+            // example during card/layout changes). Keep GPU presentation
+            // requested and retry initialization rather than bouncing between
+            // the GPU and Java cards, which widens the displayability race.
+            presentationCanvas.requestInitialization();
+         }
       }
       return queued;
    }
