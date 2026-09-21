@@ -877,7 +877,9 @@ public class Client extends GameShell {
       int localScreenMode = screenMode != 0 && !flag ? minimumWindowWidth : fixedWidth;
       int screenMode2 = screenMode != 0 && !flag ? minimumWindowHeight : fixedHeight;
       gameFrame.setMinimumSize(new Dimension(localScreenMode + byteCode, screenMode2 + byteCode2));
-      gameFrame.setResizable(screenMode != 0 && loggedIn);
+      // Fixed gameframes stay at their normal dimensions until the user
+      // maximizes them, but the native maximize button must be available.
+      gameFrame.setResizable(loggedIn);
       gameFrame.setPreferredSize(new Dimension(sourceClientWidth, sourceClientHeight));
       if (ClientWindow.getInstance() != null) {
          gameFrame = ClientWindow.getInstance().frame;
@@ -952,6 +954,7 @@ public class Client extends GameShell {
             }
          }
 
+         int windowWidthPadding = clientWidthOrGetWidth;
          clientWidthOrGetWidth = gameFrame.getWidth() - clientWidthOrGetWidth;
          int clientHeightOrGetHeight = gameFrame.getHeight() - byteCode;
          if (screenMode != newScreenMode) {
@@ -964,6 +967,13 @@ public class Client extends GameShell {
                clientWidth = fixedWidth;
                clientHeight = fixedHeight;
                cameraZoom = 600;
+            }
+
+            if (loggedIn) {
+               int minimumContentWidth = newScreenMode != 0 ? minimumResizableWidth : fixedWidth;
+               int minimumContentHeight = newScreenMode != 0 ? minimumResizableHeight : fixedHeight;
+               gameFrame.setMinimumSize(new Dimension(minimumContentWidth + windowWidthPadding, minimumContentHeight + byteCode));
+               gameFrame.setResizable(true);
             }
 
             this.rebuildViewportBuffers();
@@ -1108,8 +1118,15 @@ public class Client extends GameShell {
       int relativeRight = relativeLeft + sourceWidth;
       int relativeBottom = relativeTop + sourceHeight;
 
-      int scaledLeft = destinationLeft + relativeLeft * destinationWidth / logicalTabWidth;
-      int scaledTop = destinationTop + relativeTop * destinationHeight / RESIZABLE_TAB_UI_HEIGHT;
+      // drawScaledUiRegion chooses source pixels with floor(destination * source / destination).
+      // The first destination pixel belonging to a source sub-rectangle is
+      // therefore ceil(sourceStart * destination / source), not floor(...).
+      // Using the same edge rule keeps hit-testing exact at every integer UI
+      // scale percentage instead of drifting by a pixel at selected sizes.
+      int scaledLeft = destinationLeft
+         + (relativeLeft * destinationWidth + logicalTabWidth - 1) / logicalTabWidth;
+      int scaledTop = destinationTop
+         + (relativeTop * destinationHeight + RESIZABLE_TAB_UI_HEIGHT - 1) / RESIZABLE_TAB_UI_HEIGHT;
       int scaledRight = destinationLeft
          + (relativeRight * destinationWidth + logicalTabWidth - 1) / logicalTabWidth;
       int scaledBottom = destinationTop
@@ -1190,6 +1207,29 @@ public class Client extends GameShell {
       return false;
    }
 
+   private static boolean isInsideVisibleScaledResizableChatUi(int x, int y) {
+      Client client = clientInstance;
+      if (client == null) {
+         return false;
+      }
+
+      int destinationWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
+      int destinationHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+      int destinationTop = clientHeight - destinationHeight;
+      if (client.chatMessagesVisible) {
+         return isInsideRectangle(x, y, 0, destinationTop, destinationWidth, destinationHeight);
+      }
+
+      // When chat is collapsed only the 22-pixel channel-button strip is
+      // rendered. Do not inverse-scale the transparent area above it or world
+      // clicks there will jump into the logical chatbox at non-100% scales.
+      int channelStripSourceTop = RESIZABLE_CHAT_UI_HEIGHT - 22;
+      int channelStripTop = destinationTop
+         + (channelStripSourceTop * destinationHeight + RESIZABLE_CHAT_UI_HEIGHT - 1)
+            / RESIZABLE_CHAT_UI_HEIGHT;
+      return isInsideRectangle(x, y, 0, channelStripTop, destinationWidth, clientHeight - channelStripTop);
+   }
+
    /**
     * Converts physical mouse coordinates over a scaled resizable/fullscreen UI
     * panel back into the original 2006 UI coordinate space. World/viewport
@@ -1200,23 +1240,50 @@ public class Client extends GameShell {
          return ((long)x << 32) | (y & 0xffffffffL);
       }
 
-      int minimapWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
-      int minimapHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
-      int minimapLeft = clientWidth - minimapWidth;
-      if (isInsideRectangle(x, y, minimapLeft, 0, minimapWidth, minimapHeight)) {
-         int logicalX = clientWidth - RESIZABLE_MINIMAP_UI_WIDTH
-            + (x - minimapLeft) * RESIZABLE_MINIMAP_UI_WIDTH / minimapWidth;
-         int logicalY = y * RESIZABLE_MINIMAP_UI_HEIGHT / minimapHeight;
-         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+      Client client = clientInstance;
+      boolean resizableUiScaled = client != null && client.shouldScaleResizableUi();
+
+      if (resizableUiScaled) {
+         // The minimap is drawn last, followed by the tab UI and chat UI in
+         // reverse paint priority for hit-testing. This mirrors the final
+         // visible pixels when large scale values make regions overlap.
+         int minimapWidth = scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
+         int minimapHeight = scaledUiDimension(RESIZABLE_MINIMAP_UI_HEIGHT);
+         int minimapLeft = clientWidth - minimapWidth;
+         if (isInsideRectangle(x, y, minimapLeft, 0, minimapWidth, minimapHeight)) {
+            int logicalX = clientWidth - RESIZABLE_MINIMAP_UI_WIDTH
+               + (x - minimapLeft) * RESIZABLE_MINIMAP_UI_WIDTH / minimapWidth;
+            int logicalY = y * RESIZABLE_MINIMAP_UI_HEIGHT / minimapHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
+
+         int logicalTabWidth = getResizableTabUiWidth();
+         int tabWidth = scaledUiDimension(logicalTabWidth);
+         int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
+         int tabLeft = clientWidth - tabWidth;
+         int tabTop = clientHeight - tabHeight;
+         if (isInsideVisibleScaledResizableTabUi(x, y, logicalTabWidth)) {
+            int logicalX = clientWidth - logicalTabWidth
+               + (x - tabLeft) * logicalTabWidth / tabWidth;
+            int logicalY = clientHeight - RESIZABLE_TAB_UI_HEIGHT
+               + (y - tabTop) * RESIZABLE_TAB_UI_HEIGHT / tabHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
+
+         int chatWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
+         int chatHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+         int chatTop = clientHeight - chatHeight;
+         if (isInsideVisibleScaledResizableChatUi(x, y)) {
+            int logicalX = x * RESIZABLE_CHAT_UI_WIDTH / chatWidth;
+            int logicalY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT
+               + (y - chatTop) * RESIZABLE_CHAT_UI_HEIGHT / chatHeight;
+            return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
+         }
       }
 
-      // A scaled centered interface can overlap the *bounding rectangle* used
-      // for the wide resizable tab UI. Most of the upper-left part of that tab
-      // rectangle is just transparent/scene space, but treating the whole box
-      // as sidebar input steals clicks from controls near the lower-right edge
-      // of interfaces such as the bank (notably Bank Inventory / Equipment).
-      // Give the visible centered interface priority over the broad tab bounds.
-      Client client = clientInstance;
+      // Centered interfaces are rendered before the resizable HUD panels, so
+      // test them after the HUD. Visible chat/tab/minimap pixels must win when
+      // high scale percentages cause those regions to overlap.
       if (client != null && client.shouldScaleCenteredOpenInterface()) {
          int interfaceWidth = scaledUiDimension(CENTERED_INTERFACE_UI_WIDTH);
          int interfaceHeight = scaledUiDimension(CENTERED_INTERFACE_UI_HEIGHT);
@@ -1229,29 +1296,6 @@ public class Client extends GameShell {
             int logicalY = logicalTop + (y - interfaceTop) * CENTERED_INTERFACE_UI_HEIGHT / interfaceHeight;
             return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
          }
-      }
-
-      int logicalTabWidth = getResizableTabUiWidth();
-      int tabWidth = scaledUiDimension(logicalTabWidth);
-      int tabHeight = scaledUiDimension(RESIZABLE_TAB_UI_HEIGHT);
-      int tabLeft = clientWidth - tabWidth;
-      int tabTop = clientHeight - tabHeight;
-      if (isInsideVisibleScaledResizableTabUi(x, y, logicalTabWidth)) {
-         int logicalX = clientWidth - logicalTabWidth
-            + (x - tabLeft) * logicalTabWidth / tabWidth;
-         int logicalY = clientHeight - RESIZABLE_TAB_UI_HEIGHT
-            + (y - tabTop) * RESIZABLE_TAB_UI_HEIGHT / tabHeight;
-         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
-      }
-
-      int chatWidth = scaledUiDimension(RESIZABLE_CHAT_UI_WIDTH);
-      int chatHeight = scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
-      int chatTop = clientHeight - chatHeight;
-      if (isInsideRectangle(x, y, 0, chatTop, chatWidth, chatHeight)) {
-         int logicalX = x * RESIZABLE_CHAT_UI_WIDTH / chatWidth;
-         int logicalY = clientHeight - RESIZABLE_CHAT_UI_HEIGHT
-            + (y - chatTop) * RESIZABLE_CHAT_UI_HEIGHT / chatHeight;
-         return ((long)logicalX << 32) | (logicalY & 0xffffffffL);
       }
 
       return ((long)x << 32) | (y & 0xffffffffL);
