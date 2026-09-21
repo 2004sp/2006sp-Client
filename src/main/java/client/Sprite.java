@@ -145,11 +145,8 @@ public final class Sprite extends Rasterizer2D {
                int scalar6;
                if ((scalar6 = pixels2[scalar++]) != 0) {
                   int scalar7 = scalar6 >>> 24;
-                  int scalar8 = 256 - scalar7;
-                  int pixel = pixels[pixelIndex];
-                  pixels[pixelIndex++] = ((scalar6 & 16711935) * scalar7 + (pixel & 16711935) * scalar8 & -16711936)
-                        + ((scalar6 & 0xFF00) * scalar7 + (pixel & 0xFF00) * scalar8 & 0xFF0000)
-                     >> 8;
+                  pixels[pixelIndex] = Rasterizer2D.blendUiPixel(scalar6, pixels[pixelIndex], scalar7);
+                  pixelIndex++;
                } else {
                   pixelIndex++;
                }
@@ -654,16 +651,16 @@ public final class Sprite extends Rasterizer2D {
       }
    }
    private static void blitAlpha(int scalarArgument, int spriteWidth, int[] values, int[] newValues, int scalarArgument2, int newIndex, int scalarArgument3, int transparency, int scalarArgument4) {
-      int scalar = 256 - transparency;
-
       for (int loopIndex = -newIndex; loopIndex < 0; loopIndex++) {
          for (int loopIndex2 = -spriteWidth; loopIndex2 < 0; loopIndex2++) {
             int scalar2;
             if ((scalar2 = newValues[scalarArgument++]) != 0) {
-               int scalar3 = values[scalarArgument4];
-               values[scalarArgument4++] = ((scalar2 & 16711935) * transparency + (scalar3 & 16711935) * scalar & -16711936)
-                     + ((scalar2 & 0xFF00) * transparency + (scalar3 & 0xFF00) * scalar & 0xFF0000)
-                  >> 8;
+               values[scalarArgument4] = Rasterizer2D.blendUiPixel(
+                  scalar2,
+                  values[scalarArgument4],
+                  transparency
+               );
+               scalarArgument4++;
             } else {
                scalarArgument4++;
             }
