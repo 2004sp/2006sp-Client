@@ -35,8 +35,10 @@ final class GpuRasterizer3D {
    private static final int BATCH_PARTICLE = 2;
    private static final int FLOATS_PER_VERTEX = 11;
    private static final int VERTEX_STRIDE_BYTES = FLOATS_PER_VERTEX * 4;
-   private static final int MAX_BATCH_VERTICES = 24576;
+   private static final int MAX_BATCH_VERTICES = 98304;
    private static final int PARTICLE_SEGMENTS = 16;
+   private static final float[] PARTICLE_UNIT_X = new float[PARTICLE_SEGMENTS + 1];
+   private static final float[] PARTICLE_UNIT_Y = new float[PARTICLE_SEGMENTS + 1];
    private static final int UI_TRANSPARENT_KEY = 0x00010203;
 
    private static volatile boolean requested = true;
@@ -72,6 +74,10 @@ final class GpuRasterizer3D {
    private static int scissorY = Integer.MIN_VALUE;
    private static int scissorWidth = Integer.MIN_VALUE;
    private static int scissorHeight = Integer.MIN_VALUE;
+   private static int preparedClipMinX = Integer.MIN_VALUE;
+   private static int preparedClipMinY = Integer.MIN_VALUE;
+   private static int preparedClipMaxX = Integer.MIN_VALUE;
+   private static int preparedClipMaxY = Integer.MIN_VALUE;
 
    private static final boolean[] textureDirty = new boolean[TEXTURE_COUNT];
    private static boolean cachedLowMemory = Rasterizer3D.lowMemory;
@@ -96,6 +102,9 @@ final class GpuRasterizer3D {
    private static int batchMode = BATCH_NONE;
    private static int batchTexture;
    private static int batchVertexCount;
+   private static boolean batchPipelinePrepared;
+   private static int configuredBatchMode = BATCH_NONE;
+   private static boolean sceneShaderConfigured;
 
    private static final int[] colorPbos = new int[2];
    private static final boolean[] colorPboReady = new boolean[2];
@@ -109,6 +118,11 @@ final class GpuRasterizer3D {
 
    static {
       Arrays.fill(textureDirty, true);
+      for (int i = 0; i <= PARTICLE_SEGMENTS; i++) {
+         double angle = Math.PI * 2.0D * i / PARTICLE_SEGMENTS;
+         PARTICLE_UNIT_X[i] = (float)Math.cos(angle);
+         PARTICLE_UNIT_Y[i] = (float)Math.sin(angle);
+      }
    }
 
    private GpuRasterizer3D() {
@@ -218,6 +232,11 @@ final class GpuRasterizer3D {
       frameFogStart = 1430.0F + fogDistanceOffset;
       frameFogEnd = 2100.0F + fogDistanceOffset;
       resetBatch();
+      resetBatchPipelineTracking();
+      preparedClipMinX = Integer.MIN_VALUE;
+      preparedClipMinY = Integer.MIN_VALUE;
+      preparedClipMaxX = Integer.MIN_VALUE;
+      preparedClipMaxY = Integer.MIN_VALUE;
 
       if (!baseAvailable()) {
          frameSoftwareFallback = true;
@@ -294,6 +313,7 @@ final class GpuRasterizer3D {
       try {
          if (frameActive) {
             flushBatch();
+            finishBatchPipeline();
             if (frameDirectPresentation && canUseDirectPresentation()) {
                finishDirectPresentationFrame();
                directFrameReady = true;
@@ -398,15 +418,21 @@ final class GpuRasterizer3D {
       }
 
       // The recovered depth-only walker uses x* as scanline Y and y* as X.
-      Bounds bounds = Bounds.of(y0, x0, y1, x1, y2, x2);
-      if (bounds == null) {
-         return true;
+      boolean batched = frameActive;
+      Bounds bounds = null;
+      if (batched) {
+         if (!triangleVisible(y0, x0, y1, x1, y2, x2)) {
+            return true;
+         }
+      } else {
+         bounds = Bounds.of(y0, x0, y1, x1, y2, x2);
+         if (bounds == null) {
+            return true;
+         }
       }
       if (!prepare(bounds)) {
          return false;
       }
-
-      boolean batched = frameActive;
       if (batched) {
          try {
             queueDepthTriangle(y0, x0, depth0, y1, x1, depth1, y2, x2, depth2);
@@ -450,15 +476,21 @@ final class GpuRasterizer3D {
          return false;
       }
 
-      Bounds bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
-      if (bounds == null) {
-         return true;
+      boolean batched = frameActive;
+      Bounds bounds = null;
+      if (batched) {
+         if (!triangleVisible(x0, y0, x1, y1, x2, y2)) {
+            return true;
+         }
+      } else {
+         bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
+         if (bounds == null) {
+            return true;
+         }
       }
       if (!prepare(bounds)) {
          return false;
       }
-
-      boolean batched = frameActive;
       if (batched) {
          try {
             float sourceAlpha = legacySourceAlpha();
@@ -509,15 +541,21 @@ final class GpuRasterizer3D {
          return false;
       }
 
-      Bounds bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
-      if (bounds == null) {
-         return true;
+      boolean batched = frameActive;
+      Bounds bounds = null;
+      if (batched) {
+         if (!triangleVisible(x0, y0, x1, y1, x2, y2)) {
+            return true;
+         }
+      } else {
+         bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
+         if (bounds == null) {
+            return true;
+         }
       }
       if (!prepare(bounds)) {
          return false;
       }
-
-      boolean batched = frameActive;
       if (batched) {
          try {
             float sourceAlpha = legacySourceAlpha();
@@ -577,15 +615,21 @@ final class GpuRasterizer3D {
          return false;
       }
 
-      Bounds bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
-      if (bounds == null) {
-         return true;
+      boolean batched = frameActive;
+      Bounds bounds = null;
+      if (batched) {
+         if (!triangleVisible(x0, y0, x1, y1, x2, y2)) {
+            return true;
+         }
+      } else {
+         bounds = Bounds.of(x0, y0, x1, y1, x2, y2);
+         if (bounds == null) {
+            return true;
+         }
       }
       if (!prepare(bounds)) {
          return false;
       }
-
-      boolean batched = frameActive;
       try {
          if (ensureTexture(textureId) == 0) {
             if (batched) {
@@ -626,7 +670,7 @@ final class GpuRasterizer3D {
          double pv2 = projected(vBase, vSlopeX, vSlopeY, x2, y2);
          double pw2 = projected(wBase, wSlopeX, wSlopeY, x2, y2);
 
-         double max = maxAbs(pu0, pv0, pw0, pu1, pv1, pw1, pu2, pv2, pw2);
+         double max = maxAbs9(pu0, pv0, pw0, pu1, pv1, pw1, pu2, pv2, pw2);
          if (!(max > 0.0D) || Double.isInfinite(max) || Double.isNaN(max)) {
             if (batched) {
                fallbackCurrentFrame();
@@ -703,11 +747,20 @@ final class GpuRasterizer3D {
             int minY = Math.max(0, Rasterizer2D.topY);
             int maxX = Math.min(viewportWidth, Rasterizer2D.bottomX);
             int maxY = Math.min(viewportHeight, Rasterizer2D.bottomY);
-            if (minX >= maxX || minY >= maxY) {
-               setScissor(0, 0, 0, 0);
-               return true;
+            if (minX != preparedClipMinX
+               || minY != preparedClipMinY
+               || maxX != preparedClipMaxX
+               || maxY != preparedClipMaxY) {
+               if (minX >= maxX || minY >= maxY) {
+                  setScissor(0, 0, 0, 0);
+               } else {
+                  setLogicalScissor(minX, minY, maxX, maxY);
+               }
+               preparedClipMinX = minX;
+               preparedClipMinY = minY;
+               preparedClipMaxX = maxX;
+               preparedClipMaxY = maxY;
             }
-            setLogicalScissor(minX, minY, maxX, maxY);
          } else {
             setScissor(bounds.minX, viewportHeight - bounds.maxY, bounds.width(), bounds.height());
             GL11.glColorMask(true, true, true, true);
@@ -793,6 +846,7 @@ final class GpuRasterizer3D {
       if (frameActive) {
          try {
             flushBatch();
+            finishBatchPipeline();
             readBackFrameSynchronous(true);
          } catch (Throwable failure) {
             frameActive = false;
@@ -812,6 +866,7 @@ final class GpuRasterizer3D {
       if (frameOpen && frameActive) {
          try {
             flushBatch();
+            finishBatchPipeline();
             readBackFrameSynchronous(true);
          } catch (Throwable ignored) {
          }
@@ -903,6 +958,7 @@ final class GpuRasterizer3D {
       colorPboBytes = 0;
       pboUnavailable = false;
       resetBatch();
+      resetBatchPipelineTracking();
 
       Arrays.fill(textureDirty, true);
       cachedLowMemory = Rasterizer3D.lowMemory;
@@ -946,6 +1002,7 @@ final class GpuRasterizer3D {
       scissorWidth = Integer.MIN_VALUE;
       scissorHeight = Integer.MIN_VALUE;
       resetBatch();
+      resetBatchPipelineTracking();
       Arrays.fill(textureDirty, true);
    }
 
@@ -1540,11 +1597,13 @@ final class GpuRasterizer3D {
 
          ensureBatch(BATCH_PARTICLE, 0, PARTICLE_SEGMENTS * 3);
          for (int segment = 0; segment < PARTICLE_SEGMENTS; segment++) {
-            double angle0 = Math.PI * 2.0D * segment / PARTICLE_SEGMENTS;
-            double angle1 = Math.PI * 2.0D * (segment + 1) / PARTICLE_SEGMENTS;
+            float unitX0 = PARTICLE_UNIT_X[segment];
+            float unitY0 = PARTICLE_UNIT_Y[segment];
+            float unitX1 = PARTICLE_UNIT_X[segment + 1];
+            float unitY1 = PARTICLE_UNIT_Y[segment + 1];
             putVertex(centerX, centerY, -testDepth, red, green, blue, clampedAlpha, 0.0F, 0.0F, 0.0F, 1.0F);
-            putVertex(centerX + (float)Math.cos(angle0) * radius, centerY + (float)Math.sin(angle0) * radius, -testDepth, red, green, blue, clampedAlpha, 0.0F, 0.0F, 0.0F, 1.0F);
-            putVertex(centerX + (float)Math.cos(angle1) * radius, centerY + (float)Math.sin(angle1) * radius, -testDepth, red, green, blue, clampedAlpha, 0.0F, 0.0F, 0.0F, 1.0F);
+            putVertex(centerX + unitX0 * radius, centerY + unitY0 * radius, -testDepth, red, green, blue, clampedAlpha, 0.0F, 0.0F, 0.0F, 1.0F);
+            putVertex(centerX + unitX1 * radius, centerY + unitY1 * radius, -testDepth, red, green, blue, clampedAlpha, 0.0F, 0.0F, 0.0F, 1.0F);
          }
          return true;
       } catch (Throwable failure) {
@@ -1623,55 +1682,88 @@ final class GpuRasterizer3D {
          return;
       }
 
-      vertexBatch.flip();
-      GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vertexBufferObject);
-      GL15.glBufferData(GL15.GL_ARRAY_BUFFER, vertexBatch, GL15.GL_STREAM_DRAW);
+      prepareBatchPipeline();
+      configureBatchMode(batchMode);
 
+      vertexBatch.flip();
+      GL15.glBufferData(GL15.GL_ARRAY_BUFFER, vertexBatch, GL15.GL_STREAM_DRAW);
+      GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, batchVertexCount);
+      resetBatch();
+   }
+
+   private static void prepareBatchPipeline() {
+      if (batchPipelinePrepared) {
+         return;
+      }
+
+      GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, vertexBufferObject);
       GL11.glEnableClientState(GL11.GL_VERTEX_ARRAY);
       GL11.glVertexPointer(3, GL11.GL_FLOAT, VERTEX_STRIDE_BYTES, 0L);
       GL11.glEnableClientState(GL11.GL_COLOR_ARRAY);
       GL11.glColorPointer(4, GL11.GL_FLOAT, VERTEX_STRIDE_BYTES, 12L);
+      GL11.glEnableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
+      GL11.glTexCoordPointer(4, GL11.GL_FLOAT, VERTEX_STRIDE_BYTES, 28L);
 
-      GL11.glDepthMask(true);
-      GL11.glDepthFunc(GL11.GL_ALWAYS);
+      GL11.glColorMask(true, true, true, false);
+      GL11.glDisable(GL11.GL_ALPHA_TEST);
+      GL11.glDisable(GL11.GL_FOG);
+      GL11.glEnable(GL11.GL_BLEND);
+      GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
       GL11.glShadeModel(GL11.GL_SMOOTH);
 
-      if (batchMode == BATCH_TEXTURED) {
-         GL11.glColorMask(true, true, true, false);
-         GL11.glEnable(GL11.GL_BLEND);
-         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+      batchPipelinePrepared = true;
+      configuredBatchMode = BATCH_NONE;
+      sceneShaderConfigured = false;
+   }
+
+   private static void configureBatchMode(int mode) {
+      if (configuredBatchMode == mode) {
+         return;
+      }
+
+      if (mode == BATCH_TEXTURED) {
+         GL11.glDepthMask(true);
+         GL11.glDepthFunc(GL11.GL_ALWAYS);
          GL11.glEnable(GL11.GL_TEXTURE_2D);
          GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
-         GL11.glDisable(GL11.GL_ALPHA_TEST);
-         GL11.glDisable(GL11.GL_FOG);
-         useSceneShader(frameFogEnabled);
-         GL11.glEnableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
-         GL11.glTexCoordPointer(4, GL11.GL_FLOAT, VERTEX_STRIDE_BYTES, 28L);
-      } else if (batchMode == BATCH_PARTICLE) {
-         GL11.glColorMask(true, true, true, false);
+         if (sceneShaderConfigured) {
+            GL20.glUseProgram(shaderProgram);
+         } else {
+            useSceneShader(frameFogEnabled);
+            sceneShaderConfigured = true;
+         }
+      } else if (mode == BATCH_PARTICLE) {
+         GL20.glUseProgram(0);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
-         GL11.glDisable(GL11.GL_ALPHA_TEST);
-         GL11.glDisable(GL11.GL_FOG);
-         GL11.glEnable(GL11.GL_BLEND);
-         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
          GL11.glDepthFunc(GL11.GL_LEQUAL);
          GL11.glDepthMask(false);
       }
 
-      GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, batchVertexCount);
+      configuredBatchMode = mode;
+   }
 
-      if (batchMode == BATCH_TEXTURED) {
-         GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
-         GL20.glUseProgram(0);
+   private static void finishBatchPipeline() {
+      if (!batchPipelinePrepared) {
+         return;
       }
+
+      GL20.glUseProgram(0);
+      GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
       GL11.glDisableClientState(GL11.GL_COLOR_ARRAY);
       GL11.glDisableClientState(GL11.GL_VERTEX_ARRAY);
       GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
-
+      GL11.glDisable(GL11.GL_TEXTURE_2D);
+      GL11.glDisable(GL11.GL_BLEND);
       GL11.glDepthFunc(GL11.GL_ALWAYS);
       GL11.glDepthMask(true);
       GL11.glColorMask(true, true, true, false);
-      resetBatch();
+      resetBatchPipelineTracking();
+   }
+
+   private static void resetBatchPipelineTracking() {
+      batchPipelinePrepared = false;
+      configuredBatchMode = BATCH_NONE;
+      sceneShaderConfigured = false;
    }
 
    private static void resetBatch() {
@@ -1687,14 +1779,20 @@ final class GpuRasterizer3D {
       return (base + slopeY * yOffset) * 8.0D + slopeX * xOffset;
    }
 
-   private static double maxAbs(double... values) {
-      double max = 0.0D;
-      for (double value : values) {
-         double absolute = Math.abs(value);
-         if (absolute > max) {
-            max = absolute;
-         }
-      }
+   private static double maxAbs9(
+      double value0, double value1, double value2,
+      double value3, double value4, double value5,
+      double value6, double value7, double value8
+   ) {
+      double max = Math.abs(value0);
+      max = Math.max(max, Math.abs(value1));
+      max = Math.max(max, Math.abs(value2));
+      max = Math.max(max, Math.abs(value3));
+      max = Math.max(max, Math.abs(value4));
+      max = Math.max(max, Math.abs(value5));
+      max = Math.max(max, Math.abs(value6));
+      max = Math.max(max, Math.abs(value7));
+      max = Math.max(max, Math.abs(value8));
       return max;
    }
 
@@ -1764,7 +1862,16 @@ final class GpuRasterizer3D {
       colorPboBytes = 0;
       colorPboWriteIndex = 0;
       resetBatch();
+      resetBatchPipelineTracking();
       Arrays.fill(textureDirty, true);
+   }
+
+   private static boolean triangleVisible(int x0, int y0, int x1, int y1, int x2, int y2) {
+      int minX = Math.max(Rasterizer2D.topX, Math.min(x0, Math.min(x1, x2)));
+      int minY = Math.max(Rasterizer2D.topY, Math.min(y0, Math.min(y1, y2)));
+      int maxX = Math.min(Rasterizer2D.bottomX, Math.max(x0, Math.max(x1, x2)) + 1);
+      int maxY = Math.min(Rasterizer2D.bottomY, Math.max(y0, Math.max(y1, y2)) + 1);
+      return minX < maxX && minY < maxY;
    }
 
    private static final class Bounds {
