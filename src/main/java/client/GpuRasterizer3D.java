@@ -50,7 +50,9 @@ final class GpuRasterizer3D {
 
    private static GpuPresentationCanvas presentationCanvas;
    private static boolean contextSharedWithPresentation;
-   private static int presentationTexture;
+   private static final int[] presentationTextures = new int[2];
+   private static int presentationTextureWriteIndex;
+   private static int directFrameTexture;
    private static int presentationTextureWidth;
    private static int presentationTextureHeight;
 
@@ -232,12 +234,12 @@ final class GpuRasterizer3D {
          || !contextSharedWithPresentation
          || presentationCanvas == null
          || !presentationCanvas.isContextReady()
-         || presentationTexture == 0) {
+         || directFrameTexture == 0) {
          return false;
       }
 
       boolean queued = presentationCanvas.queueFrame(
-         presentationTexture,
+         directFrameTexture,
          uiPixels,
          uiWidth,
          uiHeight,
@@ -268,34 +270,43 @@ final class GpuRasterizer3D {
          throw new IllegalStateException("Invalid GPU presentation viewport");
       }
 
-      if (presentationTexture == 0
+      if (presentationTextures[0] == 0
+         || presentationTextures[1] == 0
          || presentationTextureWidth != viewportWidth
          || presentationTextureHeight != viewportHeight) {
-         if (presentationTexture != 0) {
-            GL11.glDeleteTextures(presentationTexture);
+         for (int texture : presentationTextures) {
+            if (texture != 0) {
+               GL11.glDeleteTextures(texture);
+            }
          }
-         presentationTexture = GL11.glGenTextures();
+         presentationTextures[0] = GL11.glGenTextures();
+         presentationTextures[1] = GL11.glGenTextures();
          presentationTextureWidth = viewportWidth;
          presentationTextureHeight = viewportHeight;
-         GL11.glBindTexture(GL11.GL_TEXTURE_2D, presentationTexture);
-         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
-         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-         GL11.glTexImage2D(
-            GL11.GL_TEXTURE_2D,
-            0,
-            GL11.GL_RGBA8,
-            presentationTextureWidth,
-            presentationTextureHeight,
-            0,
-            GL11.GL_RGBA,
-            GL11.GL_UNSIGNED_BYTE,
-            (ByteBuffer)null
-         );
+         presentationTextureWriteIndex = 0;
+
+         for (int texture : presentationTextures) {
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            GL11.glTexImage2D(
+               GL11.GL_TEXTURE_2D,
+               0,
+               GL11.GL_RGBA8,
+               presentationTextureWidth,
+               presentationTextureHeight,
+               0,
+               GL11.GL_RGBA,
+               GL11.GL_UNSIGNED_BYTE,
+               (ByteBuffer)null
+            );
+         }
       }
 
-      GL11.glBindTexture(GL11.GL_TEXTURE_2D, presentationTexture);
+      int texture = presentationTextures[presentationTextureWriteIndex];
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
       GL11.glCopyTexSubImage2D(
          GL11.GL_TEXTURE_2D,
          0,
@@ -306,6 +317,9 @@ final class GpuRasterizer3D {
          viewportWidth,
          viewportHeight
       );
+      directFrameTexture = texture;
+      presentationTextureWriteIndex ^= 1;
+
       // The AWT canvas uses a separate shared context. Flush the copy so the
       // texture contents are visible when the EDT composites this frame.
       GL11.glFlush();
@@ -1462,8 +1476,10 @@ final class GpuRasterizer3D {
             if (atlasTexture != 0) {
                GL11.glDeleteTextures(atlasTexture);
             }
-            if (presentationTexture != 0) {
-               GL11.glDeleteTextures(presentationTexture);
+            for (int presentationTexture : presentationTextures) {
+               if (presentationTexture != 0) {
+                  GL11.glDeleteTextures(presentationTexture);
+               }
             }
             for (int pbo : colorPbos) {
                if (pbo != 0) {
@@ -1480,7 +1496,9 @@ final class GpuRasterizer3D {
       pbuffer = null;
       contextSharedWithPresentation = false;
       directFrameReady = false;
-      presentationTexture = 0;
+      Arrays.fill(presentationTextures, 0);
+      presentationTextureWriteIndex = 0;
+      directFrameTexture = 0;
       presentationTextureWidth = 0;
       presentationTextureHeight = 0;
       bufferWidth = 0;
