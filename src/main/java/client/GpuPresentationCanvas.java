@@ -56,7 +56,14 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    private int paintingBuffer = -1;
    private volatile boolean sceneBackbufferPending;
+   private volatile boolean hasPresentedFrame;
    private boolean initialClearNeeded = true;
+
+   private int softwareFrameTexture;
+   private int softwareFrameWidth;
+   private int softwareFrameHeight;
+   private ByteBuffer softwareFrameUploadBytes;
+   private IntBuffer softwareFrameUploadInts;
 
    GpuPresentationCanvas(ClientWindow owner) throws LWJGLException {
       super(new PixelFormat().withAlphaBits(8).withDepthBits(24));
@@ -107,6 +114,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    boolean isInitializationPending() {
       return !contextReady && !failed;
+   }
+
+   boolean hasPresentedFrame() {
+      return this.hasPresentedFrame && isContextReady();
    }
 
    boolean hasFailed() {
@@ -318,8 +329,78 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
       if (presented) {
          this.sceneBackbufferPending = false;
+         this.hasPresentedFrame = true;
       }
       return presented;
+   }
+
+   boolean presentSoftwareFrame(
+      int[] pixels,
+      int frameWidth,
+      int frameHeight,
+      int targetX,
+      int targetY,
+      int targetWidth,
+      int targetHeight
+   ) {
+      long pixelCount = (long)frameWidth * (long)frameHeight;
+      if (!isContextReady()
+         || pixels == null
+         || frameWidth <= 0
+         || frameHeight <= 0
+         || pixelCount > Integer.MAX_VALUE / 4L
+         || pixels.length < pixelCount) {
+         return false;
+      }
+
+      final SoftwareFrameState frame;
+      synchronized (this) {
+         int count = (int)pixelCount;
+         ensureSoftwareFrameUploadCapacity(count);
+         this.softwareFrameUploadInts.clear();
+         this.softwareFrameUploadInts.put(pixels, 0, count);
+         this.softwareFrameUploadInts.flip();
+         this.softwareFrameUploadBytes.position(0);
+         this.softwareFrameUploadBytes.limit(count * 4);
+
+         frame = new SoftwareFrameState(
+            frameWidth,
+            frameHeight,
+            targetX,
+            targetY,
+            Math.max(1, targetWidth),
+            Math.max(1, targetHeight)
+         );
+      }
+
+      this.owner.setGpuPresentationSurface(true);
+      boolean presented = runInContext(new Runnable() {
+         @Override
+         public void run() {
+            initializeGlResources();
+            uploadSoftwareFrame(frame);
+            renderSoftwareFrame(frame);
+            try {
+               swapBuffers();
+            } catch (LWJGLException failure) {
+               throw new RuntimeException(failure);
+            }
+         }
+      });
+
+      if (presented) {
+         this.sceneBackbufferPending = false;
+         this.hasPresentedFrame = true;
+      }
+      return presented;
+   }
+
+   private void ensureSoftwareFrameUploadCapacity(int pixels) {
+      int bytes = pixels * 4;
+      if (this.softwareFrameUploadBytes == null || this.softwareFrameUploadBytes.capacity() < bytes) {
+         this.softwareFrameUploadBytes = BufferUtils.createByteBuffer(bytes).order(ByteOrder.nativeOrder());
+         this.softwareFrameUploadInts = this.softwareFrameUploadBytes.asIntBuffer();
+      }
    }
 
    private void detectDirtyTiles(
@@ -637,6 +718,102 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.uploadPboCapacity = newCapacity;
    }
 
+   private void uploadSoftwareFrame(SoftwareFrameState frame) {
+      GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, ensureSoftwareFrameTexture(frame.frameWidth, frame.frameHeight));
+
+      ByteBuffer upload = this.softwareFrameUploadBytes.duplicate().order(ByteOrder.nativeOrder());
+      upload.position(0);
+      upload.limit(frame.frameWidth * frame.frameHeight * 4);
+      GL11.glTexSubImage2D(
+         GL11.GL_TEXTURE_2D,
+         0,
+         0,
+         0,
+         frame.frameWidth,
+         frame.frameHeight,
+         GL_BGRA,
+         GL11.GL_UNSIGNED_BYTE,
+         upload
+      );
+   }
+
+   private int ensureSoftwareFrameTexture(int width, int height) {
+      if (this.softwareFrameTexture == 0) {
+         this.softwareFrameTexture = GL11.glGenTextures();
+         this.softwareFrameWidth = 0;
+         this.softwareFrameHeight = 0;
+      }
+
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.softwareFrameTexture);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+
+      if (this.softwareFrameWidth != width || this.softwareFrameHeight != height) {
+         this.softwareFrameWidth = width;
+         this.softwareFrameHeight = height;
+         GL11.glTexImage2D(
+            GL11.GL_TEXTURE_2D,
+            0,
+            GL11.GL_RGBA8,
+            width,
+            height,
+            0,
+            GL_BGRA,
+            GL11.GL_UNSIGNED_BYTE,
+            (ByteBuffer)null
+         );
+      }
+
+      return this.softwareFrameTexture;
+   }
+
+   private void renderSoftwareFrame(SoftwareFrameState frame) {
+      int canvasWidth = Math.max(1, this.getWidth());
+      int canvasHeight = Math.max(1, this.getHeight());
+
+      GL20.glUseProgram(0);
+      GL11.glColorMask(true, true, true, true);
+      GL11.glDisable(GL11.GL_DEPTH_TEST);
+      GL11.glDisable(GL11.GL_ALPHA_TEST);
+      GL11.glDisable(GL11.GL_BLEND);
+      clearOutsideTarget(
+         frame.targetX,
+         frame.targetY,
+         frame.targetWidth,
+         frame.targetHeight,
+         canvasWidth,
+         canvasHeight
+      );
+
+      int viewportY = canvasHeight - frame.targetY - frame.targetHeight;
+      GL11.glDisable(GL11.GL_SCISSOR_TEST);
+      GL11.glViewport(frame.targetX, viewportY, frame.targetWidth, frame.targetHeight);
+      GL11.glMatrixMode(GL11.GL_PROJECTION);
+      GL11.glLoadIdentity();
+      GL11.glOrtho(0.0D, frame.frameWidth, frame.frameHeight, 0.0D, -1.0D, 1.0D);
+      GL11.glMatrixMode(GL11.GL_MODELVIEW);
+      GL11.glLoadIdentity();
+      GL11.glEnable(GL11.GL_TEXTURE_2D);
+      GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.softwareFrameTexture);
+
+      GL11.glBegin(GL11.GL_QUADS);
+      GL11.glTexCoord2f(0.0F, 0.0F);
+      GL11.glVertex2f(0.0F, 0.0F);
+      GL11.glTexCoord2f(1.0F, 0.0F);
+      GL11.glVertex2f(frame.frameWidth, 0.0F);
+      GL11.glTexCoord2f(1.0F, 1.0F);
+      GL11.glVertex2f(frame.frameWidth, frame.frameHeight);
+      GL11.glTexCoord2f(0.0F, 1.0F);
+      GL11.glVertex2f(0.0F, frame.frameHeight);
+      GL11.glEnd();
+
+      GL11.glDisable(GL11.GL_TEXTURE_2D);
+   }
+
    private void renderFrame(FrameState frame) {
       int canvasWidth = Math.max(1, this.getWidth());
       int canvasHeight = Math.max(1, this.getHeight());
@@ -647,7 +824,14 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glDisable(GL11.GL_ALPHA_TEST);
       GL11.glEnable(GL11.GL_BLEND);
       GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-      clearOutsideTarget(frame, canvasWidth, canvasHeight);
+      clearOutsideTarget(
+         frame.targetX,
+         frame.targetY,
+         frame.targetWidth,
+         frame.targetHeight,
+         canvasWidth,
+         canvasHeight
+      );
 
       int viewportY = canvasHeight - frame.targetY - frame.targetHeight;
       GL11.glDisable(GL11.GL_SCISSOR_TEST);
@@ -686,11 +870,18 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glDisable(GL11.GL_BLEND);
    }
 
-   private static void clearOutsideTarget(FrameState frame, int canvasWidth, int canvasHeight) {
-      int left = Math.max(0, frame.targetX);
-      int bottom = Math.max(0, canvasHeight - frame.targetY - frame.targetHeight);
-      int right = Math.min(canvasWidth, frame.targetX + frame.targetWidth);
-      int top = Math.min(canvasHeight, canvasHeight - frame.targetY);
+   private static void clearOutsideTarget(
+      int targetX,
+      int targetY,
+      int targetWidth,
+      int targetHeight,
+      int canvasWidth,
+      int canvasHeight
+   ) {
+      int left = Math.max(0, targetX);
+      int bottom = Math.max(0, canvasHeight - targetY - targetHeight);
+      int right = Math.min(canvasWidth, targetX + targetWidth);
+      int top = Math.min(canvasHeight, canvasHeight - targetY);
 
       GL11.glEnable(GL11.GL_SCISSOR_TEST);
       GL11.glClearColor(0.0F, 0.0F, 0.0F, 1.0F);
@@ -790,6 +981,37 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.uiShadowHeight = 0;
       this.paintingBuffer = -1;
       this.initialClearNeeded = true;
+      this.hasPresentedFrame = false;
+      this.softwareFrameTexture = 0;
+      this.softwareFrameWidth = 0;
+      this.softwareFrameHeight = 0;
+      this.softwareFrameUploadBytes = null;
+      this.softwareFrameUploadInts = null;
+   }
+
+   private static final class SoftwareFrameState {
+      final int frameWidth;
+      final int frameHeight;
+      final int targetX;
+      final int targetY;
+      final int targetWidth;
+      final int targetHeight;
+
+      SoftwareFrameState(
+         int frameWidth,
+         int frameHeight,
+         int targetX,
+         int targetY,
+         int targetWidth,
+         int targetHeight
+      ) {
+         this.frameWidth = frameWidth;
+         this.frameHeight = frameHeight;
+         this.targetX = targetX;
+         this.targetY = targetY;
+         this.targetWidth = targetWidth;
+         this.targetHeight = targetHeight;
+      }
    }
 
    private static final class DirtyRect {
