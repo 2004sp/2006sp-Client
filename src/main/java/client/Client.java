@@ -1119,6 +1119,24 @@ public class Client extends GameShell {
       this.updateCameraRotationFrame(elapsedSeconds);
    }
 
+   private boolean shouldRedrawSoftwareUi() {
+      // Software/AWT presentation still needs a complete framebuffer every
+      // render. Once the direct GPU surface is live, however, the GL canvas
+      // retains the previous software overlay texture between scene frames.
+      if (!ClientWindow.isGpuPresentationVisible()) {
+         return true;
+      }
+
+      // The game loop raises this once per original 50 Hz tick. Existing dirty
+      // flags can request an earlier redraw for direct input-driven changes.
+      return this.consumeSoftwareUiRefreshRequested()
+         || this.welcomeScreenRaised
+         || this.needDrawTabArea
+         || this.inputTaken
+         || this.tabAreaAltered
+         || this.chatSettingsRedraw;
+   }
+
    private static int scaledUiDimension(int baseSize) {
       return Math.max(1, (baseSize * clampUiScalePercent(uiScalePercent) + 50) / 100);
    }
@@ -13898,7 +13916,9 @@ public class Client extends GameShell {
 
    private void drawGameScreen() {
       this.ensureGameScreenBufferMatchesViewport();
+      boolean redrawSoftwareUi = this.shouldRedrawSoftwareUi();
       if (this.fullscreenInterfaceId == -1 || this.loadingStage != 2 && super.graphicsBuffer == null) {
+         if (redrawSoftwareUi) {
          if (this.interfaceRedrawCounter != 0) {
             this.setupGameScreenBuffers();
          }
@@ -14076,6 +14096,7 @@ public class Client extends GameShell {
                this.gameScreenImageProducer.initDrawingArea();
             }
          }
+         }
 
          if (this.loadingStage == 2) {
             this.gameScreenImageProducer.initDrawingArea();
@@ -14196,16 +14217,26 @@ public class Client extends GameShell {
                // depth) synchronously, then the original software rasterizer
                // finishes the scene. Apply the legacy CPU fog only in that case.
                client.updateFog();
-            }
-            client.drawEntityOverlays();
-            client.drawHeadIcon();
-            client.animateTextures(textureUsageCounter);
-            client.draw3dScreen();
-            if (xpDropPosition != 0) {
-               client.drawExperienceDrops();
+               // Direct presentation can fail mid-frame. In that case compose
+               // the software UI now so the AWT fallback has a complete frame.
+               redrawSoftwareUi = true;
             }
 
-            client.gameScreenImageProducer.drawToBuffer(screenMode == 0 ? 4 : 0, client.frameBuffer, screenMode == 0 ? 4 : 0);
+            if (redrawSoftwareUi) {
+               client.drawEntityOverlays();
+               client.drawHeadIcon();
+               client.animateTextures(textureUsageCounter);
+               client.draw3dScreen();
+               if (xpDropPosition != 0) {
+                  client.drawExperienceDrops();
+               }
+
+               // Leave frameBuffer untouched on intermediate high-FPS frames.
+               // GpuPresentationCanvas already retains the previous overlay
+               // texture and its dirty-tile uploader will therefore have
+               // nothing to upload while the 3D backbuffer keeps changing.
+               client.gameScreenImageProducer.drawToBuffer(screenMode == 0 ? 4 : 0, client.frameBuffer, screenMode == 0 ? 4 : 0);
+            }
             client.cameraPositionX = cameraPositionX;
             client.cameraPositionZ = cameraPositionZ;
             client.xCameraPos = xCameraPos;
@@ -14213,7 +14244,7 @@ public class Client extends GameShell {
             client.yCameraPos = yCameraPos;
          }
 
-         if (this.loadingStage == 2 && screenMode == 0) {
+         if (redrawSoftwareUi && this.loadingStage == 2 && screenMode == 0) {
             // Resizable/fullscreen already renders and scales the minimap in
             // draw3dScreen(). Drawing it a second time here writes an unscaled
             // minimap back into gameScreenImageProducer after the composed
@@ -14230,11 +14261,11 @@ public class Client extends GameShell {
             }
          }
 
-         if (this.flashingSidebarId != -1) {
+         if (redrawSoftwareUi && this.flashingSidebarId != -1) {
             this.tabAreaAltered = true;
          }
 
-         if (this.tabAreaAltered) {
+         if (redrawSoftwareUi && this.tabAreaAltered) {
             if (this.flashingSidebarId != -1 && this.flashingSidebarId == this.currentTab) {
                this.flashingSidebarId = -1;
                this.outgoingBuffer.writeOpcode(120);
@@ -14766,7 +14797,7 @@ public class Client extends GameShell {
             this.gameScreenImageProducer.initDrawingArea();
          }
 
-         if (this.chatSettingsRedraw) {
+         if (redrawSoftwareUi && this.chatSettingsRedraw) {
             this.chatSettingsRedraw = false;
             if (screenMode == 0) {
                this.bottomFrameStripBuffer.initDrawingArea();
@@ -14831,7 +14862,7 @@ public class Client extends GameShell {
          }
 
          this.animationCycleDelta = 0;
-         if (autoScreenshots) {
+         if (redrawSoftwareUi && autoScreenshots) {
             if ((this.openInterfaceId == 12140 || this.openInterfaceId == 6960 || this.openInterfaceId == 19550 || this.openInterfaceId == 6733) && this.lastScreenshotInterfaceId != this.openInterfaceId) {
                this.autoScreenshotDelay++;
                if (this.autoScreenshotDelay >= 10) {
@@ -14895,6 +14926,7 @@ public class Client extends GameShell {
             }
          }
       } else {
+         if (redrawSoftwareUi) {
          if (this.loadingStage == 2) {
             this.animateInterface(this.animationCycleDelta, this.fullscreenInterfaceId);
             if (this.openInterfaceId != -1) {
@@ -14968,6 +15000,7 @@ public class Client extends GameShell {
 
          this.interfaceRedrawCounter++;
          super.graphicsBuffer.drawToBuffer(0, this.frameBuffer, 0);
+         }
       }
    }
    private void createStationaryGraphics() {
