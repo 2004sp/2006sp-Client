@@ -19,9 +19,10 @@ import org.lwjgl.opengl.PixelFormat;
  * never has to cross back to Java memory in the normal GPU path. The existing
  * software framebuffer is uploaded as a UI texture and composited over it.
  *
- * The old client does not maintain per-pixel alpha for its software UI. Inside
- * the 3D viewport, exact black is therefore treated as transparent; outside the
- * viewport the software frame remains fully opaque.
+ * The old client does not maintain per-pixel alpha for its software UI. During
+ * direct presentation the untouched 3D viewport is filled with a dedicated
+ * 0x010203 chroma key, which this canvas discards while preserving real black UI
+ * pixels. Outside the viewport the software frame remains fully opaque.
  */
 final class GpuPresentationCanvas extends AWTGLCanvas {
    private static final int GL_BGRA = 32993;
@@ -346,8 +347,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             + "  vec4 ui = texture2D(uOverlay, gl_TexCoord[0].st);\n"
             + "  bool inScene = vLogical.x >= uSceneRect.x && vLogical.x < uSceneRect.z"
             + " && vLogical.y >= uSceneRect.y && vLogical.y < uSceneRect.w;\n"
+            + "  vec3 key = vec3(1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0);\n"
             + "  if (uUseSceneKey > 0.5 && inScene"
-            + " && ui.r < 0.001 && ui.g < 0.001 && ui.b < 0.001) discard;\n"
+            + " && all(lessThan(abs(ui.rgb - key), vec3(0.5 / 255.0)))) discard;\n"
             + "  gl_FragColor = vec4(ui.rgb, 1.0);\n"
             + "}\n";
 
