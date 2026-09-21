@@ -34,6 +34,10 @@ final class GpuRasterizer3D {
    private static int bufferHeight;
    private static int viewportWidth = -1;
    private static int viewportHeight = -1;
+   private static int scissorX = Integer.MIN_VALUE;
+   private static int scissorY = Integer.MIN_VALUE;
+   private static int scissorWidth = Integer.MIN_VALUE;
+   private static int scissorHeight = Integer.MIN_VALUE;
 
    private static final int[] textureIds = new int[TEXTURE_COUNT];
    private static final boolean[] textureDirty = new boolean[TEXTURE_COUNT];
@@ -99,13 +103,17 @@ final class GpuRasterizer3D {
    }
 
    static void endFrame() {
+      endFrame(true);
+   }
+
+   static void endFrame(boolean copyDepth) {
       if (!frameOpen) {
          return;
       }
 
       try {
          if (frameActive) {
-            readBackFrame();
+            readBackFrame(copyDepth);
          }
       } catch (Throwable failure) {
          frameActive = false;
@@ -391,36 +399,52 @@ final class GpuRasterizer3D {
 
    private static boolean prepare(Bounds bounds) {
       try {
-         ensureContext(Rasterizer2D.width, Rasterizer2D.height);
-         makeCurrent();
-         configureViewport(Rasterizer2D.width, Rasterizer2D.height);
+         // beginFrame() already owns the current context and configures the
+         // viewport/depth state. Repeating those JNI calls for every triangle
+         // is especially expensive in resizable mode.
+         if (!frameActive) {
+            ensureContext(Rasterizer2D.width, Rasterizer2D.height);
+            makeCurrent();
+            configureViewport(Rasterizer2D.width, Rasterizer2D.height);
+            GL11.glEnable(GL11.GL_SCISSOR_TEST);
+         }
 
-         GL11.glEnable(GL11.GL_SCISSOR_TEST);
          if (frameActive) {
             int minX = Math.max(0, Rasterizer2D.topX);
             int minY = Math.max(0, Rasterizer2D.topY);
             int maxX = Math.min(viewportWidth, Rasterizer2D.bottomX);
             int maxY = Math.min(viewportHeight, Rasterizer2D.bottomY);
             if (minX >= maxX || minY >= maxY) {
-               GL11.glScissor(0, 0, 0, 0);
+               setScissor(0, 0, 0, 0);
                return true;
             }
-            GL11.glScissor(minX, viewportHeight - maxY, maxX - minX, maxY - minY);
+            setScissor(minX, viewportHeight - maxY, maxX - minX, maxY - minY);
          } else {
-            GL11.glScissor(bounds.minX, viewportHeight - bounds.maxY, bounds.width(), bounds.height());
+            setScissor(bounds.minX, viewportHeight - bounds.maxY, bounds.width(), bounds.height());
             GL11.glColorMask(true, true, true, true);
             GL11.glDisable(GL11.GL_BLEND);
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glDepthFunc(GL11.GL_ALWAYS);
+            GL11.glDepthMask(true);
          }
 
-         GL11.glEnable(GL11.GL_DEPTH_TEST);
-         GL11.glDepthFunc(GL11.GL_ALWAYS);
-         GL11.glDepthMask(true);
          return true;
       } catch (Throwable failure) {
          failCurrentFrame(failure);
          return false;
       }
+   }
+
+   private static void setScissor(int x, int y, int width, int height) {
+      if (x == scissorX && y == scissorY && width == scissorWidth && height == scissorHeight) {
+         return;
+      }
+      GL11.glScissor(x, y, width, height);
+      scissorX = x;
+      scissorY = y;
+      scissorWidth = width;
+      scissorHeight = height;
    }
 
    private static float configureLegacyBlend(boolean batched) {
@@ -508,6 +532,10 @@ final class GpuRasterizer3D {
       cachedLowMemory = Rasterizer3D.lowMemory;
       viewportWidth = -1;
       viewportHeight = -1;
+      scissorX = Integer.MIN_VALUE;
+      scissorY = Integer.MIN_VALUE;
+      scissorWidth = Integer.MIN_VALUE;
+      scissorHeight = Integer.MIN_VALUE;
       System.out.println("GPU renderer initialized: OpenGL Pbuffer " + bufferWidth + "x" + bufferHeight);
    }
 
@@ -584,26 +612,38 @@ final class GpuRasterizer3D {
    }
 
    private static void readBackFrame() {
+      readBackFrame(true);
+   }
+
+   private static void readBackFrame(boolean copyDepth) {
       if (viewportWidth <= 0 || viewportHeight <= 0) {
          return;
       }
-      readBack(new Bounds(0, 0, viewportWidth, viewportHeight), true, false);
+      readBack(new Bounds(0, 0, viewportWidth, viewportHeight), true, false, copyDepth);
    }
 
    private static void readBack(Bounds bounds, boolean copyColor, boolean blendLegacyAlpha) {
+      readBack(bounds, copyColor, blendLegacyAlpha, true);
+   }
+
+   private static void readBack(Bounds bounds, boolean copyColor, boolean blendLegacyAlpha, boolean copyDepth) {
       int width = bounds.width();
       int height = bounds.height();
       int count = width * height;
-      ensureReadbackCapacity(count);
+      ensureReadbackCapacity(count, copyDepth);
 
       colorReadback.clear();
       colorReadback.limit(count * 4);
-      depthReadback.clear();
-      depthReadback.limit(count);
+      if (copyDepth) {
+         depthReadback.clear();
+         depthReadback.limit(count);
+      }
 
       int readY = viewportHeight - bounds.maxY;
       GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, colorReadback);
-      GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthReadback);
+      if (copyDepth) {
+         GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthReadback);
+      }
 
       int legacyAlpha = Rasterizer3D.alpha;
       for (int readRow = 0; readRow < height; readRow++) {
@@ -613,16 +653,22 @@ final class GpuRasterizer3D {
 
          for (int x = 0; x < width; x++) {
             int sourcePixel = sourceRow + x;
-            float gpuDepth = depthReadback.get(sourcePixel);
-            if (gpuDepth >= 0.9999999F) {
+            int byteIndex = sourcePixel * 4;
+            if (copyDepth) {
+               float gpuDepth = depthReadback.get(sourcePixel);
+               if (gpuDepth >= 0.9999999F) {
+                  continue;
+               }
+               Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
+            } else if ((colorReadback.get(byteIndex + 3) & 255) == 0) {
+               // The Pbuffer clears alpha to zero. Rendered scene fragments
+               // write non-zero alpha, so colour-only frames don't need a
+               // second synchronous depth glReadPixels just to find coverage.
                continue;
             }
 
             int destinationIndex = destination + x;
-            Rasterizer2D.depthBuffer[destinationIndex] = gpuDepth * DEPTH_SCALE;
-
             if (copyColor) {
-               int byteIndex = sourcePixel * 4;
                int rgb = ((colorReadback.get(byteIndex) & 255) << 16)
                   | ((colorReadback.get(byteIndex + 1) & 255) << 8)
                   | (colorReadback.get(byteIndex + 2) & 255);
@@ -643,12 +689,12 @@ final class GpuRasterizer3D {
       }
    }
 
-   private static void ensureReadbackCapacity(int pixels) {
+   private static void ensureReadbackCapacity(int pixels, boolean copyDepth) {
       int colorBytes = pixels * 4;
       if (colorReadback == null || colorReadback.capacity() < colorBytes) {
          colorReadback = BufferUtils.createByteBuffer(colorBytes);
       }
-      if (depthReadback == null || depthReadback.capacity() < pixels) {
+      if (copyDepth && (depthReadback == null || depthReadback.capacity() < pixels)) {
          depthReadback = BufferUtils.createFloatBuffer(pixels);
       }
    }
