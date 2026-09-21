@@ -39,7 +39,7 @@ final class GpuRasterizer3D {
    private static final int PARTICLE_SEGMENTS = 16;
    private static final float[] PARTICLE_UNIT_X = new float[PARTICLE_SEGMENTS + 1];
    private static final float[] PARTICLE_UNIT_Y = new float[PARTICLE_SEGMENTS + 1];
-   private static final int UI_TRANSPARENT_KEY = 0x00010203;
+   static final int UI_TRANSPARENT_KEY = 0x00010203;
 
    private static volatile boolean requested = true;
    private static boolean unavailable;
@@ -389,6 +389,13 @@ final class GpuRasterizer3D {
          && presentationCanvas != null
          && !presentationCanvas.hasFailed()
          && !presentationCanvas.isContextReady();
+   }
+
+   static boolean isDirectUiOverlayPrepared() {
+      return requested
+         && directFrameReady
+         && presentationCanvas != null
+         && presentationCanvas.isContextReady();
    }
 
    private static void finishDirectPresentationFrame() {
