@@ -14114,16 +14114,21 @@ public class Client extends GameShell {
             Model.mouseX = client.mouseX - 4;
             Model.mouseY = client.mouseY - 4;
             Rasterizer2D.clear();
-            GpuRasterizer3D.beginFrame();
+            GpuRasterizer3D.beginFrame(fogEnabled, Math.abs(client.cameraPositionZ));
             client.scene.renderScene(client.cameraPositionX, client.xCameraPos, client.yCameraPos, client.cameraPositionZ, localGetCameraPlane, client.zCameraPos);
-            // Fog and particles are the post-scene users of the legacy depth
-            // buffer. When neither is active, avoid a second full-frame,
-            // synchronous GPU readback solely for depth.
-            boolean needsGpuDepth = fogEnabled || (client.particles != null && !client.particles.isEmpty());
-            GpuRasterizer3D.endFrame(needsGpuDepth);
-            client.scene.clearInteractiveObjectCache();
-            client.updateFog();
+
+            // Particles now use the GPU scene depth buffer while the frame is
+            // still open. This removes the full-frame depth readback entirely.
             client.updateParticles();
+            boolean gpuFrameCompleted = GpuRasterizer3D.endFrame();
+
+            client.scene.clearInteractiveObjectCache();
+            if (!gpuFrameCompleted) {
+               // A mid-frame GPU fallback copies the rendered prefix (including
+               // depth) synchronously, then the original software rasterizer
+               // finishes the scene. Apply the legacy CPU fog only in that case.
+               client.updateFog();
+            }
             client.drawEntityOverlays();
             client.drawHeadIcon();
             client.animateTextures(textureUsageCounter);
@@ -19971,6 +19976,24 @@ public class Client extends GameShell {
 
                   int[] integerBuffer = values;
                   float size = particle.getSize();
+
+                  // Keep particle occlusion on the GPU while a GPU scene frame
+                  // is active. The particle is blended after the fogged scene,
+                  // matching the old CPU ordering without downloading depth.
+                  if (GpuRasterizer3D.isFrameActive()) {
+                     float radius = 4.0F * size;
+                     if (GpuRasterizer3D.drawParticleCircle(
+                        integerBuffer[0],
+                        integerBuffer[1],
+                        integerBuffer[2],
+                        radius,
+                        particle.getColor(),
+                        particle.getAlpha()
+                     )) {
+                        continue;
+                     }
+                  }
+
                   particleScalar = (int)(particle.getAlpha() * 255.0F);
                   worldY = (int)(4.0F * particle.getSize());
                   int scalar2 = 256 - particleScalar;
