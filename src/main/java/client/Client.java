@@ -1228,9 +1228,15 @@ public class Client extends GameShell {
          return;
       }
 
-      // If direct presentation is temporarily unavailable (context recreation,
-      // driver failure, software renderer selection), immediately expose the
-      // original AWT surface again before drawing the CPU framebuffer.
+      // Keep the GPU card visible while AWT creates its native GL context or
+      // while the Pbuffer is doing the one-frame transition to a shared
+      // context. Hiding it here would destroy the initialization handshake.
+      if (ClientWindow.isGpuPresentationVisible() && GpuRasterizer3D.isDirectPresentationTransitioning()) {
+         return;
+      }
+
+      // A real failure or explicit software-renderer selection falls back to
+      // the original AWT framebuffer immediately.
       if (ClientWindow.isGpuPresentationVisible() && this instanceof ClientWindow) {
          ((ClientWindow)this).setGpuPresentationSurface(false);
       }
