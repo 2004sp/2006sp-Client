@@ -402,8 +402,7 @@ final class GpuRasterizer3D {
 
       boolean batched = frameActive;
       try {
-         int glTexture = ensureTexture(textureId);
-         if (glTexture == 0) {
+         if (ensureTexture(textureId) == 0) {
             if (batched) {
                fallbackCurrentFrame();
             }
@@ -466,33 +465,10 @@ final class GpuRasterizer3D {
             return true;
          }
 
-         GL11.glColorMask(true, true, true, false);
-         GL11.glDisable(GL11.GL_BLEND);
-         GL11.glEnable(GL11.GL_TEXTURE_2D);
-         GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexture);
-         GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
-         GL11.glEnable(GL11.GL_ALPHA_TEST);
-         GL11.glAlphaFunc(GL11.GL_GREATER, 0.001F);
-         GL11.glShadeModel(GL11.GL_SMOOTH);
-
-         GL11.glBegin(GL11.GL_TRIANGLES);
-         setTextureShade(shade0, smoothTextureLight);
-         GL11.glTexCoord4f((float)(pu0 * coordinateScale), (float)(pv0 * coordinateScale), 0.0F, (float)(pw0 * coordinateScale));
-         GL11.glVertex3f(x0, y0, -clampDepth(depth0));
-
-         setTextureShade(shade1, smoothTextureLight);
-         GL11.glTexCoord4f((float)(pu1 * coordinateScale), (float)(pv1 * coordinateScale), 0.0F, (float)(pw1 * coordinateScale));
-         GL11.glVertex3f(x1, y1, -clampDepth(depth1));
-
-         setTextureShade(shade2, smoothTextureLight);
-         GL11.glTexCoord4f((float)(pu2 * coordinateScale), (float)(pv2 * coordinateScale), 0.0F, (float)(pw2 * coordinateScale));
-         GL11.glVertex3f(x2, y2, -clampDepth(depth2));
-         GL11.glEnd();
-
-         if (!batched) {
-            readBack(bounds, true, false);
-         }
-         return true;
+         // The atlas-backed textured path is frame-batched. Auxiliary
+         // textured triangle calls outside a scene frame stay on the original
+         // software rasterizer rather than sampling the wrong atlas cell.
+         return false;
       } catch (Throwable failure) {
          failCurrentFrame(failure);
          return false;
