@@ -198,7 +198,15 @@ public final class ClientWindow extends Client implements ActionListener {
          && gpuPresentationCanvas != null
          && !gpuPresentationCanvas.hasFailed();
       if (this.gpuPresentationVisible == target) {
-         return;
+         // The logical card state can get ahead of the native heavyweight
+         // Canvas peer. If GPU presentation is still requested but the canvas
+         // lost displayability, run the show/revalidate path again so AWT can
+         // recreate the peer and drive initGL() from paint().
+         if (!target
+            || gpuPresentationCanvas == null
+            || gpuPresentationCanvas.isDisplayable()) {
+            return;
+         }
       }
       this.gpuPresentationVisible = target;
 
