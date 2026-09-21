@@ -939,8 +939,9 @@ public class Client extends GameShell {
          Rectangle fullscreenBounds = gameFrame.getGraphicsConfiguration().getBounds();
          if (!fixedFullscreen) {
             screenMode = 1;
-            clientWidth = fullscreenBounds.width;
-            clientHeight = fullscreenBounds.height;
+            Dimension renderSize = getResizableRenderSize(fullscreenBounds.width, fullscreenBounds.height);
+            clientWidth = renderSize.width;
+            clientHeight = renderSize.height;
          } else {
             // Keep the logical fixed framebuffer untouched. drawFrameBufferToWindow()
             // scales the complete selected 317/459/474 frame to the fullscreen
