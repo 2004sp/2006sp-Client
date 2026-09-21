@@ -181,9 +181,6 @@ public final class ClientWindow extends Client implements ActionListener {
             clientWindow.frame.pack();
             clientWindow.frame.setLocationRelativeTo(null);
             clientWindow.frame.setVisible(true);
-            if (gpuPresentationCanvas != null) {
-               gpuPresentationCanvas.initializeContextAsync();
-            }
             clientWindow.frame.setResizable(false);
             clientWindow.init();
             clientWindow.frame.setTitle("Progressive 2006 singleplayer [v1.0]");
@@ -197,7 +194,9 @@ public final class ClientWindow extends Client implements ActionListener {
       }
    }
    void setGpuPresentationSurface(final boolean enabled) {
-      final boolean target = enabled && gpuPresentationCanvas != null && gpuPresentationCanvas.isContextReady();
+      final boolean target = enabled
+         && gpuPresentationCanvas != null
+         && !gpuPresentationCanvas.hasFailed();
       if (this.gpuPresentationVisible == target) {
          return;
       }
@@ -230,6 +229,12 @@ public final class ClientWindow extends Client implements ActionListener {
 
    static boolean isGpuPresentationVisible() {
       return instance != null && instance.gpuPresentationVisible;
+   }
+
+   static boolean isGpuPresentationInitializing() {
+      return gpuPresentationCanvas != null
+         && isGpuPresentationVisible()
+         && gpuPresentationCanvas.isInitializationPending();
    }
 
    private void initializeFullscreenMenu() {
