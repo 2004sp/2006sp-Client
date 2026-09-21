@@ -11,6 +11,69 @@ public class Rasterizer2D extends CacheableNode {
    public static int centerY;
    public static int viewportCenterY;
    public static float[] depthBuffer;
+
+   /**
+    * Blend a legacy software-UI pixel while preserving real alpha for the
+    * direct GPU compositor. The legacy framebuffer's high byte is unused by
+    * its DirectColorModel, so direct presentation can safely use it as alpha
+    * metadata without changing the software renderer's normal output.
+    */
+   static int blendUiPixel(int sourceRgb, int destination, int alpha256) {
+      if (alpha256 <= 0) {
+         return destination;
+      }
+      sourceRgb &= 0x00FFFFFF;
+      if (alpha256 >= 256) {
+         return sourceRgb;
+      }
+
+      if (GpuRasterizer3D.isDirectUiOverlayPrepared()) {
+         int destinationRgb = destination & 0x00FFFFFF;
+         int destinationAlpha = destination >>> 24;
+
+         if (destinationAlpha == 0 && destinationRgb == GpuRasterizer3D.UI_TRANSPARENT_KEY) {
+            int encodedAlpha = (alpha256 * 255 + 128) >> 8;
+            if (encodedAlpha < 1) {
+               encodedAlpha = 1;
+            }
+            return encodedAlpha << 24 | sourceRgb;
+         }
+
+         if (destinationAlpha != 0) {
+            int inverse = 256 - alpha256;
+            int outAlphaNumerator = alpha256 * 255 + destinationAlpha * inverse;
+            if (outAlphaNumerator <= 0) {
+               return GpuRasterizer3D.UI_TRANSPARENT_KEY;
+            }
+
+            int sourceRed = sourceRgb >> 16 & 255;
+            int sourceGreen = sourceRgb >> 8 & 255;
+            int sourceBlue = sourceRgb & 255;
+            int destinationRed = destinationRgb >> 16 & 255;
+            int destinationGreen = destinationRgb >> 8 & 255;
+            int destinationBlue = destinationRgb & 255;
+
+            int sourceWeight = alpha256 * 255;
+            int destinationWeight = destinationAlpha * inverse;
+            int red = (sourceRed * sourceWeight + destinationRed * destinationWeight + outAlphaNumerator / 2) / outAlphaNumerator;
+            int green = (sourceGreen * sourceWeight + destinationGreen * destinationWeight + outAlphaNumerator / 2) / outAlphaNumerator;
+            int blue = (sourceBlue * sourceWeight + destinationBlue * destinationWeight + outAlphaNumerator / 2) / outAlphaNumerator;
+            int encodedAlpha = (outAlphaNumerator + 128) >> 8;
+            if (encodedAlpha < 1) {
+               encodedAlpha = 1;
+            } else if (encodedAlpha > 255) {
+               encodedAlpha = 255;
+            }
+
+            return encodedAlpha << 24 | red << 16 | green << 8 | blue;
+         }
+      }
+
+      int inverse = 256 - alpha256;
+      return ((sourceRgb & 16711935) * alpha256 + (destination & 16711935) * inverse & -16711936)
+            + ((sourceRgb & 0xFF00) * alpha256 + (destination & 0xFF00) * inverse & 0xFF0000)
+         >> 8;
+   }
    public static void setRasterBuffer(int rasterHeight, int rasterWidth, int[] pixelBuffer, float[] depthBufferData) {
       pixels = pixelBuffer;
       width = rasterWidth;
@@ -32,16 +95,9 @@ public class Rasterizer2D extends CacheableNode {
          pixelIndex += scalarArgument * width;
 
          for (int loopIndex = 0; loopIndex < newBottomX; loopIndex++) {
-            pixel = (newBottomX - loopIndex) / (newBottomX / 256);
-            scalarArgument2 = 256 - pixel;
-            int scalar = pixel * 109;
-            int scalar2 = pixel * 106;
-            pixel *= 87;
-            int scalar3 = (pixels[pixelIndex] >> 16 & 0xFF) * scalarArgument2;
-            int scalar4 = (pixels[pixelIndex] >> 8 & 0xFF) * scalarArgument2;
-            scalarArgument2 = (pixels[pixelIndex] & 0xFF) * scalarArgument2;
-            pixel = (scalar + scalar3 >> 8 << 16) + (scalar2 + scalar4 >> 8 << 8) + (pixel + scalarArgument2 >> 8);
-            pixels[pixelIndex++] = pixel;
+            int alpha = (newBottomX - loopIndex) / (newBottomX / 256);
+            pixels[pixelIndex] = blendUiPixel(0x6D6A57, pixels[pixelIndex], alpha);
+            pixelIndex++;
          }
       }
    }
@@ -115,23 +171,17 @@ public class Rasterizer2D extends CacheableNode {
          newBottomY = bottomY - pixelIndex;
       }
 
-      int scalar = 256 - newWidth;
-      int scalar2 = (scalarArgument >> 16 & 0xFF) * newWidth;
-      int scalar3 = (scalarArgument >> 8 & 0xFF) * newWidth;
-      scalarArgument = (scalarArgument & 0xFF) * newWidth;
-      newWidth = width - newIndex;
+      int alpha = newWidth;
+      int rowSkip = width - newIndex;
       pixelIndex = newTopX + pixelIndex * width;
 
       for (int loopIndex = 0; loopIndex < newBottomY; loopIndex++) {
          for (int loopIndex2 = -newIndex; loopIndex2 < 0; loopIndex2++) {
-            int pixel = (pixels[pixelIndex] >> 16 & 0xFF) * scalar;
-            int scalar4 = (pixels[pixelIndex] >> 8 & 0xFF) * scalar;
-            int scalar5 = (pixels[pixelIndex] & 0xFF) * scalar;
-            pixel = (scalar2 + pixel >> 8 << 16) + (scalar3 + scalar4 >> 8 << 8) + (scalarArgument + scalar5 >> 8);
-            pixels[pixelIndex++] = pixel;
+            pixels[pixelIndex] = blendUiPixel(scalarArgument, pixels[pixelIndex], alpha);
+            pixelIndex++;
          }
 
-         pixelIndex += newWidth;
+         pixelIndex += rowSkip;
       }
    }
    public static void fillRectangle(int positionArgument, int newTopY, int newTopX, int pixel, int newIndex) {
@@ -271,18 +321,11 @@ public class Rasterizer2D extends CacheableNode {
             newBottomX = bottomX - pixelOrTopX;
          }
 
-         int scalar = 256 - scalarArgument2;
-         int scalar2 = (scalarArgument >> 16 & 0xFF) * scalarArgument2;
-         int scalar3 = (scalarArgument >> 8 & 0xFF) * scalarArgument2;
-         scalarArgument = (scalarArgument & 0xFF) * scalarArgument2;
          pixelIndex = pixelOrTopX + pixelIndex * width;
 
          for (int loopIndex = 0; loopIndex < newBottomX; loopIndex++) {
-            pixelOrTopX = (pixels[pixelIndex] >> 16 & 0xFF) * scalar;
-            int scalar4 = (pixels[pixelIndex] >> 8 & 0xFF) * scalar;
-            int scalar5 = (pixels[pixelIndex] & 0xFF) * scalar;
-            pixelOrTopX = (scalar2 + pixelOrTopX >> 8 << 16) + (scalar3 + scalar4 >> 8 << 8) + (scalarArgument + scalar5 >> 8);
-            pixels[pixelIndex++] = pixelOrTopX;
+            pixels[pixelIndex] = blendUiPixel(scalarArgument, pixels[pixelIndex], scalarArgument2);
+            pixelIndex++;
          }
       }
    }
@@ -333,18 +376,10 @@ public class Rasterizer2D extends CacheableNode {
             newBottomY = bottomY - pixelOrTopY;
          }
 
-         int scalar = 256 - scalarArgument2;
-         int scalar2 = (scalarArgument >> 16 & 0xFF) * scalarArgument2;
-         int scalar3 = (scalarArgument >> 8 & 0xFF) * scalarArgument2;
-         scalarArgument = (scalarArgument & 0xFF) * scalarArgument2;
          pixelIndex += pixelOrTopY * width;
 
          for (int loopIndex = 0; loopIndex < newBottomY; loopIndex++) {
-            pixelOrTopY = (pixels[pixelIndex] >> 16 & 0xFF) * scalar;
-            int scalar4 = (pixels[pixelIndex] >> 8 & 0xFF) * scalar;
-            int scalar5 = (pixels[pixelIndex] & 0xFF) * scalar;
-            pixelOrTopY = (scalar2 + pixelOrTopY >> 8 << 16) + (scalar3 + scalar4 >> 8 << 8) + (scalarArgument + scalar5 >> 8);
-            pixels[pixelIndex] = pixelOrTopY;
+            pixels[pixelIndex] = blendUiPixel(scalarArgument, pixels[pixelIndex], scalarArgument2);
             pixelIndex += width;
          }
       }
