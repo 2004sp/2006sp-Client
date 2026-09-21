@@ -2,7 +2,9 @@ package client;
 
 import worldmap.WorldMapViewer;
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Color;
+import java.awt.EventQueue;
 import java.awt.Dimension;
 import java.awt.DisplayMode;
 import java.awt.Point;
@@ -40,6 +42,9 @@ public final class ClientWindow extends Client implements ActionListener {
    private static JRadioButtonMenuItem softwareRendererMenuItem;
    public static JMenu fullscreenMenu;
    private static JPanel clientPanel;
+   private static CardLayout clientCardLayout;
+   private static GpuPresentationCanvas gpuPresentationCanvas;
+   private volatile boolean gpuPresentationVisible;
    public static JButton windowedModeButton;
    public static ArrayList<ServerEntry> serverEntries = new ArrayList<ServerEntry>();
    private FullscreenManager fullscreenManager;
@@ -79,8 +84,19 @@ public final class ClientWindow extends Client implements ActionListener {
             resetServerEntries();
             clientWindow.frame.setDefaultCloseOperation(0);
             clientWindow.frame.addWindowListener(new ClientWindowListener(clientWindow));
-            (clientPanel = new JPanel()).setLayout(new BorderLayout());
-            clientPanel.add(clientWindow);
+            clientCardLayout = new CardLayout();
+            (clientPanel = new JPanel()).setLayout(clientCardLayout);
+            clientPanel.add(clientWindow, "software");
+            try {
+               gpuPresentationCanvas = new GpuPresentationCanvas(clientWindow);
+               clientPanel.add(gpuPresentationCanvas, "gpu");
+               GpuRasterizer3D.setPresentationCanvas(gpuPresentationCanvas);
+            } catch (Throwable gpuCanvasFailure) {
+               gpuPresentationCanvas = null;
+               System.err.println("GPU direct presentation canvas unavailable; using Java framebuffer presentation.");
+               gpuCanvasFailure.printStackTrace();
+            }
+            clientCardLayout.show(clientPanel, "software");
             clientPanel.setPreferredSize(new Dimension(765, 503));
             JButton jButton;
             (jButton = new JButton("World Map")).addActionListener(clientWindow);
@@ -165,6 +181,9 @@ public final class ClientWindow extends Client implements ActionListener {
             clientWindow.frame.pack();
             clientWindow.frame.setLocationRelativeTo(null);
             clientWindow.frame.setVisible(true);
+            if (gpuPresentationCanvas != null) {
+               gpuPresentationCanvas.initializeContextAsync();
+            }
             clientWindow.frame.setResizable(false);
             clientWindow.init();
             clientWindow.frame.setTitle("Progressive 2006 singleplayer [v1.0]");
@@ -177,6 +196,42 @@ public final class ClientWindow extends Client implements ActionListener {
          exception2.printStackTrace();
       }
    }
+   void setGpuPresentationSurface(final boolean enabled) {
+      final boolean target = enabled && gpuPresentationCanvas != null && gpuPresentationCanvas.isContextReady();
+      if (this.gpuPresentationVisible == target) {
+         return;
+      }
+      this.gpuPresentationVisible = target;
+
+      Runnable switchSurface = new Runnable() {
+         @Override
+         public void run() {
+            if (clientCardLayout == null || clientPanel == null) {
+               return;
+            }
+            clientCardLayout.show(clientPanel, target ? "gpu" : "software");
+            clientPanel.revalidate();
+            clientPanel.repaint();
+            if (target && gpuPresentationCanvas != null) {
+               gpuPresentationCanvas.requestFocusInWindow();
+            } else {
+               ClientWindow.this.requestFocusInWindow();
+               ClientWindow.this.graphics = ClientWindow.this.getGraphics();
+            }
+         }
+      };
+
+      if (EventQueue.isDispatchThread()) {
+         switchSurface.run();
+      } else {
+         EventQueue.invokeLater(switchSurface);
+      }
+   }
+
+   static boolean isGpuPresentationVisible() {
+      return instance != null && instance.gpuPresentationVisible;
+   }
+
    private void initializeFullscreenMenu() {
       this.fullscreenManager = new FullscreenManager();
       DisplayMode[] displayModes = this.fullscreenManager.getDisplayModes();
@@ -442,6 +497,7 @@ public final class ClientWindow extends Client implements ActionListener {
 
             if (text.equals("Software Rendering")) {
                GpuRasterizer3D.setEnabled(false);
+               this.setGpuPresentationSurface(false);
                softwareRendererMenuItem.setSelected(true);
             }
 
@@ -509,6 +565,9 @@ public final class ClientWindow extends Client implements ActionListener {
                if (gpuRendererMenuItem != null && softwareRendererMenuItem != null) {
                   gpuRendererMenuItem.setSelected(GpuRasterizer3D.isRequested());
                   softwareRendererMenuItem.setSelected(!GpuRasterizer3D.isRequested());
+                  if (!GpuRasterizer3D.isRequested()) {
+                     this.setGpuPresentationSurface(false);
+                  }
                }
             }
 
