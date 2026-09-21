@@ -28,6 +28,7 @@ import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.text.NumberFormat;
 import java.util.ArrayList;
@@ -11788,7 +11789,22 @@ public class Client extends GameShell {
 
             this.login(text, newText, flag);
          }
+      } catch (SocketTimeoutException exception3) {
+         // A stalled login handshake is an expected network failure, not a
+         // client crash. Close the half-open connection so the next login
+         // attempt starts with a fresh socket and report the timeout in the
+         // login UI instead of dumping a stack trace to the console.
+         if (this.connection != null) {
+            this.connection.close();
+            this.connection = null;
+         }
+         this.loginMessage1 = "";
+         this.loginMessage2 = "No response from server. Please try again.";
       } catch (IOException exception3) {
+         if (this.connection != null) {
+            this.connection.close();
+            this.connection = null;
+         }
          exception3.printStackTrace();
          this.loginMessage1 = "";
          this.loginMessage2 = "Error connecting to server.";
