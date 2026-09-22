@@ -1691,15 +1691,11 @@ public class Client extends GameShell {
             }
 
             int destinationIndex = destinationRow + destinationLeft + x;
-            int destinationPixel = destination[destinationIndex];
-            int inverseAlpha = 256 - alpha;
-            destination[destinationIndex] = ((sourcePixel & 16711935) * alpha
-                  + (destinationPixel & 16711935) * inverseAlpha
-                  & -16711936)
-               + ((sourcePixel & 0xFF00) * alpha
-                  + (destinationPixel & 0xFF00) * inverseAlpha
-                  & 0xFF0000)
-               >> 8;
+            destination[destinationIndex] = Rasterizer2D.blendUiPixel(
+               sourcePixel,
+               destination[destinationIndex],
+               alpha
+            );
          }
       }
       Rasterizer2D.markGpuDirty(destinationLeft, 0, destinationWidth, destinationHeight);
