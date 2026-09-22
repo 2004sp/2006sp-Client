@@ -45,6 +45,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private boolean[] remainingDirtyTiles;
    private DirtyRect[] dirtyRects;
    private final FrameState[] frameStates = new FrameState[]{new FrameState(), new FrameState()};
+   private final FrameState lastPresentedFrameState = new FrameState();
+   private boolean lastPresentedFrameStateValid;
 
    private volatile boolean contextReady;
    private volatile boolean failed;
@@ -259,12 +261,26 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
                return;
             }
 
+            // Reconstruct the exact last direct scene + overlay into the
+            // backbuffer before reading it. Reading GL_FRONT after an AWT
+            // swap is unreliable on some Windows compositor/driver paths and
+            // can yield a transient black frame during region changes.
+            if (lastPresentedFrameStateValid
+               && GpuRasterizer3D.getPresentationSceneTexture() != 0
+               && overlayTexture != 0) {
+               initializeGlResources();
+               renderFrame(lastPresentedFrameState);
+               GL11.glReadBuffer(GL11.GL_BACK);
+            } else {
+               // Compatibility fallback for software-only presented frames.
+               GL11.glReadBuffer(GL11.GL_FRONT);
+            }
+
             ensureRetainedFrameCapacity((int)pixelCount);
             ByteBuffer destination = retainedFrameBytes;
             destination.clear();
             destination.limit((int)pixelCount * 4);
 
-            GL11.glReadBuffer(GL11.GL_FRONT);
             GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
             GL11.glReadPixels(
                0,
@@ -283,9 +299,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             retainedFrameHeight = height;
             retainedFrameTextureDirty = true;
             retainedFrameActive = true;
-            // A retained front-buffer snapshot is authoritative during a
-            // region rebuild. Do not let an older unpresented scene-pending
-            // flag suppress repainting that snapshot.
             sceneBackbufferPending = false;
             captured[0] = true;
          }
@@ -437,7 +450,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
 
-      this.owner.setGpuPresentationSurface(true);
       boolean presented = runInContext(new Runnable() {
          @Override
          public void run() {
@@ -462,9 +474,14 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          if (dirtyBuffer != null) {
             dirtyBuffer.clearGpuDirtyTiles();
          }
+         this.lastPresentedFrameState.copyPresentationFrom(frame);
+         this.lastPresentedFrameStateValid = true;
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
          this.everPresentedFrame = true;
+         // Reveal the heavyweight GL card only after the complete frame has
+         // already been swapped. This avoids a black card during re-login.
+         this.owner.setGpuPresentationSurface(true);
       }
       return presented;
    }
@@ -509,7 +526,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
 
-      this.owner.setGpuPresentationSurface(true);
       boolean presented = runInContext(new Runnable() {
          @Override
          public void run() {
@@ -530,9 +546,11 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          releaseStagingIfIdle();
       }
       if (presented) {
+         this.lastPresentedFrameStateValid = false;
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
          this.everPresentedFrame = true;
+         this.owner.setGpuPresentationSurface(true);
       }
       return presented;
    }
@@ -1436,6 +1454,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.softwareFrameTexture = 0;
       this.softwareFrameWidth = 0;
       this.softwareFrameHeight = 0;
+      this.lastPresentedFrameStateValid = false;
    }
 
    private void releaseStagingIfIdle() {
@@ -1523,6 +1542,23 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       DirtyRect[] dirtyRects;
       int dirtyRectCount;
       int uploadByteCount;
+
+      void copyPresentationFrom(FrameState source) {
+         this.bufferIndex = -1;
+         this.uiWidth = source.uiWidth;
+         this.uiHeight = source.uiHeight;
+         this.targetX = source.targetX;
+         this.targetY = source.targetY;
+         this.targetWidth = source.targetWidth;
+         this.targetHeight = source.targetHeight;
+         this.sceneX = source.sceneX;
+         this.sceneY = source.sceneY;
+         this.sceneWidth = source.sceneWidth;
+         this.sceneHeight = source.sceneHeight;
+         this.dirtyRects = null;
+         this.dirtyRectCount = 0;
+         this.uploadByteCount = 0;
+      }
 
       void set(
          int bufferIndex,
