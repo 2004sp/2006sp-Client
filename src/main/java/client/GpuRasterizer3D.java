@@ -137,11 +137,12 @@ final class GpuRasterizer3D {
 
    static void setPresentationCanvas(GpuPresentationCanvas canvas) {
       presentationCanvas = canvas;
+      Rasterizer2D.setEncodeGpuOverlayAlpha(isDirectUiOverlayPrepared());
    }
 
    static void setEnabled(boolean enabled) {
       requested = enabled;
-      directFrameReady = false;
+      setDirectFrameReady(false);
       if (enabled) {
          unavailable = false;
       } else {
@@ -260,7 +261,7 @@ final class GpuRasterizer3D {
       frameActive = false;
       frameSoftwareFallback = false;
       frameDirectPresentation = false;
-      directFrameReady = false;
+      setDirectFrameReady(false);
       frameFogEnabled = fogEnabled;
       frameFogStart = 1430.0F + fogDistanceOffset;
       frameFogEnd = 2100.0F + fogDistanceOffset;
@@ -345,7 +346,7 @@ final class GpuRasterizer3D {
             finishBatchPipeline();
             if (frameDirectPresentation && canUseDirectPresentation()) {
                finishDirectPresentationFrame();
-               directFrameReady = true;
+               setDirectFrameReady(true);
             } else {
                readBackFrameAsync();
                if (presentationCanvas != null && !isDirectPresentationTransitioning()) {
@@ -402,7 +403,7 @@ final class GpuRasterizer3D {
          sceneWidth,
          sceneHeight
       );
-      directFrameReady = false;
+      setDirectFrameReady(false);
       if (!queued) {
          if (presentationCanvas.hasFailed()) {
             presentationCanvas.deactivate();
@@ -433,7 +434,7 @@ final class GpuRasterizer3D {
          return false;
       }
 
-      directFrameReady = false;
+      setDirectFrameReady(false);
       boolean presented = presentationCanvas.presentSoftwareFrame(
          pixels,
          frameWidth,
@@ -480,6 +481,16 @@ final class GpuRasterizer3D {
          && directFrameReady
          && presentationCanvas != null
          && presentationCanvas.isContextReady();
+   }
+
+   private static void setDirectFrameReady(boolean ready) {
+      directFrameReady = ready;
+      Rasterizer2D.setEncodeGpuOverlayAlpha(
+         ready
+            && requested
+            && presentationCanvas != null
+            && presentationCanvas.isContextReady()
+      );
    }
 
    private static void finishDirectPresentationFrame() {
@@ -1071,7 +1082,7 @@ final class GpuRasterizer3D {
       if (presentationCanvas != canvas) {
          return;
       }
-      directFrameReady = false;
+      setDirectFrameReady(false);
       frameDirectPresentation = false;
       directModeLogged = false;
       if (rendererUsesPresentationContext) {
@@ -1978,7 +1989,7 @@ final class GpuRasterizer3D {
       }
       pbuffer = null;
       rendererUsesPresentationContext = false;
-      directFrameReady = false;
+      setDirectFrameReady(false);
       frameDirectPresentation = false;
       directModeLogged = false;
       bufferWidth = 0;
