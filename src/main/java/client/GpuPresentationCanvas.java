@@ -486,7 +486,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          @Override
          public void run() {
             initializeGlResources();
-            uploadSoftwareFrame(frame, this.softwareFrameUploadBytes);
+            uploadSoftwareFrame(frame, GpuPresentationCanvas.this.softwareFrameUploadBytes);
             renderSoftwareFrame(frame);
             try {
                swapBuffers();
