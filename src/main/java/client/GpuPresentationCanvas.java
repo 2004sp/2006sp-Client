@@ -33,6 +33,7 @@ import org.lwjgl.opengl.PixelFormat;
 final class GpuPresentationCanvas extends AWTGLCanvas {
    private static final int GL_BGRA = 32993;
    private static final int DIRTY_TILE_SIZE = 64;
+   private static final int BUFFER_SHRINK_RATIO = 4;
    private static final DirtyRect[] NO_DIRTY_RECTS = new DirtyRect[0];
 
    private final ClientWindow owner;
@@ -57,6 +58,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private int uniformUseSceneKey;
 
    private int paintingBuffer = -1;
+   private boolean frameUploadInProgress;
+   private boolean releaseStagingWhenIdle;
    private volatile boolean sceneBackbufferPending;
    private volatile boolean hasPresentedFrame;
    private boolean everPresentedFrame;
@@ -146,6 +149,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    void deactivate() {
       this.retainedFrameActive = false;
       this.everPresentedFrame = false;
+      synchronized (this) {
+         this.releaseStagingWhenIdle = true;
+         releaseStagingIfIdle();
+      }
       this.owner.setGpuPresentationSurface(false);
    }
 
@@ -273,13 +280,25 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    private void ensureRetainedFrameCapacity(int pixels) {
       int bytes = pixels * 4;
-      if (this.retainedFrameBytes == null || this.retainedFrameBytes.capacity() < bytes) {
+      if (this.retainedFrameBytes == null
+         || this.retainedFrameBytes.capacity() < bytes
+         || shouldShrink(this.retainedFrameBytes.capacity(), bytes)) {
          this.retainedFrameBytes = BufferUtils.createByteBuffer(bytes).order(ByteOrder.nativeOrder());
       }
    }
 
    private void finishTransitionFrameRetention() {
       this.retainedFrameActive = false;
+      this.retainedFrameBytes = null;
+      this.retainedFrameWidth = 0;
+      this.retainedFrameHeight = 0;
+      this.retainedFrameTextureDirty = false;
+      if (this.retainedFrameTexture != 0) {
+         GL11.glDeleteTextures(this.retainedFrameTexture);
+         this.retainedFrameTexture = 0;
+      }
+      this.retainedFrameTextureWidth = 0;
+      this.retainedFrameTextureHeight = 0;
    }
 
    boolean presentFrame(
@@ -350,7 +369,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
          int uploadByteCount = dirtyPixelCount * 4;
          if (dirtyPixelCount > 0) {
-            ensureUploadCapacity(bufferIndex, dirtyPixelCount);
+            ensureUploadCapacity(bufferIndex, dirtyPixelCount, count);
             IntBuffer destination = this.uploadInts[bufferIndex];
             destination.clear();
 
@@ -385,6 +404,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             uploadByteCount
          );
          this.paintingBuffer = bufferIndex;
+         this.frameUploadInProgress = true;
       }
 
       this.owner.setGpuPresentationSurface(true);
@@ -396,6 +416,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             renderFrame(frame);
             try {
                swapBuffers();
+               finishTransitionFrameRetention();
             } catch (LWJGLException failure) {
                throw new RuntimeException(failure);
             }
@@ -404,12 +425,13 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
       synchronized (this) {
          this.paintingBuffer = -1;
+         this.frameUploadInProgress = false;
+         releaseStagingIfIdle();
       }
       if (presented) {
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
          this.everPresentedFrame = true;
-         finishTransitionFrameRetention();
       }
       return presented;
    }
@@ -451,6 +473,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             Math.max(1, targetWidth),
             Math.max(1, targetHeight)
          );
+         this.frameUploadInProgress = true;
       }
 
       this.owner.setGpuPresentationSurface(true);
@@ -462,24 +485,30 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             renderSoftwareFrame(frame);
             try {
                swapBuffers();
+               finishTransitionFrameRetention();
             } catch (LWJGLException failure) {
                throw new RuntimeException(failure);
             }
          }
       });
 
+      synchronized (this) {
+         this.frameUploadInProgress = false;
+         releaseStagingIfIdle();
+      }
       if (presented) {
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
          this.everPresentedFrame = true;
-         finishTransitionFrameRetention();
       }
       return presented;
    }
 
    private void ensureSoftwareFrameUploadCapacity(int pixels) {
       int bytes = pixels * 4;
-      if (this.softwareFrameUploadBytes == null || this.softwareFrameUploadBytes.capacity() < bytes) {
+      if (this.softwareFrameUploadBytes == null
+         || this.softwareFrameUploadBytes.capacity() < bytes
+         || shouldShrink(this.softwareFrameUploadBytes.capacity(), bytes)) {
          this.softwareFrameUploadBytes = BufferUtils.createByteBuffer(bytes).order(ByteOrder.nativeOrder());
          this.softwareFrameUploadInts = this.softwareFrameUploadBytes.asIntBuffer();
       }
@@ -586,10 +615,16 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       return rectangles.toArray(new DirtyRect[rectangles.size()]);
    }
 
-   private void ensureUploadCapacity(int index, int pixels) {
-      int bytes = pixels * 4;
-      if (this.uploadBytes[index] == null || this.uploadBytes[index].capacity() < bytes) {
-         ByteBuffer byteBuffer = BufferUtils.createByteBuffer(bytes).order(ByteOrder.nativeOrder());
+   private void ensureUploadCapacity(int index, int pixels, int framePixels) {
+      int requiredBytes = pixels * 4;
+      int frameBytes = framePixels * 4;
+      ByteBuffer current = this.uploadBytes[index];
+      if (current == null || current.capacity() < requiredBytes) {
+         ByteBuffer byteBuffer = BufferUtils.createByteBuffer(requiredBytes).order(ByteOrder.nativeOrder());
+         this.uploadBytes[index] = byteBuffer;
+         this.uploadInts[index] = byteBuffer.asIntBuffer();
+      } else if (shouldShrink(current.capacity(), frameBytes)) {
+         ByteBuffer byteBuffer = BufferUtils.createByteBuffer(frameBytes).order(ByteOrder.nativeOrder());
          this.uploadBytes[index] = byteBuffer;
          this.uploadInts[index] = byteBuffer.asIntBuffer();
       }
@@ -845,7 +880,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    }
 
    private void uploadOverlayWithPbo(FrameState frame) {
-      ensureUploadPbos(frame.uploadByteCount);
+      ensureUploadPbos(frame.uploadByteCount, frame.uiWidth * frame.uiHeight * 4);
 
       int pbo = this.uploadPbos[this.uploadPboWriteIndex];
       GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, pbo);
@@ -933,7 +968,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
    }
 
-   private void ensureUploadPbos(int requiredBytes) {
+   private void ensureUploadPbos(int requiredBytes, int frameBytes) {
       if (this.uploadPbos[0] == 0 || this.uploadPbos[1] == 0) {
          this.uploadPbos[0] = GL15.glGenBuffers();
          this.uploadPbos[1] = GL15.glGenBuffers();
@@ -941,17 +976,23 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.uploadPboWriteIndex = 0;
       }
 
-      if (this.uploadPboCapacity >= requiredBytes) {
+      int newCapacity = 0;
+      if (this.uploadPboCapacity < requiredBytes) {
+         newCapacity = requiredBytes;
+      } else if (shouldShrink(this.uploadPboCapacity, frameBytes)) {
+         newCapacity = frameBytes;
+      }
+      if (newCapacity == 0) {
          return;
       }
 
-      int newCapacity = requiredBytes;
       for (int pbo : this.uploadPbos) {
          GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, pbo);
          GL15.glBufferData(GL21.GL_PIXEL_UNPACK_BUFFER, (long)newCapacity, GL15.GL_STREAM_DRAW);
       }
       GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
       this.uploadPboCapacity = newCapacity;
+      this.uploadPboWriteIndex = 0;
    }
 
    private void uploadSoftwareFrame(SoftwareFrameState frame) {
@@ -1212,9 +1253,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.uploadPboCapacity = 0;
       this.uploadPboWriteIndex = 0;
       this.pboUnavailable = false;
-      this.uiShadow = null;
-      this.uiShadowWidth = 0;
-      this.uiShadowHeight = 0;
+      releaseStagingBuffers(this.retainedFrameActive);
       this.paintingBuffer = -1;
       this.initialClearNeeded = true;
       this.hasPresentedFrame = false;
@@ -1225,8 +1264,35 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.softwareFrameTexture = 0;
       this.softwareFrameWidth = 0;
       this.softwareFrameHeight = 0;
+   }
+
+   private void releaseStagingIfIdle() {
+      if (this.releaseStagingWhenIdle && !this.frameUploadInProgress) {
+         releaseStagingBuffers(false);
+      }
+   }
+
+   private void releaseStagingBuffers(boolean preserveRetainedFrame) {
+      Arrays.fill(this.uploadBytes, null);
+      Arrays.fill(this.uploadInts, null);
+      this.uiShadow = null;
+      this.uiShadowWidth = 0;
+      this.uiShadowHeight = 0;
       this.softwareFrameUploadBytes = null;
       this.softwareFrameUploadInts = null;
+      if (!preserveRetainedFrame) {
+         this.retainedFrameBytes = null;
+         this.retainedFrameWidth = 0;
+         this.retainedFrameHeight = 0;
+         this.retainedFrameTextureDirty = false;
+      }
+      this.releaseStagingWhenIdle = false;
+   }
+
+   private static boolean shouldShrink(int capacity, int required) {
+      return required > 0
+         && capacity > required
+         && (long)capacity >= (long)required * BUFFER_SHRINK_RATIO;
    }
 
    private static final class SoftwareFrameState {
