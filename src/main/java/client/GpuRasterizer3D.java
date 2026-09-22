@@ -40,6 +40,26 @@ final class GpuRasterizer3D {
    private static final int MAX_BATCH_VERTICES = 98304;
    private static final int PARTICLE_SEGMENTS = 16;
    private static final int BUFFER_SHRINK_RATIO = 4;
+
+   // Frame fallbacks preserve legacy software correctness. These reason codes
+   // document the unsupported/failed cases that can force synchronous state
+   // transfer from the GPU back into the Java framebuffer.
+   private static final int FALLBACK_INVALID_NEGATIVE_DEPTH = 0;
+   private static final int FALLBACK_INVALID_TEXTURE_ID = 1;
+   private static final int FALLBACK_TEXTURE_UPLOAD_FAILURE = 2;
+   private static final int FALLBACK_PROJECTED_COORDINATE_FAILURE = 3;
+   private static final int FALLBACK_EXCEPTION = 4;
+   private static final int FALLBACK_OTHER_UNSUPPORTED_PATH = 5;
+   private static final int FALLBACK_CAUSE_COUNT = 6;
+   private static final String[] FALLBACK_CAUSE_NAMES = {
+      "invalid-negative-depth",
+      "invalid-texture-id",
+      "texture-upload-failure",
+      "projected-coordinate-failure",
+      "exception",
+      "other-unsupported-path"
+   };
+
    private static final float[] PARTICLE_UNIT_X = new float[PARTICLE_SEGMENTS + 1];
    private static final float[] PARTICLE_UNIT_Y = new float[PARTICLE_SEGMENTS + 1];
    static final int UI_TRANSPARENT_KEY = 0x00010203;
@@ -47,6 +67,13 @@ final class GpuRasterizer3D {
    private static volatile boolean requested = true;
    private static boolean unavailable;
    private static boolean failureLogged;
+
+   private static final long[] fallbackCauseCounts = new long[FALLBACK_CAUSE_COUNT];
+   private static long fallbackCount;
+   private static long fallbackSyncReadbackCount;
+   private static long fallbackSyncReadbackNanos;
+   private static long fallbackSyncReadbackMaxNanos;
+   private static long fallbackSyncReadbackPixels;
 
    private static boolean frameOpen;
    private static boolean frameActive;
@@ -133,6 +160,28 @@ final class GpuRasterizer3D {
 
    static boolean isRequested() {
       return requested;
+   }
+
+   static synchronized String getFallbackDiagnostics() {
+      StringBuilder summary = new StringBuilder(256);
+      summary.append("GPU fallback diagnostics: total=").append(fallbackCount);
+      for (int i = 0; i < FALLBACK_CAUSE_COUNT; i++) {
+         summary.append(", ").append(FALLBACK_CAUSE_NAMES[i]).append('=').append(fallbackCauseCounts[i]);
+      }
+      summary.append(", sync-readbacks=").append(fallbackSyncReadbackCount);
+      summary.append(", sync-readback-pixels=").append(fallbackSyncReadbackPixels);
+      summary.append(", sync-readback-total-ms=").append(fallbackSyncReadbackNanos / 1000000.0D);
+      summary.append(", sync-readback-max-ms=").append(fallbackSyncReadbackMaxNanos / 1000000.0D);
+      return summary.toString();
+   }
+
+   static synchronized void resetFallbackDiagnostics() {
+      Arrays.fill(fallbackCauseCounts, 0L);
+      fallbackCount = 0L;
+      fallbackSyncReadbackCount = 0L;
+      fallbackSyncReadbackNanos = 0L;
+      fallbackSyncReadbackMaxNanos = 0L;
+      fallbackSyncReadbackPixels = 0L;
    }
 
    static void setPresentationCanvas(GpuPresentationCanvas canvas) {
@@ -710,9 +759,12 @@ final class GpuRasterizer3D {
       int textureId,
       float depth0, float depth1, float depth2
    ) {
-      if (!canDraw(depth0, depth1, depth2) || textureId < 0 || textureId >= TEXTURE_COUNT) {
+      if (!canDraw(depth0, depth1, depth2)) {
+         return false;
+      }
+      if (textureId < 0 || textureId >= TEXTURE_COUNT) {
          if (frameOpen && !frameSoftwareFallback) {
-            fallbackCurrentFrame();
+            fallbackCurrentFrame(FALLBACK_INVALID_TEXTURE_ID);
          }
          return false;
       }
@@ -735,7 +787,7 @@ final class GpuRasterizer3D {
       try {
          if (ensureTexture(textureId) == 0) {
             if (batched) {
-               fallbackCurrentFrame();
+               fallbackCurrentFrame(FALLBACK_TEXTURE_UPLOAD_FAILURE);
             }
             return false;
          }
@@ -775,7 +827,7 @@ final class GpuRasterizer3D {
          double max = maxAbs9(pu0, pv0, pw0, pu1, pv1, pw1, pu2, pv2, pw2);
          if (!(max > 0.0D) || Double.isInfinite(max) || Double.isNaN(max)) {
             if (batched) {
-               fallbackCurrentFrame();
+               fallbackCurrentFrame(FALLBACK_PROJECTED_COORDINATE_FAILURE);
             }
             return false;
          }
@@ -824,9 +876,15 @@ final class GpuRasterizer3D {
          return false;
       }
 
-      if (!baseAvailable() || depth0 < 0.0F || depth1 < 0.0F || depth2 < 0.0F) {
+      if (!baseAvailable()) {
          if (frameOpen && !frameSoftwareFallback) {
-            fallbackCurrentFrame();
+            fallbackCurrentFrame(FALLBACK_OTHER_UNSUPPORTED_PATH);
+         }
+         return false;
+      }
+      if (depth0 < 0.0F || depth1 < 0.0F || depth2 < 0.0F) {
+         if (frameOpen && !frameSoftwareFallback) {
+            fallbackCurrentFrame(FALLBACK_INVALID_NEGATIVE_DEPTH);
          }
          return false;
       }
@@ -941,17 +999,28 @@ final class GpuRasterizer3D {
       return (256 - alpha) / 256.0F;
    }
 
-   private static void fallbackCurrentFrame() {
+   private static void fallbackCurrentFrame(int cause) {
       if (!frameOpen || frameSoftwareFallback) {
          return;
       }
 
+      long sequence = recordFallbackCause(cause);
+      boolean readbackAttempted = false;
+      boolean readbackSucceeded = false;
+      int readbackPixels = 0;
+      long readbackNanos = 0L;
       if (frameActive) {
          try {
             flushBatch();
             finishBatchPipeline();
-            readBackFrameSynchronous(true);
+            readbackAttempted = true;
+            long readbackStarted = System.nanoTime();
+            readbackPixels = readBackFrameSynchronous(true);
+            readbackNanos = System.nanoTime() - readbackStarted;
+            readbackSucceeded = true;
+            recordFallbackReadback(readbackPixels, readbackNanos);
          } catch (Throwable failure) {
+            logFallback(sequence, cause, readbackAttempted, false, readbackPixels, readbackNanos);
             frameActive = false;
             frameSoftwareFallback = true;
             fail(failure);
@@ -959,6 +1028,7 @@ final class GpuRasterizer3D {
          }
       }
 
+      logFallback(sequence, cause, readbackAttempted, readbackSucceeded, readbackPixels, readbackNanos);
       frameActive = false;
       frameSoftwareFallback = true;
       Arrays.fill(colorPboReady, false);
@@ -966,13 +1036,38 @@ final class GpuRasterizer3D {
    }
 
    private static void failCurrentFrame(Throwable failure) {
+      long sequence = 0L;
+      if (frameOpen && !frameSoftwareFallback) {
+         sequence = recordFallbackCause(FALLBACK_EXCEPTION);
+      }
+
+      boolean readbackAttempted = false;
+      boolean readbackSucceeded = false;
+      int readbackPixels = 0;
+      long readbackNanos = 0L;
       if (frameOpen && frameActive) {
          try {
             flushBatch();
             finishBatchPipeline();
-            readBackFrameSynchronous(true);
+            readbackAttempted = true;
+            long readbackStarted = System.nanoTime();
+            readbackPixels = readBackFrameSynchronous(true);
+            readbackNanos = System.nanoTime() - readbackStarted;
+            readbackSucceeded = true;
+            recordFallbackReadback(readbackPixels, readbackNanos);
          } catch (Throwable ignored) {
          }
+      }
+
+      if (sequence != 0L) {
+         logFallback(
+            sequence,
+            FALLBACK_EXCEPTION,
+            readbackAttempted,
+            readbackSucceeded,
+            readbackPixels,
+            readbackNanos
+         );
       }
 
       frameActive = false;
@@ -982,6 +1077,52 @@ final class GpuRasterizer3D {
       Arrays.fill(colorPboReady, false);
       colorPboWriteIndex = 0;
       fail(failure);
+   }
+
+   private static synchronized long recordFallbackCause(int cause) {
+      int normalizedCause = cause;
+      if (normalizedCause < 0 || normalizedCause >= FALLBACK_CAUSE_COUNT) {
+         normalizedCause = FALLBACK_OTHER_UNSUPPORTED_PATH;
+      }
+      fallbackCount++;
+      fallbackCauseCounts[normalizedCause]++;
+      return fallbackCount;
+   }
+
+   private static synchronized void recordFallbackReadback(int pixels, long nanos) {
+      fallbackSyncReadbackCount++;
+      fallbackSyncReadbackPixels += Math.max(0, pixels);
+      fallbackSyncReadbackNanos += Math.max(0L, nanos);
+      fallbackSyncReadbackMaxNanos = Math.max(fallbackSyncReadbackMaxNanos, nanos);
+   }
+
+   private static String fallbackCauseName(int cause) {
+      if (cause < 0 || cause >= FALLBACK_CAUSE_COUNT) {
+         return FALLBACK_CAUSE_NAMES[FALLBACK_OTHER_UNSUPPORTED_PATH];
+      }
+      return FALLBACK_CAUSE_NAMES[cause];
+   }
+
+   private static void logFallback(
+      long sequence,
+      int cause,
+      boolean readbackAttempted,
+      boolean readbackSucceeded,
+      int readbackPixels,
+      long readbackNanos
+   ) {
+      StringBuilder message = new StringBuilder(160);
+      message.append("GPU frame fallback #").append(sequence)
+         .append(": cause=").append(fallbackCauseName(cause));
+      if (readbackAttempted) {
+         message.append(", synchronous-readback=")
+            .append(readbackSucceeded ? "ok" : "failed")
+            .append(", pixels=").append(readbackPixels)
+            .append(", ms=").append(readbackNanos / 1000000.0D);
+      } else {
+         message.append(", synchronous-readback=not-attempted");
+      }
+      System.err.println(message.toString());
    }
 
    private static void ensureContext(int width, int height) throws Exception {
@@ -1518,13 +1659,12 @@ final class GpuRasterizer3D {
       }
    }
 
-   private static void readBackFrameSynchronous(boolean copyDepth) {
+   private static int readBackFrameSynchronous(boolean copyDepth) {
       if (frameDirectPresentation) {
-         readBackDirectFrameSynchronous(copyDepth);
-         return;
+         return readBackDirectFrameSynchronous(copyDepth);
       }
       if (viewportWidth <= 0 || viewportHeight <= 0) {
-         return;
+         return 0;
       }
 
       int width = viewportWidth;
@@ -1553,34 +1693,55 @@ final class GpuRasterizer3D {
             }
          }
       }
+      return count;
    }
 
-   private static void readBackDirectFrameSynchronous(boolean copyDepth) {
+   private static int readBackDirectFrameSynchronous(boolean copyDepth) {
       if (viewportWidth <= 0
          || viewportHeight <= 0
          || directUiWidth <= 0
          || directUiHeight <= 0
          || directTargetWidth <= 0
          || directTargetHeight <= 0) {
-         return;
+         return 0;
       }
 
-      long physicalCountLong = (long)directTargetWidth * (long)directTargetHeight;
+      // A software fallback resumes drawing into the logical scene buffer, not
+      // the entire scaled presentation target. Read back only the physical
+      // rectangle that covers that logical scene. The floor/ceil pair retains
+      // every physical sample selected by sampleScaledCoordinate().
+      int readMinX = scaleFloor(directSceneX, directUiWidth, directTargetWidth);
+      int readMinY = scaleFloor(directSceneY, directUiHeight, directTargetHeight);
+      int readMaxX = scaleCeil(directSceneX + viewportWidth, directUiWidth, directTargetWidth);
+      int readMaxY = scaleCeil(directSceneY + viewportHeight, directUiHeight, directTargetHeight);
+      readMinX = Math.max(0, Math.min(directTargetWidth, readMinX));
+      readMinY = Math.max(0, Math.min(directTargetHeight, readMinY));
+      readMaxX = Math.max(readMinX, Math.min(directTargetWidth, readMaxX));
+      readMaxY = Math.max(readMinY, Math.min(directTargetHeight, readMaxY));
+
+      int readWidth = readMaxX - readMinX;
+      int readHeight = readMaxY - readMinY;
+      if (readWidth <= 0 || readHeight <= 0) {
+         return 0;
+      }
+
+      long physicalCountLong = (long)readWidth * (long)readHeight;
       if (physicalCountLong > Integer.MAX_VALUE / 4L) {
-         throw new IllegalStateException("Direct presentation target is too large to read back");
+         throw new IllegalStateException("Direct presentation scene is too large to read back");
       }
       int physicalCount = (int)physicalCountLong;
       ensureReadbackCapacity(physicalCount, copyDepth, true);
-      int readY = directCanvasHeight - directTargetY - directTargetHeight;
+      int readX = directTargetX + readMinX;
+      int readY = directCanvasHeight - directTargetY - readMaxY;
 
       GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
       colorReadback.clear();
       colorReadback.limit(physicalCount * 4);
       GL11.glReadPixels(
-         directTargetX,
+         readX,
          readY,
-         directTargetWidth,
-         directTargetHeight,
+         readWidth,
+         readHeight,
          GL_BGRA,
          GL11.GL_UNSIGNED_BYTE,
          colorReadback
@@ -1590,10 +1751,10 @@ final class GpuRasterizer3D {
          depthReadback.clear();
          depthReadback.limit(physicalCount);
          GL11.glReadPixels(
-            directTargetX,
+            readX,
             readY,
-            directTargetWidth,
-            directTargetHeight,
+            readWidth,
+            readHeight,
             GL11.GL_DEPTH_COMPONENT,
             GL11.GL_FLOAT,
             depthReadback
@@ -1608,7 +1769,7 @@ final class GpuRasterizer3D {
             directUiHeight,
             directTargetHeight
          );
-         int sourceY = directTargetHeight - 1 - physicalTopY;
+         int sourceY = readMaxY - 1 - physicalTopY;
          int destination = y * viewportWidth;
 
          for (int x = 0; x < viewportWidth; x++) {
@@ -1616,8 +1777,8 @@ final class GpuRasterizer3D {
                directSceneX + x,
                directUiWidth,
                directTargetWidth
-            );
-            int sourceIndex = sourceY * directTargetWidth + sourceX;
+            ) - readMinX;
+            int sourceIndex = sourceY * readWidth + sourceX;
             Rasterizer2D.pixels[destination + x] = packedColors.get(sourceIndex) & 0x00FFFFFF;
 
             if (copyDepth) {
@@ -1628,6 +1789,7 @@ final class GpuRasterizer3D {
             }
          }
       }
+      return physicalCount;
    }
 
    private static int sampleScaledCoordinate(int logicalCoordinate, int logicalSize, int physicalSize) {
