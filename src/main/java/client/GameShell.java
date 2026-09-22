@@ -19,6 +19,7 @@ import java.awt.event.WindowEvent;
 import java.awt.event.WindowListener;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.concurrent.locks.LockSupport;
 public class GameShell extends Applet implements FocusListener, KeyListener, MouseListener, MouseMotionListener, MouseWheelListener, WindowListener, Runnable {
    private int shutdownCountdown;
    private int delayTime = 20;
@@ -160,6 +161,11 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             this.showErrorScreen();
             lastCameraFrame = now;
 
+            // Rendering can overrun the scheduled deadline. Refresh the clock
+            // before advancing nextRender so a slow frame cannot cause an
+            // avoidable immediate catch-up render.
+            now = System.nanoTime();
+
             renderedFrames++;
             long fpsWindowNanos = now - fpsWindowStart;
             if (fpsWindowNanos >= 1000000000L) {
@@ -186,13 +192,14 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    /**
     * High-resolution frame pacing for render rates above the original 50 Hz.
     *
-    * Thread.sleep() alone is too coarse/jittery on some Java 8/Windows
-    * combinations for 120-240 Hz pacing. Sleep for the coarse portion, yield
-    * near the deadline, then spin only for the final fraction of a millisecond.
-    * This keeps CPU use reasonable while avoiding 4 ms render deadlines being
-    * rounded into visibly uneven chunks.
+    * Thread.sleep() handles the coarse portion of the wait. Near the deadline,
+    * park the thread instead of repeatedly yielding, then spin only for the
+    * final 0.10 ms to keep high-refresh pacing precise without burning as much
+    * CPU every frame.
     */
    private static void waitUntil(long deadlineNanos) {
+      final long spinWindowNanos = 100000L;
+
       while (true) {
          long remaining = deadlineNanos - System.nanoTime();
          if (remaining <= 0L) {
@@ -209,11 +216,13 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
                Thread.currentThread().interrupt();
                return;
             }
-         } else if (remaining > 250000L) {
-            Thread.yield();
+         } else if (remaining > spinWindowNanos) {
+            LockSupport.parkNanos(remaining - spinWindowNanos);
+            if (Thread.currentThread().isInterrupted()) {
+               return;
+            }
          } else {
-            // Busy-wait only for the last ~0.25 ms to hit the frame deadline
-            // accurately enough for 120/144/165/240 Hz displays.
+            // Busy-wait only for the final 0.10 ms to avoid scheduler jitter.
          }
       }
    }
