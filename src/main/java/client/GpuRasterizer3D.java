@@ -453,7 +453,7 @@ final class GpuRasterizer3D {
          frameActive = false;
          frameSoftwareFallback = false;
          frameDirectPresentation = false;
-            frameColorTarget = null;
+         frameColorTarget = null;
          frameDepthTarget = null;
          frameRasterWidth = 0;
          frameRasterHeight = 0;
@@ -2387,7 +2387,7 @@ final class GpuRasterizer3D {
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glDepthFunc(GL11.GL_ALWAYS);
-               }
+         }
 
          GL11.glEnable(GL11.GL_TEXTURE_2D);
          GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
