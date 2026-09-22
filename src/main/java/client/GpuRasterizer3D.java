@@ -83,6 +83,7 @@ final class GpuRasterizer3D {
    private static boolean frameDirectPresentation;
    private static boolean directFrameReady;
    private static boolean directModeLogged;
+   private static final Object CONTEXT_LOCK = new Object();
 
    private static GpuPresentationCanvas presentationCanvas;
    private static boolean directPresentationExecution;
@@ -99,6 +100,10 @@ final class GpuRasterizer3D {
    private static int directCanvasHeight;
 
    private static Pbuffer pbuffer;
+   private static boolean pbufferSharesPresentationContext;
+   private static int presentationSceneTexture;
+   private static int presentationSceneTextureWidth;
+   private static int presentationSceneTextureHeight;
    private static int bufferWidth;
    private static int bufferHeight;
    private static int viewportWidth = -1;
@@ -257,15 +262,16 @@ final class GpuRasterizer3D {
          && !unavailable
          && presentationCanvas != null
          && presentationCanvas.isContextReady()) {
-         if (pbuffer != null) {
-            destroyContext();
-         }
-
-         final boolean[] rendered = new boolean[1];
-         final boolean[] completed = new boolean[1];
-         presentationCanvas.runInContext(new Runnable() {
-            @Override
-            public void run() {
+         synchronized (CONTEXT_LOCK) {
+            // removeNotify() can invalidate the AWT peer while the game thread
+            // is waiting to enter this section. Recheck before creating a
+            // context that shares objects with the presentation canvas.
+            if (requested
+               && !unavailable
+               && presentationCanvas != null
+               && presentationCanvas.isContextReady()) {
+               boolean rendered = false;
+               boolean completed = false;
                directPresentationExecution = true;
                directUiWidth = Math.max(1, uiWidth);
                directUiHeight = Math.max(1, uiHeight);
@@ -275,25 +281,25 @@ final class GpuRasterizer3D {
                directTargetHeight = Math.max(1, targetHeight);
                directSceneX = sceneX;
                directSceneY = sceneY;
-               directCanvasHeight = Math.max(1, presentationCanvas.getHeight());
 
                try {
                   beginFrame(fogEnabled, fogDistanceOffset);
                   prepareSceneRasterBuffers();
-                  rendered[0] = true;
+                  rendered = true;
                   renderer.run();
-                  completed[0] = endFrame();
+                  completed = endFrame();
                } finally {
                   if (frameOpen) {
                      endFrame();
                   }
+                  releaseDirectPresentationContext();
                   directPresentationExecution = false;
                }
-            }
-         });
 
-         if (rendered[0]) {
-            return completed[0];
+               if (rendered) {
+                  return completed;
+               }
+            }
          }
       }
 
@@ -335,7 +341,8 @@ final class GpuRasterizer3D {
 
       try {
          if (directPresentationExecution) {
-            ensurePresentationContextResources();
+            ensureContext(directTargetWidth, directTargetHeight, true);
+            makeCurrent();
             frameDirectPresentation = true;
          } else {
             if (presentationCanvas != null
@@ -344,7 +351,7 @@ final class GpuRasterizer3D {
                presentationCanvas.requestInitialization();
             }
 
-            ensureContext(Rasterizer2D.width, Rasterizer2D.height);
+            ensureContext(Rasterizer2D.width, Rasterizer2D.height, false);
             makeCurrent();
             frameDirectPresentation = false;
          }
@@ -556,15 +563,73 @@ final class GpuRasterizer3D {
    }
 
    private static void finishDirectPresentationFrame() {
-      if (presentationCanvas != null) {
-         presentationCanvas.markSceneBackbufferPending();
+      if (presentationCanvas == null || !pbufferSharesPresentationContext) {
+         throw new IllegalStateException("Direct presentation Pbuffer is not shared with the AWT canvas");
       }
+
+      ensurePresentationSceneTexture(directTargetWidth, directTargetHeight);
+      GL20.glUseProgram(0);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, presentationSceneTexture);
+      GL11.glCopyTexSubImage2D(
+         GL11.GL_TEXTURE_2D,
+         0,
+         0,
+         0,
+         0,
+         0,
+         directTargetWidth,
+         directTargetHeight
+      );
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+      GL11.glFlush();
+
+      presentationCanvas.markSceneBackbufferPending();
       if (!directModeLogged) {
          directModeLogged = true;
          System.out.println(
-            "GPU presentation mode: DIRECT (scene rendered into AWTGLCanvas backbuffer)."
+            "GPU presentation mode: SHARED (render-thread Pbuffer -> shared scene texture -> AWT composite)."
          );
       }
+   }
+
+   private static void ensurePresentationSceneTexture(int width, int height) {
+      int targetWidth = Math.max(1, width);
+      int targetHeight = Math.max(1, height);
+      if (presentationSceneTexture != 0
+         && presentationSceneTextureWidth == targetWidth
+         && presentationSceneTextureHeight == targetHeight) {
+         return;
+      }
+
+      if (presentationSceneTexture != 0) {
+         GL11.glDeleteTextures(presentationSceneTexture);
+      }
+
+      presentationSceneTexture = GL11.glGenTextures();
+      presentationSceneTextureWidth = targetWidth;
+      presentationSceneTextureHeight = targetHeight;
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, presentationSceneTexture);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      GL11.glTexImage2D(
+         GL11.GL_TEXTURE_2D,
+         0,
+         GL11.GL_RGBA8,
+         targetWidth,
+         targetHeight,
+         0,
+         GL_BGRA,
+         GL11.GL_UNSIGNED_BYTE,
+         (ByteBuffer)null
+      );
+   }
+
+   static int getPresentationSceneTexture() {
+      return directFrameReady && pbufferSharesPresentationContext
+         ? presentationSceneTexture
+         : 0;
    }
 
    static void invalidateTexture(int textureId) {
@@ -962,17 +1027,17 @@ final class GpuRasterizer3D {
       int uiRight = directSceneX + maxX;
       int uiBottom = directSceneY + maxY;
 
-      int left = directTargetX + scaleFloor(uiLeft, directUiWidth, directTargetWidth);
-      int right = directTargetX + scaleCeil(uiRight, directUiWidth, directTargetWidth);
-      int top = directTargetY + scaleFloor(uiTop, directUiHeight, directTargetHeight);
-      int bottom = directTargetY + scaleCeil(uiBottom, directUiHeight, directTargetHeight);
+      int left = scaleFloor(uiLeft, directUiWidth, directTargetWidth);
+      int right = scaleCeil(uiRight, directUiWidth, directTargetWidth);
+      int top = scaleFloor(uiTop, directUiHeight, directTargetHeight);
+      int bottom = scaleCeil(uiBottom, directUiHeight, directTargetHeight);
 
-      left = Math.max(directTargetX, Math.min(directTargetX + directTargetWidth, left));
-      right = Math.max(left, Math.min(directTargetX + directTargetWidth, right));
-      top = Math.max(directTargetY, Math.min(directTargetY + directTargetHeight, top));
-      bottom = Math.max(top, Math.min(directTargetY + directTargetHeight, bottom));
+      left = Math.max(0, Math.min(directTargetWidth, left));
+      right = Math.max(left, Math.min(directTargetWidth, right));
+      top = Math.max(0, Math.min(directTargetHeight, top));
+      bottom = Math.max(top, Math.min(directTargetHeight, bottom));
 
-      setScissor(left, directCanvasHeight - bottom, right - left, bottom - top);
+      setScissor(left, directTargetHeight - bottom, right - left, bottom - top);
    }
 
    private static void setScissor(int x, int y, int width, int height) {
@@ -1137,15 +1202,19 @@ final class GpuRasterizer3D {
       System.err.println(message.toString());
    }
 
-   private static void ensureContext(int width, int height) throws Exception {
+   private static void ensureContext(int width, int height, boolean shareWithPresentation) throws Exception {
       if (rendererUsesPresentationContext) {
          resetRendererResourceHandles();
       }
 
+      boolean wantsSharedPresentation = shareWithPresentation
+         && presentationCanvas != null
+         && presentationCanvas.isContextReady();
       int targetWidth = Math.max(width, 765);
       int targetHeight = Math.max(height, 503);
       boolean recreate = pbuffer == null
          || pbuffer.isBufferLost()
+         || pbufferSharesPresentationContext != wantsSharedPresentation
          || targetWidth > bufferWidth
          || targetHeight > bufferHeight
          || shouldShrink(
@@ -1165,15 +1234,18 @@ final class GpuRasterizer3D {
          bufferWidth,
          bufferHeight,
          pixelFormat,
-         null
+         wantsSharedPresentation ? presentationCanvas : null
       );
+      pbufferSharesPresentationContext = wantsSharedPresentation;
       pbuffer.makeCurrent();
       initializeCurrentContextResources(false);
 
       System.out.println(
          "GPU renderer initialized: OpenGL Pbuffer "
             + bufferWidth + "x" + bufferHeight
-            + " [VBO atlas batching, double-PBO color readback, GPU fog/depth]"
+            + (wantsSharedPresentation
+               ? " [shared AWT presentation texture, VBO atlas batching, GPU fog/depth]"
+               : " [VBO atlas batching, double-PBO color readback, GPU fog/depth]")
       );
    }
 
@@ -1233,26 +1305,31 @@ final class GpuRasterizer3D {
    }
 
    static void presentationContextLost(GpuPresentationCanvas canvas) {
-      if (presentationCanvas != canvas) {
-         return;
+      synchronized (CONTEXT_LOCK) {
+         if (presentationCanvas != canvas) {
+            return;
+         }
+         setDirectFrameReady(false);
+         frameDirectPresentation = false;
+         directModeLogged = false;
+         if (pbufferSharesPresentationContext && pbuffer != null) {
+            // The shared-object group belongs to this AWT context generation.
+            // Recreate the Pbuffer against the replacement canvas context.
+            destroyContext();
+         } else if (pbuffer == null) {
+            resetRendererResourceHandles();
+         }
+         releaseStagingBuffers();
       }
-      setDirectFrameReady(false);
-      frameDirectPresentation = false;
-      directModeLogged = false;
-      if (pbuffer == null) {
-         // The AWT context is already gone or is being destroyed, so its GL
-         // objects no longer need explicit deletion. Forget every possible
-         // direct-context handle, including a partially initialized renderer.
-         resetRendererResourceHandles();
-      }
-      releaseStagingBuffers();
    }
 
    static void releasePresentationContextResources(GpuPresentationCanvas canvas) {
-      if (presentationCanvas != canvas || pbuffer != null) {
-         return;
+      synchronized (CONTEXT_LOCK) {
+         if (presentationCanvas != canvas || pbuffer != null) {
+            return;
+         }
+         deleteRendererResources();
       }
-      deleteRendererResources();
    }
 
    private static void deleteColorPbos() {
@@ -1310,6 +1387,12 @@ final class GpuRasterizer3D {
          } catch (Throwable ignored) {
          }
       }
+      if (presentationSceneTexture != 0) {
+         try {
+            GL11.glDeleteTextures(presentationSceneTexture);
+         } catch (Throwable ignored) {
+         }
+      }
       deleteColorPbos();
       resetRendererResourceHandles();
    }
@@ -1321,6 +1404,9 @@ final class GpuRasterizer3D {
       atlasTexture = 0;
       atlasTextureSize = 0;
       legacyTextureSize = 0;
+      presentationSceneTexture = 0;
+      presentationSceneTextureWidth = 0;
+      presentationSceneTextureHeight = 0;
       Arrays.fill(colorPbos, 0);
       Arrays.fill(colorPboReady, false);
       colorPboWriteIndex = 0;
@@ -1343,14 +1429,28 @@ final class GpuRasterizer3D {
       }
    }
 
+   private static void releaseDirectPresentationContext() {
+      if (pbuffer == null) {
+         return;
+      }
+
+      try {
+         if (pbuffer.isCurrent()) {
+            pbuffer.releaseContext();
+         }
+      } catch (Throwable failure) {
+         fail(failure);
+      }
+   }
+
    private static void configureViewport(int width, int height) {
       viewportWidth = width;
       viewportHeight = height;
 
       if (frameDirectPresentation) {
          GL11.glViewport(
-            directTargetX,
-            directCanvasHeight - directTargetY - directTargetHeight,
+            0,
+            0,
             directTargetWidth,
             directTargetHeight
          );
@@ -1743,8 +1843,8 @@ final class GpuRasterizer3D {
       }
       int physicalCount = (int)physicalCountLong;
       ensureReadbackCapacity(physicalCount, copyDepth, true);
-      int readX = directTargetX + readMinX;
-      int readY = directCanvasHeight - directTargetY - readMaxY;
+      int readX = readMinX;
+      int readY = directTargetHeight - readMaxY;
 
       GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
       colorReadback.clear();
@@ -2291,31 +2391,30 @@ final class GpuRasterizer3D {
    }
 
    private static void destroyContext() {
-      if (pbuffer != null) {
-         try {
-            if (!pbuffer.isCurrent()) {
-               pbuffer.makeCurrent();
+      synchronized (CONTEXT_LOCK) {
+         if (pbuffer != null) {
+            try {
+               if (!pbuffer.isCurrent()) {
+                  pbuffer.makeCurrent();
+               }
+               deleteRendererResources();
+            } catch (Throwable ignored) {
             }
-            deleteRendererResources();
-         } catch (Throwable ignored) {
+            try {
+               pbuffer.destroy();
+            } catch (Throwable ignored) {
+            }
          }
-         try {
-            pbuffer.destroy();
-         } catch (Throwable ignored) {
-         }
-      } else if (directPresentationExecution) {
-         // Direct rendering executes inside GpuPresentationCanvas.runInContext,
-         // so a failure here still has the AWT context current.
-         deleteRendererResources();
+         pbuffer = null;
+         pbufferSharesPresentationContext = false;
+         resetRendererResourceHandles();
+         setDirectFrameReady(false);
+         frameDirectPresentation = false;
+         directModeLogged = false;
+         bufferWidth = 0;
+         bufferHeight = 0;
+         releaseStagingBuffers();
       }
-      pbuffer = null;
-      resetRendererResourceHandles();
-      setDirectFrameReady(false);
-      frameDirectPresentation = false;
-      directModeLogged = false;
-      bufferWidth = 0;
-      bufferHeight = 0;
-      releaseStagingBuffers();
    }
 
    private static boolean triangleVisible(int x0, int y0, int x1, int y1, int x2, int y2) {
