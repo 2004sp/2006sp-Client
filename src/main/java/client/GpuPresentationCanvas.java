@@ -140,13 +140,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
                }
 
                if (!isDisplayable()) {
-                  // If a visible GPU card lost its peer, let AWT rebuild it.
-                  // When the software/login card is visible, never switch cards
-                  // just to initialize OpenGL; retry on the next completed frame.
-                  if (ClientWindow.isGpuPresentationVisible()) {
-                     owner.setGpuPresentationSurface(true);
-                     repaint();
-                  }
+                  // Never change CardLayout state just to create a GL peer.
+                  // AWT will paint after addNotify() when a visible peer is
+                  // recreated; a hidden canvas retries on the next software
+                  // frame once its parent hierarchy is displayable.
                   return;
                }
 
@@ -720,11 +717,11 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             return;
          }
 
-         // On the very first handoff from the Java surface, seed the GL canvas
-         // with the already-composed software framebuffer. The first visible
-         // GPU paint therefore matches what was on screen immediately before
-         // the CardLayout switch instead of exposing an empty canvas.
-         if (!this.everPresentedFrame && renderInitialSoftwareFrame()) {
+         // Every newly created/recreated GL context must be seeded from the
+         // complete Java framebuffer before it can become visible. Do this
+         // even if an older context had presented frames: a new native peer
+         // starts with undefined/black buffers.
+         if (this.initialClearNeeded && renderInitialSoftwareFrame()) {
             swapBuffers();
             this.initialClearNeeded = false;
             this.hasPresentedFrame = true;
@@ -736,6 +733,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             return;
          }
 
+         // No software frame exists yet (startup before buffers are created).
+         // This clear is only allowed on a hidden/unseeded surface.
          this.initialClearNeeded = false;
          GL20.glUseProgram(0);
          GL11.glColorMask(true, true, true, true);
