@@ -20,9 +20,9 @@ import org.lwjgl.opengl.PixelFormat;
 /**
  * AWT-hosted OpenGL presentation surface.
  *
- * The 3D scene is rendered directly into this canvas' backbuffer. The existing
- * software framebuffer is uploaded as a UI texture and composited over that
- * backbuffer before the canvas swaps.
+ * The 3D scene is rendered on the game thread into a Pbuffer and copied into a
+ * texture shared with this canvas' context. The existing software framebuffer is
+ * uploaded as a UI texture; scene + UI are composited here before the canvas swaps.
  *
  * The old client does not maintain per-pixel alpha for its software UI. During
  * direct presentation the untouched 3D viewport is filled with a dedicated
@@ -1133,13 +1133,16 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private void renderFrame(FrameState frame) {
       int canvasWidth = Math.max(1, this.getWidth());
       int canvasHeight = Math.max(1, this.getHeight());
+      int sceneTexture = GpuRasterizer3D.getPresentationSceneTexture();
+      if (sceneTexture == 0) {
+         throw new IllegalStateException("Direct GPU scene texture is not ready for presentation");
+      }
 
       GL20.glUseProgram(0);
       GL11.glColorMask(true, true, true, true);
       GL11.glDisable(GL11.GL_DEPTH_TEST);
       GL11.glDisable(GL11.GL_ALPHA_TEST);
-      GL11.glEnable(GL11.GL_BLEND);
-      GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+      GL11.glDisable(GL11.GL_BLEND);
       clearOutsideTarget(
          frame.targetX,
          frame.targetY,
@@ -1159,6 +1162,22 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glLoadIdentity();
       GL11.glEnable(GL11.GL_TEXTURE_2D);
 
+      // glCopyTexSubImage2D copied the Pbuffer in OpenGL's bottom-left texture
+      // orientation. Flip T while drawing so logical UI Y=0 remains the top.
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, sceneTexture);
+      GL11.glBegin(GL11.GL_QUADS);
+      GL11.glTexCoord2f(0.0F, 1.0F);
+      GL11.glVertex2f(0.0F, 0.0F);
+      GL11.glTexCoord2f(1.0F, 1.0F);
+      GL11.glVertex2f(frame.uiWidth, 0.0F);
+      GL11.glTexCoord2f(1.0F, 0.0F);
+      GL11.glVertex2f(frame.uiWidth, frame.uiHeight);
+      GL11.glTexCoord2f(0.0F, 0.0F);
+      GL11.glVertex2f(0.0F, frame.uiHeight);
+      GL11.glEnd();
+
+      GL11.glEnable(GL11.GL_BLEND);
+      GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
       GL20.glUseProgram(this.overlayProgram);
       GL20.glUniform4f(
          this.uniformSceneRect,
