@@ -294,8 +294,12 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.retainedFrameHeight = 0;
       this.retainedFrameTextureDirty = false;
       if (this.retainedFrameTexture != 0) {
-         GL11.glDeleteTextures(this.retainedFrameTexture);
+         int texture = this.retainedFrameTexture;
          this.retainedFrameTexture = 0;
+         try {
+            GL11.glDeleteTextures(texture);
+         } catch (Throwable ignored) {
+         }
       }
       this.retainedFrameTextureWidth = 0;
       this.retainedFrameTextureHeight = 0;
@@ -328,6 +332,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       final FrameState frame;
       synchronized (this) {
          int count = (int)pixelCount;
+         trimIdleUploadBuffers(count);
          int bufferIndex = this.paintingBuffer == 0 ? 1 : 0;
          int tileColumns = (uiWidth + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
          int tileRows = (uiHeight + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
@@ -630,6 +635,21 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
    }
 
+   private void trimIdleUploadBuffers(int framePixels) {
+      int frameBytes = framePixels * 4;
+      for (int i = 0; i < this.uploadBytes.length; i++) {
+         if (i == this.paintingBuffer) {
+            continue;
+         }
+         ByteBuffer current = this.uploadBytes[i];
+         if (current != null && shouldShrink(current.capacity(), frameBytes)) {
+            ByteBuffer byteBuffer = BufferUtils.createByteBuffer(frameBytes).order(ByteOrder.nativeOrder());
+            this.uploadBytes[i] = byteBuffer;
+            this.uploadInts[i] = byteBuffer.asIntBuffer();
+         }
+      }
+   }
+
    @Override
    protected void initGL() {
       try {
@@ -649,6 +669,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          return;
       }
 
+      synchronized (this) {
+         this.frameUploadInProgress = true;
+      }
       try {
          if (this.retainedFrameActive && renderRetainedFrame()) {
             swapBuffers();
@@ -683,6 +706,11 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          swapBuffers();
       } catch (LWJGLException failure) {
          markFailed(failure);
+      } finally {
+         synchronized (this) {
+            this.frameUploadInProgress = false;
+            releaseStagingIfIdle();
+         }
       }
    }
 
