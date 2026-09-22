@@ -61,6 +61,7 @@ public final class Model extends Renderable {
    private static final int[] clippedX = new int[10];
    private static final int[] clippedY = new int[10];
    private static final int[] clippedShading = new int[10];
+   private static final float[] clippedDepth = new float[10];
    private static int transformOriginX;
    private static int transformOriginY;
    private static int transformOriginZ;
@@ -2777,6 +2778,10 @@ public final class Model extends Renderable {
          int clippedXOrViewportCenterX = Rasterizer3D.viewportCenterX;
          int clippedYOrViewportCenterY = Rasterizer3D.viewportCenterY;
          int clippedXIndex = 0;
+         // Preserve camera-space depth for the polygon created by near-plane
+         // clipping. GPU rendering cannot use the old -1 depth sentinel:
+         // it interprets negative depth as an unsupported draw and falls back
+         // to a synchronous full-frame readback plus software rasterization.
          int trianglePointsXEntry = model.trianglePointsX[trianglePointsXIndex];
          int trianglePointsYEntry = model.trianglePointsY[trianglePointsXIndex];
          int trianglePointsZEntry = model.trianglePointsZ[trianglePointsXIndex];
@@ -2787,6 +2792,7 @@ public final class Model extends Renderable {
             clippedX[0] = projectedX[trianglePointsXEntry];
             clippedY[0] = projectedY[trianglePointsXEntry];
             clippedXIndex++;
+            clippedDepth[0] = cameraZEntry;
             clippedShading[0] = model.triangleHSLA[trianglePointsXIndex];
          } else {
             int cameraXEntry = cameraX[trianglePointsXEntry];
@@ -2797,6 +2803,7 @@ public final class Model extends Renderable {
                clippedX[0] = clippedXOrViewportCenterX + (cameraXEntry + ((cameraX[trianglePointsZEntry] - cameraXEntry) * scalar >> 16) << Client.getProjectionScaleShift()) / 50;
                clippedY[0] = clippedYOrViewportCenterY + (cameraYEntry + ((cameraY[trianglePointsZEntry] - cameraYEntry) * scalar >> 16) << Client.getProjectionScaleShift()) / 50;
                clippedXIndex++;
+               clippedDepth[0] = 50.0F;
                clippedShading[0] = clippedShadingOrTriangleHSLA + ((model.triangleHSLC[trianglePointsXIndex] - clippedShadingOrTriangleHSLA) * scalar >> 16);
             }
 
@@ -2804,6 +2811,7 @@ public final class Model extends Renderable {
                int scalar2 = (50 - cameraZEntry) * RECIPROCAL_2048[cameraZEntry2 - cameraZEntry];
                clippedX[clippedXIndex] = clippedXOrViewportCenterX + (cameraXEntry + ((cameraX[trianglePointsYEntry] - cameraXEntry) * scalar2 >> 16) << Client.getProjectionScaleShift()) / 50;
                clippedY[clippedXIndex] = clippedYOrViewportCenterY + (cameraYEntry + ((cameraY[trianglePointsYEntry] - cameraYEntry) * scalar2 >> 16) << Client.getProjectionScaleShift()) / 50;
+               clippedDepth[clippedXIndex] = 50.0F;
                clippedShading[clippedXIndex++] = clippedShadingOrTriangleHSLA + ((model.triangleHSLB[trianglePointsXIndex] - clippedShadingOrTriangleHSLA) * scalar2 >> 16);
             }
          }
@@ -2811,6 +2819,7 @@ public final class Model extends Renderable {
          if (cameraZEntry2 >= 50) {
             clippedX[clippedXIndex] = projectedX[trianglePointsYEntry];
             clippedY[clippedXIndex] = projectedY[trianglePointsYEntry];
+            clippedDepth[clippedXIndex] = cameraZEntry2;
             clippedShading[clippedXIndex++] = model.triangleHSLB[trianglePointsXIndex];
          } else {
             int cameraX2 = cameraX[trianglePointsYEntry];
@@ -2820,6 +2829,7 @@ public final class Model extends Renderable {
                int scalar3 = (50 - cameraZEntry2) * RECIPROCAL_2048[cameraZEntry - cameraZEntry2];
                clippedX[clippedXIndex] = clippedXOrViewportCenterX + (cameraX2 + ((cameraX[trianglePointsXEntry] - cameraX2) * scalar3 >> 16) << Client.getProjectionScaleShift()) / 50;
                clippedY[clippedXIndex] = clippedYOrViewportCenterY + (cameraY2 + ((cameraY[trianglePointsXEntry] - cameraY2) * scalar3 >> 16) << Client.getProjectionScaleShift()) / 50;
+               clippedDepth[clippedXIndex] = 50.0F;
                clippedShading[clippedXIndex++] = clippedShadingOrTriangleHSLB + ((model.triangleHSLA[trianglePointsXIndex] - clippedShadingOrTriangleHSLB) * scalar3 >> 16);
             }
 
@@ -2827,6 +2837,7 @@ public final class Model extends Renderable {
                int scalar4 = (50 - cameraZEntry2) * RECIPROCAL_2048[cameraZEntry3 - cameraZEntry2];
                clippedX[clippedXIndex] = clippedXOrViewportCenterX + (cameraX2 + ((cameraX[trianglePointsZEntry] - cameraX2) * scalar4 >> 16) << Client.getProjectionScaleShift()) / 50;
                clippedY[clippedXIndex] = clippedYOrViewportCenterY + (cameraY2 + ((cameraY[trianglePointsZEntry] - cameraY2) * scalar4 >> 16) << Client.getProjectionScaleShift()) / 50;
+               clippedDepth[clippedXIndex] = 50.0F;
                clippedShading[clippedXIndex++] = clippedShadingOrTriangleHSLB + ((model.triangleHSLC[trianglePointsXIndex] - clippedShadingOrTriangleHSLB) * scalar4 >> 16);
             }
          }
@@ -2834,6 +2845,7 @@ public final class Model extends Renderable {
          if (cameraZEntry3 >= 50) {
             clippedX[clippedXIndex] = projectedX[trianglePointsZEntry];
             clippedY[clippedXIndex] = projectedY[trianglePointsZEntry];
+            clippedDepth[clippedXIndex] = cameraZEntry3;
             clippedShading[clippedXIndex++] = model.triangleHSLC[trianglePointsXIndex];
          } else {
             int cameraX3 = cameraX[trianglePointsZEntry];
@@ -2843,6 +2855,7 @@ public final class Model extends Renderable {
                int scalar5 = (50 - cameraZEntry3) * RECIPROCAL_2048[cameraZEntry2 - cameraZEntry3];
                clippedX[clippedXIndex] = clippedXOrViewportCenterX + (cameraX3 + ((cameraX[trianglePointsYEntry] - cameraX3) * scalar5 >> 16) << Client.getProjectionScaleShift()) / 50;
                clippedY[clippedXIndex] = clippedYOrViewportCenterY + (cameraY3 + ((cameraY[trianglePointsYEntry] - cameraY3) * scalar5 >> 16) << Client.getProjectionScaleShift()) / 50;
+               clippedDepth[clippedXIndex] = 50.0F;
                clippedShading[clippedXIndex++] = clippedShadingOrTriangleHSLC + ((model.triangleHSLB[trianglePointsXIndex] - clippedShadingOrTriangleHSLC) * scalar5 >> 16);
             }
 
@@ -2850,6 +2863,7 @@ public final class Model extends Renderable {
                int scalar6 = (50 - cameraZEntry3) * RECIPROCAL_2048[cameraZEntry - cameraZEntry3];
                clippedX[clippedXIndex] = clippedXOrViewportCenterX + (cameraX3 + ((cameraX[trianglePointsXEntry] - cameraX3) * scalar6 >> 16) << Client.getProjectionScaleShift()) / 50;
                clippedY[clippedXIndex] = clippedYOrViewportCenterY + (cameraY3 + ((cameraY[trianglePointsXEntry] - cameraY3) * scalar6 >> 16) << Client.getProjectionScaleShift()) / 50;
+               clippedDepth[clippedXIndex] = 50.0F;
                clippedShading[clippedXIndex++] = clippedShadingOrTriangleHSLC + ((model.triangleHSLA[trianglePointsXIndex] - clippedShadingOrTriangleHSLC) * scalar6 >> 16);
             }
          }
@@ -2877,9 +2891,9 @@ public final class Model extends Renderable {
             }
 
             if (cameraZEntry == 0) {
-               Rasterizer3D.drawShadedTriangle(true, clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, clippedShading[0], clippedShading[1], clippedShading[2], -1.0F, -1.0F, -1.0F);
+               Rasterizer3D.drawShadedTriangle(true, clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, clippedShading[0], clippedShading[1], clippedShading[2], clippedDepth[0], clippedDepth[1], clippedDepth[2]);
             } else if (cameraZEntry == 1) {
-               Rasterizer3D.drawFlatTriangle(clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, HSL_TO_RGB[model.triangleHSLA[trianglePointsXIndex]], -1.0F, -1.0F, -1.0F);
+               Rasterizer3D.drawFlatTriangle(clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, HSL_TO_RGB[model.triangleHSLA[trianglePointsXIndex]], clippedDepth[0], clippedDepth[1], clippedDepth[2]);
             } else if (cameraZEntry == 2) {
                cameraZEntry2 = model.triangleDrawType[trianglePointsXIndex] >> 2;
                cameraZEntry = model.texturedTrianglePointsX[cameraZEntry2];
@@ -2906,9 +2920,9 @@ public final class Model extends Renderable {
                   cameraZ[cameraZEntry3],
                   cameraZ[cameraZEntry2],
                   model.triangleColorValues[trianglePointsXIndex],
-                  cameraDepth[trianglePointsXEntry],
-                  cameraDepth[trianglePointsYEntry],
-                  cameraDepth[trianglePointsZEntry]
+                  clippedDepth[0],
+                  clippedDepth[1],
+                  clippedDepth[2]
                );
             } else if (cameraZEntry == 3) {
                cameraZEntry2 = model.triangleDrawType[trianglePointsXIndex] >> 2;
@@ -2936,9 +2950,9 @@ public final class Model extends Renderable {
                   cameraZ[cameraZEntry3],
                   cameraZ[cameraZEntry2],
                   model.triangleColorValues[trianglePointsXIndex],
-                  cameraDepth[trianglePointsXEntry],
-                  cameraDepth[trianglePointsYEntry],
-                  cameraDepth[trianglePointsZEntry]
+                  clippedDepth[0],
+                  clippedDepth[1],
+                  clippedDepth[2]
                );
             }
          }
@@ -2965,7 +2979,7 @@ public final class Model extends Renderable {
          }
 
          if (cameraZEntry == 0) {
-            Rasterizer3D.drawShadedTriangle(true, clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, clippedShading[0], clippedShading[1], clippedShading[2], -1.0F, -1.0F, -1.0F);
+            Rasterizer3D.drawShadedTriangle(true, clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, clippedShading[0], clippedShading[1], clippedShading[2], clippedDepth[0], clippedDepth[1], clippedDepth[2]);
             Rasterizer3D.drawShadedTriangle(
                true,
                clippedYEntry,
@@ -2977,14 +2991,14 @@ public final class Model extends Renderable {
                clippedShading[0],
                clippedShading[2],
                clippedShading[3],
-               cameraDepth[trianglePointsXEntry],
-               cameraDepth[trianglePointsYEntry],
-               cameraDepth[trianglePointsZEntry]
+               clippedDepth[0],
+               clippedDepth[2],
+               clippedDepth[3]
             );
          } else if (cameraZEntry == 1) {
             cameraZEntry2 = HSL_TO_RGB[model.triangleHSLA[trianglePointsXIndex]];
-            Rasterizer3D.drawFlatTriangle(clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, cameraZEntry2, -1.0F, -1.0F, -1.0F);
-            Rasterizer3D.drawFlatTriangle(clippedYEntry, clippedYOrViewportCenterY, clippedY[3], clippedXEntry, clippedX3, clippedX[3], cameraZEntry2, cameraDepth[trianglePointsXEntry], cameraDepth[trianglePointsYEntry], cameraDepth[trianglePointsZEntry]);
+            Rasterizer3D.drawFlatTriangle(clippedYEntry, clippedXOrViewportCenterX, clippedYOrViewportCenterY, clippedXEntry, clippedX2, clippedX3, cameraZEntry2, clippedDepth[0], clippedDepth[1], clippedDepth[2]);
+            Rasterizer3D.drawFlatTriangle(clippedYEntry, clippedYOrViewportCenterY, clippedY[3], clippedXEntry, clippedX3, clippedX[3], cameraZEntry2, clippedDepth[0], clippedDepth[2], clippedDepth[3]);
          } else {
             if (cameraZEntry != 2) {
                if (cameraZEntry == 3) {
@@ -3013,9 +3027,9 @@ public final class Model extends Renderable {
                      cameraZ[cameraZEntry3],
                      cameraZ[cameraZEntry2],
                      model.triangleColorValues[trianglePointsXIndex],
-                     cameraDepth[trianglePointsXEntry],
-                     cameraDepth[trianglePointsYEntry],
-                     cameraDepth[trianglePointsZEntry]
+                     clippedDepth[0],
+                     clippedDepth[1],
+                     clippedDepth[2]
                   );
                   Rasterizer3D.drawTexturedTriangle(
                      true,
@@ -3038,9 +3052,9 @@ public final class Model extends Renderable {
                      cameraZ[cameraZEntry3],
                      cameraZ[cameraZEntry2],
                      model.triangleColorValues[trianglePointsXIndex],
-                     cameraDepth[trianglePointsXEntry],
-                     cameraDepth[trianglePointsYEntry],
-                     cameraDepth[trianglePointsZEntry]
+                     clippedDepth[0],
+                     clippedDepth[2],
+                     clippedDepth[3]
                   );
                }
 
@@ -3072,9 +3086,9 @@ public final class Model extends Renderable {
                cameraZ[cameraZEntry3],
                cameraZ[cameraZEntry2],
                model.triangleColorValues[trianglePointsXIndex],
-               cameraDepth[trianglePointsXEntry],
-               cameraDepth[trianglePointsYEntry],
-               cameraDepth[trianglePointsZEntry]
+               clippedDepth[0],
+               clippedDepth[1],
+               clippedDepth[2]
             );
             Rasterizer3D.drawTexturedTriangle(
                true,
@@ -3097,9 +3111,9 @@ public final class Model extends Renderable {
                cameraZ[cameraZEntry3],
                cameraZ[cameraZEntry2],
                model.triangleColorValues[trianglePointsXIndex],
-               cameraDepth[trianglePointsXEntry],
-               cameraDepth[trianglePointsYEntry],
-               cameraDepth[trianglePointsZEntry]
+               clippedDepth[0],
+               clippedDepth[2],
+               clippedDepth[3]
             );
          }
       } else {
