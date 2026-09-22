@@ -1099,6 +1099,11 @@ public class Client extends GameShell {
       return framesPerSecond;
    }
 
+   private static String formatFrameMillis(long nanos) {
+      long tenths = (Math.max(0L, nanos) + 50000L) / 100000L;
+      return (tenths / 10L) + "." + (tenths % 10L);
+   }
+
    @Override
    int getRenderFpsLimit() {
       return loggedIn ? clampCameraRefreshRate(cameraRefreshRate) : 50;
@@ -16797,6 +16802,21 @@ public class Client extends GameShell {
          String localText = localCombatLevel < 10 ? "0" + localCombatLevel : String.valueOf(localCombatLevel);
          String text2 = retrievedEntry < 10 ? "0" + retrievedEntry : String.valueOf(retrievedEntry);
          this.plainFont.textRight("Server time: " + localText + ":" + text2, screenMode == 0 ? 507 : clientWidth - 320, 16776960, 65);
+         if (GpuRasterizer3D.isRequested()) {
+            int diagnosticsX = screenMode == 0 ? 507 : clientWidth - 320;
+            this.plainFont.textRight(
+               "GPU scene:" + formatFrameMillis(GpuRasterizer3D.getLastSceneFrameNanos()) + "ms",
+               diagnosticsX, 16776960, 80
+            );
+            this.plainFont.textRight(
+               "Present:" + formatFrameMillis(GpuRasterizer3D.getLastPresentationNanos()) + "ms",
+               diagnosticsX, 16776960, 95
+            );
+            this.plainFont.textRight(
+               "EDT wait:" + formatFrameMillis(GpuRasterizer3D.getLastPresentationEdtWaitNanos()) + "ms",
+               diagnosticsX, 16776960, 110
+            );
+         }
       }
 
       if (this.systemUpdateTime != 0) {
