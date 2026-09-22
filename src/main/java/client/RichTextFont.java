@@ -388,6 +388,7 @@ public final class RichTextFont extends Rasterizer2D {
       }
 
       if (glyphWidth > 0 && pixelIndex > 0) {
+         Rasterizer2D.markGpuDirty(newTopX, newTopY, glyphWidth, pixelIndex);
          byte[] glyphPixel = this.glyphPixels[glyphPixelIndex];
          int scalar3 = sourcePixelIndex2;
          int scalar4 = scalar;
@@ -458,6 +459,7 @@ public final class RichTextFont extends Rasterizer2D {
       }
 
       if (glyphWidth > 0 && newIndex > 0) {
+         Rasterizer2D.markGpuDirty(newTopX, newTopY, glyphWidth, newIndex);
          byte[] glyphPixel = this.glyphPixels[glyphPixelIndex];
          int position = newIndex;
          int sourceGlyphWidth2 = glyphWidth;

@@ -331,6 +331,7 @@ final class GpuRasterizer3D {
    static void prepareDirectUiOverlayBuffer() {
       if (isFrameActive() && frameDirectPresentation && canUseDirectPresentation() && Rasterizer2D.pixels != null) {
          Arrays.fill(Rasterizer2D.pixels, UI_TRANSPARENT_KEY);
+         Rasterizer2D.markGpuOverlayCleared();
       }
    }
 

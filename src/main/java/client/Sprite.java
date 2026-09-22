@@ -131,6 +131,7 @@ public final class Sprite extends Rasterizer2D {
       }
 
       if (spriteWidth > 0 && spriteHeight > 0) {
+         Rasterizer2D.markGpuDirty(newTopX, newTopY, spriteWidth, spriteHeight);
          int sourceLocalWidth = localWidth;
          int[] pixels = Rasterizer2D.pixels;
          int pixelIndex = scalar;
@@ -493,6 +494,7 @@ public final class Sprite extends Rasterizer2D {
       }
 
       if (spriteWidth > 0 && spriteHeight > 0) {
+         Rasterizer2D.markGpuDirty(topX, newIndex, spriteWidth, spriteHeight);
          int[] pixels = Rasterizer2D.pixels;
          int[] pixels2 = this.pixels;
          int sourceLocalWidth = localWidth;
@@ -606,6 +608,7 @@ public final class Sprite extends Rasterizer2D {
       }
    }
    private static void blitTransparent(int[] values, int[] newValues, int positionArgument, int newIndex, int spriteWidth, int spriteHeight, int scalarArgument, int scalarArgument2) {
+      Rasterizer2D.markGpuDirtyFromIndex(newIndex, spriteWidth, spriteHeight);
       int position = -(spriteWidth >> 2);
       spriteWidth = -(spriteWidth & 3);
 
@@ -651,6 +654,7 @@ public final class Sprite extends Rasterizer2D {
       }
    }
    private static void blitAlpha(int scalarArgument, int spriteWidth, int[] values, int[] newValues, int scalarArgument2, int newIndex, int scalarArgument3, int transparency, int scalarArgument4) {
+      Rasterizer2D.markGpuDirtyFromIndex(scalarArgument4, spriteWidth, newIndex);
       for (int loopIndex = -newIndex; loopIndex < 0; loopIndex++) {
          for (int loopIndex2 = -spriteWidth; loopIndex2 < 0; loopIndex2++) {
             int scalar2;
@@ -671,6 +675,7 @@ public final class Sprite extends Rasterizer2D {
       }
    }
    public final void drawRotatedMasked(int loopIndex, int scalarArgument, int[] compassMaskLineWidths, int scalarArgument2, int[] values, int scalarArgument3, int minimapDrawY, int minimapDrawX, int scalarArgument4, int scalarArgument5) {
+      Rasterizer2D.markGpuDirty(0, 0, Rasterizer2D.width, Rasterizer2D.height);
       try {
          scalarArgument4 = -scalarArgument4 / 2;
          int scalar = -loopIndex / 2;
@@ -702,6 +707,7 @@ public final class Sprite extends Rasterizer2D {
       }
    }
    public final void drawRotated20x20(int scalarArgument, double calculationArgument, int scalarArgument2) {
+      Rasterizer2D.markGpuDirty(scalarArgument2, scalarArgument, 20, 20);
       try {
          int scalar = (int)(Math.sin(calculationArgument) * 65536.0);
          int scalar2 = (int)(Math.cos(calculationArgument) * 65536.0);
@@ -774,6 +780,7 @@ public final class Sprite extends Rasterizer2D {
       }
 
       if (spriteWidth > 0 && spriteHeight > 0) {
+         Rasterizer2D.markGpuDirty(0, 0, Rasterizer2D.width, Rasterizer2D.height);
          int position = scalar;
          int scalar7 = scalar3;
          int pixelIndex = sourceSpriteHeight;
@@ -865,6 +872,7 @@ public final class Sprite extends Rasterizer2D {
       }
 
       if (spriteWidth > 0 && spriteHeight > 0) {
+         Rasterizer2D.markGpuDirty(newTopX, positionArgument, spriteWidth, spriteHeight);
          int position = scalar;
          int scalar4 = scalar2;
          int pixelIndex = sourceSpriteHeight;
@@ -956,6 +964,7 @@ public final class Sprite extends Rasterizer2D {
       }
 
       if (spriteWidth > 0 && spriteHeight > 0) {
+         Rasterizer2D.markGpuDirty(0, 0, Rasterizer2D.width, Rasterizer2D.height);
          int position = scalar;
          int scalar5 = scalar3;
          int pixelIndex = sourceSpriteHeight;

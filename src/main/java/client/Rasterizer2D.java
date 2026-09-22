@@ -12,6 +12,7 @@ public class Rasterizer2D extends CacheableNode {
    public static int viewportCenterY;
    public static float[] depthBuffer;
    private static boolean encodeGpuOverlayAlpha;
+   private static GraphicsBuffer activeGraphicsBuffer;
 
    static void setEncodeGpuOverlayAlpha(boolean enabled) {
       encodeGpuOverlayAlpha = enabled;
@@ -79,7 +80,35 @@ public class Rasterizer2D extends CacheableNode {
             + ((sourceRgb & 0xFF00) * alpha256 + (destination & 0xFF00) * inverse & 0xFF0000)
          >> 8;
    }
+   static void setRasterBuffer(GraphicsBuffer graphicsBuffer) {
+      activeGraphicsBuffer = graphicsBuffer;
+      pixels = graphicsBuffer.pixels;
+      width = graphicsBuffer.getWidth();
+      height = graphicsBuffer.getHeight();
+      depthBuffer = graphicsBuffer.depthBuffer;
+      setClip(height, 0, width, 0);
+   }
+
+   static void markGpuDirty(int x, int y, int dirtyWidth, int dirtyHeight) {
+      if (activeGraphicsBuffer != null) {
+         activeGraphicsBuffer.markGpuDirty(x, y, dirtyWidth, dirtyHeight);
+      }
+   }
+
+   static void markGpuDirtyFromIndex(int pixelIndex, int dirtyWidth, int dirtyHeight) {
+      if (activeGraphicsBuffer != null) {
+         activeGraphicsBuffer.markGpuDirtyFromIndex(pixelIndex, dirtyWidth, dirtyHeight);
+      }
+   }
+
+   static void markGpuOverlayCleared() {
+      if (activeGraphicsBuffer != null) {
+         activeGraphicsBuffer.markGpuCleared();
+      }
+   }
+
    public static void setRasterBuffer(int rasterHeight, int rasterWidth, int[] pixelBuffer, float[] depthBufferData) {
+      activeGraphicsBuffer = null;
       pixels = pixelBuffer;
       width = rasterWidth;
       height = rasterHeight;
@@ -97,6 +126,7 @@ public class Rasterizer2D extends CacheableNode {
             newBottomX = bottomX - pixelIndex;
          }
 
+         markGpuDirty(pixelIndex, scalarArgument, newBottomX, 1);
          pixelIndex += scalarArgument * width;
 
          for (int loopIndex = 0; loopIndex < newBottomX; loopIndex++) {
@@ -156,6 +186,7 @@ public class Rasterizer2D extends CacheableNode {
          pixels[pixelIndex] = 0;
          depthBuffer[pixelIndex] = Float.MAX_VALUE;
       }
+      markGpuOverlayCleared();
    }
    public static void fillRectangleAlpha(int scalarArgument, int pixelIndex, int newIndex, int newBottomY, int newWidth, int newTopX) {
       if (newTopX < topX) {
@@ -176,6 +207,7 @@ public class Rasterizer2D extends CacheableNode {
          newBottomY = bottomY - pixelIndex;
       }
 
+      markGpuDirty(newTopX, pixelIndex, newIndex, newBottomY);
       int alpha = newWidth;
       int rowSkip = width - newIndex;
       pixelIndex = newTopX + pixelIndex * width;
@@ -208,6 +240,7 @@ public class Rasterizer2D extends CacheableNode {
          positionArgument = bottomY - newTopY;
       }
 
+      markGpuDirty(newTopX, newTopY, newIndex, positionArgument);
       int localWidth = width - newIndex;
       newTopY = newTopX + newTopY * width;
 
@@ -238,6 +271,7 @@ public class Rasterizer2D extends CacheableNode {
          newBottomY = bottomY - newTopY;
       }
 
+      markGpuDirty(newTopX, newTopY, newBottomX, newBottomY);
       int localWidth = width - newBottomX;
       newTopX += newTopY * width;
 
@@ -268,6 +302,7 @@ public class Rasterizer2D extends CacheableNode {
          newBottomY = bottomY - newTopY;
       }
 
+      markGpuDirty(pixelIndex, newTopY, newBottomX, newBottomY);
       newWidth = width - newBottomX;
       pixelIndex += newTopY * width;
 
@@ -308,6 +343,7 @@ public class Rasterizer2D extends CacheableNode {
             newBottomX = bottomX - newTopX;
          }
 
+         markGpuDirty(newTopX, pixelIndex, newBottomX, 1);
          pixelIndex = newTopX + pixelIndex * width;
 
          for (int loopIndex = 0; loopIndex < newBottomX; loopIndex++) {
@@ -326,6 +362,7 @@ public class Rasterizer2D extends CacheableNode {
             newBottomX = bottomX - pixelOrTopX;
          }
 
+         markGpuDirty(pixelOrTopX, pixelIndex, newBottomX, 1);
          pixelIndex = pixelOrTopX + pixelIndex * width;
 
          for (int loopIndex = 0; loopIndex < newBottomX; loopIndex++) {
@@ -345,6 +382,7 @@ public class Rasterizer2D extends CacheableNode {
             newBottomY = bottomY - newTopY;
          }
 
+         markGpuDirty(scalarArgument, newTopY, 1, newBottomY);
          newTopY = scalarArgument + newTopY * width;
 
          for (int loopIndex = 0; loopIndex < newBottomY; loopIndex++) {
@@ -363,6 +401,7 @@ public class Rasterizer2D extends CacheableNode {
             newBottomX = bottomX - newTopX;
          }
 
+         markGpuDirty(newTopX, lineHeight, newBottomX, 1);
          newTopX += lineHeight * width;
 
          for (int loopIndex = 0; loopIndex < newBottomX; loopIndex++) {
@@ -381,6 +420,7 @@ public class Rasterizer2D extends CacheableNode {
             newBottomY = bottomY - pixelOrTopY;
          }
 
+         markGpuDirty(pixelIndex, pixelOrTopY, 1, newBottomY);
          pixelIndex += pixelOrTopY * width;
 
          for (int loopIndex = 0; loopIndex < newBottomY; loopIndex++) {

@@ -27,6 +27,7 @@ public final class BufferedImageGraphicsBuffer extends GraphicsBuffer {
       this.bufferedImage = new BufferedImage(scalarArgument, scalarArgument2, 2);
       super.setWidth(scalarArgument);
       super.setHeight(scalarArgument2);
+      super.markGpuAllDirty();
       super.initDrawingArea();
    }
    @Override
@@ -34,7 +35,13 @@ public final class BufferedImageGraphicsBuffer extends GraphicsBuffer {
       graphics.drawImage(this.image, scalarArgument2, scalarArgument, this);
    }
    public final void drawToBuffer(int scalarArgument, BufferedImageGraphicsBuffer bufferedImageGraphicsBuffer, int scalarArgument2) {
-      ((Graphics2D)bufferedImageGraphicsBuffer.image.getGraphics()).drawImage(this.image, scalarArgument2, scalarArgument, this);
+      Graphics2D graphics = (Graphics2D)bufferedImageGraphicsBuffer.image.getGraphics();
+      try {
+         graphics.drawImage(this.image, scalarArgument2, scalarArgument, this);
+      } finally {
+         graphics.dispose();
+      }
+      this.consumeGpuDirtyTo(bufferedImageGraphicsBuffer, scalarArgument2, scalarArgument);
    }
 
    @Override

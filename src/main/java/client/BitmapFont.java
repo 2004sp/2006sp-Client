@@ -378,6 +378,7 @@ public final class BitmapFont extends Rasterizer2D {
       }
 
       if (glyphWidth > 0 && newIndex > 0) {
+         Rasterizer2D.markGpuDirty(newTopX, newTopY, glyphWidth, newIndex);
          int position = newIndex;
          int sourceGlyphWidth2 = glyphWidth;
          newIndex = scalar;

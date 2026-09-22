@@ -6,7 +6,6 @@ import java.nio.IntBuffer;
 import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.Graphics;
-import java.util.ArrayList;
 import java.util.Arrays;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.LWJGLException;
@@ -32,9 +31,8 @@ import org.lwjgl.opengl.PixelFormat;
  */
 final class GpuPresentationCanvas extends AWTGLCanvas {
    private static final int GL_BGRA = 32993;
-   private static final int DIRTY_TILE_SIZE = 64;
+   private static final int DIRTY_TILE_SIZE = GraphicsBuffer.GPU_DIRTY_TILE_SIZE;
    private static final int BUFFER_SHRINK_RATIO = 4;
-   private static final DirtyRect[] NO_DIRTY_RECTS = new DirtyRect[0];
 
    private final ClientWindow owner;
    private final ByteBuffer[] uploadBytes = new ByteBuffer[2];
@@ -43,9 +41,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private int uploadPboCapacity;
    private int uploadPboWriteIndex;
    private boolean pboUnavailable;
-   private int[] uiShadow;
-   private int uiShadowWidth;
-   private int uiShadowHeight;
+   private boolean[] dirtyTiles;
+   private boolean[] remainingDirtyTiles;
+   private DirtyRect[] dirtyRects;
+   private final FrameState[] frameStates = new FrameState[]{new FrameState(), new FrameState()};
 
    private volatile boolean contextReady;
    private volatile boolean failed;
@@ -341,6 +340,14 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          return false;
       }
 
+      BufferedImageGraphicsBuffer ownerBuffer = this.owner.frameBuffer;
+      final BufferedImageGraphicsBuffer dirtyBuffer = ownerBuffer != null
+         && ownerBuffer.pixels == uiPixels
+         && ownerBuffer.getWidth() == uiWidth
+         && ownerBuffer.getHeight() == uiHeight
+            ? ownerBuffer
+            : null;
+
       final FrameState frame;
       synchronized (this) {
          int count = (int)pixelCount;
@@ -348,39 +355,38 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          int bufferIndex = this.paintingBuffer == 0 ? 1 : 0;
          int tileColumns = (uiWidth + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
          int tileRows = (uiHeight + DIRTY_TILE_SIZE - 1) / DIRTY_TILE_SIZE;
-         boolean dimensionsChanged = this.uiShadow == null
-            || this.uiShadowWidth != uiWidth
-            || this.uiShadowHeight != uiHeight;
-         DirtyRect[] dirtyRects;
+         int tileCount = tileColumns * tileRows;
+         ensureDirtyTrackingCapacity(tileCount);
+         Arrays.fill(this.dirtyTiles, 0, tileCount, false);
 
-         if (dimensionsChanged || softwareUiChanged) {
-            boolean[] dirtyTiles = new boolean[tileColumns * tileRows];
-            if (dimensionsChanged) {
-               this.uiShadow = new int[count];
-               this.uiShadowWidth = uiWidth;
-               this.uiShadowHeight = uiHeight;
-               System.arraycopy(uiPixels, 0, this.uiShadow, 0, count);
-               Arrays.fill(dirtyTiles, true);
-            } else {
-               detectDirtyTiles(uiPixels, uiWidth, uiHeight, tileColumns, dirtyTiles);
+         boolean dimensionsChanged = this.overlayWidth != uiWidth || this.overlayHeight != uiHeight;
+         if (dimensionsChanged) {
+            Arrays.fill(this.dirtyTiles, 0, tileCount, true);
+         } else if (dirtyBuffer != null) {
+            if (dirtyBuffer.hasGpuDirtyTiles()
+               && !dirtyBuffer.copyGpuDirtyTiles(this.dirtyTiles, tileColumns, tileRows)) {
+               // The frame buffer should always share this compositor's tile
+               // geometry. Fall back to a full upload if that invariant is
+               // broken rather than risking stale UI.
+               Arrays.fill(this.dirtyTiles, 0, tileCount, true);
             }
-
-            dirtyRects = buildDirtyRectangles(
-               dirtyTiles,
-               tileColumns,
-               tileRows,
-               uiWidth,
-               uiHeight
-            );
-         } else {
-            // No software composition happened on this high-FPS scene frame,
-            // so the retained overlay texture is already current. Avoid a
-            // full framebuffer comparison just to rediscover that fact.
-            dirtyRects = NO_DIRTY_RECTS;
+         } else if (softwareUiChanged) {
+            // Compatibility fallback for any caller that does not expose the
+            // tracked BufferedImageGraphicsBuffer.
+            Arrays.fill(this.dirtyTiles, 0, tileCount, true);
          }
 
+         int dirtyRectCount = buildDirtyRectangles(
+            tileColumns,
+            tileRows,
+            uiWidth,
+            uiHeight,
+            tileCount
+         );
+
          int dirtyPixelCount = 0;
-         for (DirtyRect rect : dirtyRects) {
+         for (int i = 0; i < dirtyRectCount; i++) {
+            DirtyRect rect = this.dirtyRects[i];
             dirtyPixelCount += rect.width * rect.height;
          }
 
@@ -391,7 +397,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             destination.clear();
 
             int packedPixelOffset = 0;
-            for (DirtyRect rect : dirtyRects) {
+            for (int i = 0; i < dirtyRectCount; i++) {
+               DirtyRect rect = this.dirtyRects[i];
                rect.byteOffset = packedPixelOffset * 4;
                for (int y = rect.y; y < rect.y + rect.height; y++) {
                   destination.put(uiPixels, y * uiWidth + rect.x, rect.width);
@@ -405,7 +412,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             byteBuffer.limit(uploadByteCount);
          }
 
-         frame = new FrameState(
+         frame = this.frameStates[bufferIndex];
+         frame.set(
             bufferIndex,
             uiWidth,
             uiHeight,
@@ -417,7 +425,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             sceneY,
             Math.max(1, sceneWidth),
             Math.max(1, sceneHeight),
-            dirtyRects,
+            this.dirtyRects,
+            dirtyRectCount,
             uploadByteCount
          );
          this.paintingBuffer = bufferIndex;
@@ -446,6 +455,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          releaseStagingIfIdle();
       }
       if (presented) {
+         if (dirtyBuffer != null) {
+            dirtyBuffer.clearGpuDirtyTiles();
+         }
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
          this.everPresentedFrame = true;
@@ -531,68 +543,45 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
    }
 
-   private void detectDirtyTiles(
-      int[] uiPixels,
-      int uiWidth,
-      int uiHeight,
-      int tileColumns,
-      boolean[] dirtyTiles
-   ) {
-      for (int tileY = 0; tileY * DIRTY_TILE_SIZE < uiHeight; tileY++) {
-         int minY = tileY * DIRTY_TILE_SIZE;
-         int maxY = Math.min(uiHeight, minY + DIRTY_TILE_SIZE);
+   private void ensureDirtyTrackingCapacity(int tileCount) {
+      if (this.dirtyTiles == null || this.dirtyTiles.length < tileCount) {
+         this.dirtyTiles = new boolean[tileCount];
+         this.remainingDirtyTiles = new boolean[tileCount];
+      }
 
-         for (int tileX = 0; tileX * DIRTY_TILE_SIZE < uiWidth; tileX++) {
-            int minX = tileX * DIRTY_TILE_SIZE;
-            int maxX = Math.min(uiWidth, minX + DIRTY_TILE_SIZE);
-            boolean dirty = false;
-
-            for (int y = minY; y < maxY && !dirty; y++) {
-               int row = y * uiWidth;
-               for (int x = minX; x < maxX; x++) {
-                  int index = row + x;
-                  if (uiPixels[index] != this.uiShadow[index]) {
-                     dirty = true;
-                     break;
-                  }
-               }
-            }
-
-            if (!dirty) {
-               continue;
-            }
-
-            dirtyTiles[tileY * tileColumns + tileX] = true;
-            int width = maxX - minX;
-            for (int y = minY; y < maxY; y++) {
-               int offset = y * uiWidth + minX;
-               System.arraycopy(uiPixels, offset, this.uiShadow, offset, width);
-            }
+      if (this.dirtyRects == null || this.dirtyRects.length < tileCount) {
+         DirtyRect[] rectangles = new DirtyRect[tileCount];
+         if (this.dirtyRects != null) {
+            System.arraycopy(this.dirtyRects, 0, rectangles, 0, this.dirtyRects.length);
          }
+         for (int i = this.dirtyRects == null ? 0 : this.dirtyRects.length; i < rectangles.length; i++) {
+            rectangles[i] = new DirtyRect();
+         }
+         this.dirtyRects = rectangles;
       }
    }
 
-   private static DirtyRect[] buildDirtyRectangles(
-      boolean[] dirtyTiles,
+   private int buildDirtyRectangles(
       int tileColumns,
       int tileRows,
       int uiWidth,
-      int uiHeight
+      int uiHeight,
+      int tileCount
    ) {
-      boolean[] remaining = dirtyTiles.clone();
-      ArrayList<DirtyRect> rectangles = new ArrayList<DirtyRect>();
+      System.arraycopy(this.dirtyTiles, 0, this.remainingDirtyTiles, 0, tileCount);
+      int rectangleCount = 0;
 
       for (int tileY = 0; tileY < tileRows; tileY++) {
          int tileX = 0;
          while (tileX < tileColumns) {
-            if (!remaining[tileY * tileColumns + tileX]) {
+            if (!this.remainingDirtyTiles[tileY * tileColumns + tileX]) {
                tileX++;
                continue;
             }
 
             int endTileX = tileX + 1;
             while (endTileX < tileColumns
-               && remaining[tileY * tileColumns + endTileX]) {
+               && this.remainingDirtyTiles[tileY * tileColumns + endTileX]) {
                endTileX++;
             }
 
@@ -600,7 +589,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             while (endTileY < tileRows) {
                boolean completeRow = true;
                for (int x = tileX; x < endTileX; x++) {
-                  if (!remaining[endTileY * tileColumns + x]) {
+                  if (!this.remainingDirtyTiles[endTileY * tileColumns + x]) {
                      completeRow = false;
                      break;
                   }
@@ -613,7 +602,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
             for (int y = tileY; y < endTileY; y++) {
                Arrays.fill(
-                  remaining,
+                  this.remainingDirtyTiles,
                   y * tileColumns + tileX,
                   y * tileColumns + endTileX,
                   false
@@ -624,12 +613,12 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             int y = tileY * DIRTY_TILE_SIZE;
             int maxX = Math.min(uiWidth, endTileX * DIRTY_TILE_SIZE);
             int maxY = Math.min(uiHeight, endTileY * DIRTY_TILE_SIZE);
-            rectangles.add(new DirtyRect(x, y, maxX - x, maxY - y));
+            this.dirtyRects[rectangleCount++].set(x, y, maxX - x, maxY - y);
             tileX = endTileX;
          }
       }
 
-      return rectangles.toArray(new DirtyRect[rectangles.size()]);
+      return rectangleCount;
    }
 
    private void ensureUploadCapacity(int index, int pixels, int framePixels) {
@@ -965,7 +954,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          mappedBuffer = false;
 
          GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.overlayTexture);
-         for (DirtyRect rect : frame.dirtyRects) {
+         for (int i = 0; i < frame.dirtyRectCount; i++) {
+            DirtyRect rect = frame.dirtyRects[i];
             GL11.glTexSubImage2D(
                GL11.GL_TEXTURE_2D,
                0,
@@ -995,7 +985,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.overlayTexture);
 
-      for (DirtyRect rect : frame.dirtyRects) {
+      for (int i = 0; i < frame.dirtyRectCount; i++) {
+         DirtyRect rect = frame.dirtyRects[i];
          int byteCount = rect.width * rect.height * 4;
          ByteBuffer region = this.uploadBytes[frame.bufferIndex].duplicate();
          region.position(rect.byteOffset);
@@ -1425,9 +1416,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private void releaseStagingBuffers(boolean preserveRetainedFrame) {
       Arrays.fill(this.uploadBytes, null);
       Arrays.fill(this.uploadInts, null);
-      this.uiShadow = null;
-      this.uiShadowWidth = 0;
-      this.uiShadowHeight = 0;
+      this.dirtyTiles = null;
+      this.remainingDirtyTiles = null;
+      this.dirtyRects = null;
       this.softwareFrameUploadBytes = null;
       this.softwareFrameUploadInts = null;
       if (!preserveRetainedFrame) {
@@ -1471,36 +1462,38 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    }
 
    private static final class DirtyRect {
-      final int x;
-      final int y;
-      final int width;
-      final int height;
+      int x;
+      int y;
+      int width;
+      int height;
       int byteOffset;
 
-      DirtyRect(int x, int y, int width, int height) {
+      void set(int x, int y, int width, int height) {
          this.x = x;
          this.y = y;
          this.width = width;
          this.height = height;
+         this.byteOffset = 0;
       }
    }
 
    private static final class FrameState {
-      final int bufferIndex;
-      final int uiWidth;
-      final int uiHeight;
-      final int targetX;
-      final int targetY;
-      final int targetWidth;
-      final int targetHeight;
-      final int sceneX;
-      final int sceneY;
-      final int sceneWidth;
-      final int sceneHeight;
-      final DirtyRect[] dirtyRects;
-      final int uploadByteCount;
+      int bufferIndex;
+      int uiWidth;
+      int uiHeight;
+      int targetX;
+      int targetY;
+      int targetWidth;
+      int targetHeight;
+      int sceneX;
+      int sceneY;
+      int sceneWidth;
+      int sceneHeight;
+      DirtyRect[] dirtyRects;
+      int dirtyRectCount;
+      int uploadByteCount;
 
-      FrameState(
+      void set(
          int bufferIndex,
          int uiWidth,
          int uiHeight,
@@ -1513,6 +1506,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          int sceneWidth,
          int sceneHeight,
          DirtyRect[] dirtyRects,
+         int dirtyRectCount,
          int uploadByteCount
       ) {
          this.bufferIndex = bufferIndex;
@@ -1527,6 +1521,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.sceneWidth = sceneWidth;
          this.sceneHeight = sceneHeight;
          this.dirtyRects = dirtyRects;
+         this.dirtyRectCount = dirtyRectCount;
          this.uploadByteCount = uploadByteCount;
       }
    }

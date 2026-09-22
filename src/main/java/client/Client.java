@@ -1625,6 +1625,7 @@ public class Client extends GameShell {
          sourceOffset += width;
          destinationOffset += clientWidth;
       }
+      Rasterizer2D.markGpuDirty(destinationX, destinationY, width, height);
    }
 
    private void captureResizableMinimapLayer(int[] destination) {
@@ -1701,6 +1702,7 @@ public class Client extends GameShell {
                >> 8;
          }
       }
+      Rasterizer2D.markGpuDirty(destinationLeft, 0, destinationWidth, destinationHeight);
    }
 
    private void drawScaledUiRegion(
@@ -1737,6 +1739,7 @@ public class Client extends GameShell {
             }
          }
       }
+      Rasterizer2D.markGpuDirty(destinationX, destinationY, destinationWidth, destinationHeight);
    }
 
    private boolean shouldScaleResizableUi() {
@@ -15062,6 +15065,7 @@ public class Client extends GameShell {
             bottom = sourceBottom;
          }
 
+         Rasterizer2D.markGpuDirty(top, bottom, widget.width, widget.height);
          int viewportCenterX = Rasterizer3D.viewportCenterX;
          int viewportCenterY = Rasterizer3D.viewportCenterY;
          int[] scanOffsets = Rasterizer3D.scanOffsets;

@@ -177,6 +177,7 @@ public final class IndexedSprite extends Rasterizer2D {
       }
 
       if (width > 0 && height > 0) {
+         Rasterizer2D.markGpuDirty(positionArgument, newTopY, width, height);
          int scalar4 = scalar2;
          int[] palette = this.palette;
          int position = sourceLocalWidth;
