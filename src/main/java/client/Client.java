@@ -14212,7 +14212,6 @@ public class Client extends GameShell {
             Model.pickedCount = 0;
             Model.mouseX = client.mouseX - 4;
             Model.mouseY = client.mouseY - 4;
-            Rasterizer2D.clear();
             Rectangle gpuPresentation = client.getCurrentPresentationBounds();
             final int gpuScenePlane = localGetCameraPlane;
             boolean gpuFrameCompleted = GpuRasterizer3D.renderSceneFrame(
