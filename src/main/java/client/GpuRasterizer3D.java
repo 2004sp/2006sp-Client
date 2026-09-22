@@ -200,18 +200,20 @@ final class GpuRasterizer3D {
    }
 
    static void setEnabled(boolean enabled) {
-      requested = enabled;
-      setDirectFrameReady(false);
-      if (enabled) {
-         unavailable = false;
-      } else {
-         if (presentationCanvas != null) {
-            presentationCanvas.deactivate();
-         }
-         if (pbuffer != null) {
-            destroyContext();
+      synchronized (CONTEXT_LOCK) {
+         requested = enabled;
+         setDirectFrameReady(false);
+         if (enabled) {
+            unavailable = false;
          } else {
-            releaseStagingBuffers();
+            if (presentationCanvas != null) {
+               presentationCanvas.deactivate();
+            }
+            if (pbuffer != null) {
+               destroyContext();
+            } else {
+               releaseStagingBuffers();
+            }
          }
       }
       System.out.println("Renderer: " + (enabled ? "GPU" : "software"));
@@ -1790,6 +1792,12 @@ final class GpuRasterizer3D {
    }
 
    private static int readBackFrameSynchronous(boolean copyDepth) {
+      synchronized (CONTEXT_LOCK) {
+         return readBackFrameSynchronousLocked(copyDepth);
+      }
+   }
+
+   private static int readBackFrameSynchronousLocked(boolean copyDepth) {
       if (frameDirectPresentation) {
          return readBackDirectFrameSynchronous(copyDepth);
       }
@@ -1801,22 +1809,27 @@ final class GpuRasterizer3D {
       int height = viewportHeight;
       int count = width * height;
       ensureReadbackCapacity(count, copyDepth, true);
+      ByteBuffer colorBuffer = colorReadback;
+      FloatBuffer depthBuffer = copyDepth ? depthReadback : null;
+      if (colorBuffer == null || copyDepth && depthBuffer == null) {
+         throw new IllegalStateException("GPU readback staging buffer was released during frame fallback");
+      }
 
       GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
-      colorReadback.clear();
-      colorReadback.limit(count * 4);
-      GL11.glReadPixels(0, 0, width, height, GL_BGRA, GL11.GL_UNSIGNED_BYTE, colorReadback);
-      copyColorReadback(colorReadback, width, height);
+      colorBuffer.clear();
+      colorBuffer.limit(count * 4);
+      GL11.glReadPixels(0, 0, width, height, GL_BGRA, GL11.GL_UNSIGNED_BYTE, colorBuffer);
+      copyColorReadback(colorBuffer, width, height);
 
       if (copyDepth) {
-         depthReadback.clear();
-         depthReadback.limit(count);
-         GL11.glReadPixels(0, 0, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthReadback);
+         depthBuffer.clear();
+         depthBuffer.limit(count);
+         GL11.glReadPixels(0, 0, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthBuffer);
          for (int readRow = 0; readRow < height; readRow++) {
             int destination = (height - 1 - readRow) * width;
             int source = readRow * width;
             for (int x = 0; x < width; x++) {
-               float gpuDepth = depthReadback.get(source + x);
+               float gpuDepth = depthBuffer.get(source + x);
                if (gpuDepth < 0.9999999F) {
                   Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
                }
@@ -1824,6 +1837,7 @@ final class GpuRasterizer3D {
          }
       }
       return count;
+   
    }
 
    private static int readBackDirectFrameSynchronous(boolean copyDepth) {
@@ -1861,12 +1875,17 @@ final class GpuRasterizer3D {
       }
       int physicalCount = (int)physicalCountLong;
       ensureReadbackCapacity(physicalCount, copyDepth, true);
+      ByteBuffer colorBuffer = colorReadback;
+      FloatBuffer depthBuffer = copyDepth ? depthReadback : null;
+      if (colorBuffer == null || copyDepth && depthBuffer == null) {
+         throw new IllegalStateException("GPU direct readback staging buffer was released during frame fallback");
+      }
       int readX = readMinX;
       int readY = directTargetHeight - readMaxY;
 
       GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
-      colorReadback.clear();
-      colorReadback.limit(physicalCount * 4);
+      colorBuffer.clear();
+      colorBuffer.limit(physicalCount * 4);
       GL11.glReadPixels(
          readX,
          readY,
@@ -1874,12 +1893,12 @@ final class GpuRasterizer3D {
          readHeight,
          GL_BGRA,
          GL11.GL_UNSIGNED_BYTE,
-         colorReadback
+         colorBuffer
       );
 
       if (copyDepth) {
-         depthReadback.clear();
-         depthReadback.limit(physicalCount);
+         depthBuffer.clear();
+         depthBuffer.limit(physicalCount);
          GL11.glReadPixels(
             readX,
             readY,
@@ -1887,12 +1906,12 @@ final class GpuRasterizer3D {
             readHeight,
             GL11.GL_DEPTH_COMPONENT,
             GL11.GL_FLOAT,
-            depthReadback
+            depthBuffer
          );
       }
 
-      colorReadback.rewind();
-      IntBuffer packedColors = colorReadback.order(ByteOrder.nativeOrder()).asIntBuffer();
+      colorBuffer.rewind();
+      IntBuffer packedColors = colorBuffer.order(ByteOrder.nativeOrder()).asIntBuffer();
       for (int y = 0; y < viewportHeight; y++) {
          int physicalTopY = sampleScaledCoordinate(
             directSceneY + y,
@@ -1912,7 +1931,7 @@ final class GpuRasterizer3D {
             Rasterizer2D.pixels[destination + x] = packedColors.get(sourceIndex) & 0x00FFFFFF;
 
             if (copyDepth) {
-               float gpuDepth = depthReadback.get(sourceIndex);
+               float gpuDepth = depthBuffer.get(sourceIndex);
                // Direct frames do not pre-clear the CPU depth buffer. Mirror
                // the GL clear value so software fallback never sees stale depth.
                Rasterizer2D.depthBuffer[destination + x] = gpuDepth < 0.9999999F
@@ -1981,19 +2000,24 @@ final class GpuRasterizer3D {
       int height = bounds.height();
       int count = width * height;
       ensureReadbackCapacity(count, copyDepth);
+      ByteBuffer colorBuffer = colorReadback;
+      FloatBuffer depthBuffer = copyDepth ? depthReadback : null;
+      if (colorBuffer == null || copyDepth && depthBuffer == null) {
+         throw new IllegalStateException("GPU bounded readback staging buffer was released");
+      }
 
-      colorReadback.clear();
-      colorReadback.limit(count * 4);
+      colorBuffer.clear();
+      colorBuffer.limit(count * 4);
       if (copyDepth) {
-         depthReadback.clear();
-         depthReadback.limit(count);
+         depthBuffer.clear();
+         depthBuffer.limit(count);
       }
 
       int readY = viewportHeight - bounds.maxY;
       GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
-      GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, colorReadback);
+      GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, colorBuffer);
       if (copyDepth) {
-         GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthReadback);
+         GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthBuffer);
       }
 
       int legacyAlpha = Rasterizer3D.alpha;
@@ -2006,7 +2030,7 @@ final class GpuRasterizer3D {
             int sourcePixel = sourceRow + x;
             int byteIndex = sourcePixel * 4;
             if (copyDepth) {
-               float gpuDepth = depthReadback.get(sourcePixel);
+               float gpuDepth = depthBuffer.get(sourcePixel);
                if (gpuDepth >= 0.9999999F) {
                   continue;
                }
@@ -2018,9 +2042,9 @@ final class GpuRasterizer3D {
 
             int destinationIndex = destination + x;
             if (copyColor) {
-               int rgb = ((colorReadback.get(byteIndex) & 255) << 16)
-                  | ((colorReadback.get(byteIndex + 1) & 255) << 8)
-                  | (colorReadback.get(byteIndex + 2) & 255);
+               int rgb = ((colorBuffer.get(byteIndex) & 255) << 16)
+                  | ((colorBuffer.get(byteIndex + 1) & 255) << 8)
+                  | (colorBuffer.get(byteIndex + 2) & 255);
 
                if (blendLegacyAlpha && legacyAlpha != 0) {
                   int sourceWeight = 256 - legacyAlpha;
