@@ -39,6 +39,7 @@ final class GpuRasterizer3D {
    private static final int VERTEX_STRIDE_BYTES = FLOATS_PER_VERTEX * 4;
    private static final int MAX_BATCH_VERTICES = 98304;
    private static final int PARTICLE_SEGMENTS = 16;
+   private static final int BUFFER_SHRINK_RATIO = 4;
    private static final float[] PARTICLE_UNIT_X = new float[PARTICLE_SEGMENTS + 1];
    private static final float[] PARTICLE_UNIT_Y = new float[PARTICLE_SEGMENTS + 1];
    static final int UI_TRANSPARENT_KEY = 0x00010203;
@@ -143,8 +144,15 @@ final class GpuRasterizer3D {
       directFrameReady = false;
       if (enabled) {
          unavailable = false;
-      } else if (presentationCanvas != null) {
-         presentationCanvas.deactivate();
+      } else {
+         if (presentationCanvas != null) {
+            presentationCanvas.deactivate();
+         }
+         if (pbuffer != null) {
+            destroyContext();
+         } else {
+            releaseStagingBuffers();
+         }
       }
       System.out.println("Renderer: " + (enabled ? "GPU" : "software"));
    }
@@ -969,17 +977,23 @@ final class GpuRasterizer3D {
          resetRendererResourceHandles();
       }
 
+      int targetWidth = Math.max(width, 765);
+      int targetHeight = Math.max(height, 503);
       boolean recreate = pbuffer == null
          || pbuffer.isBufferLost()
-         || width > bufferWidth
-         || height > bufferHeight;
+         || targetWidth > bufferWidth
+         || targetHeight > bufferHeight
+         || shouldShrink(
+            (long)bufferWidth * (long)bufferHeight,
+            (long)targetWidth * (long)targetHeight
+         );
       if (!recreate) {
          return;
       }
 
       destroyContext();
-      bufferWidth = Math.max(width, 765);
-      bufferHeight = Math.max(height, 503);
+      bufferWidth = targetWidth;
+      bufferHeight = targetHeight;
 
       PixelFormat pixelFormat = new PixelFormat().withAlphaBits(8).withDepthBits(24);
       pbuffer = new Pbuffer(
@@ -1063,6 +1077,7 @@ final class GpuRasterizer3D {
       if (rendererUsesPresentationContext) {
          resetRendererResourceHandles();
       }
+      releaseStagingBuffers();
    }
 
    private static void resetRendererResourceHandles() {
@@ -1326,7 +1341,7 @@ final class GpuRasterizer3D {
       int width = viewportWidth;
       int height = viewportHeight;
       int bytes = width * height * 4;
-      ensureReadbackCapacity(width * height, false);
+      ensureReadbackCapacity(width * height, false, true);
 
       if (pboUnavailable) {
          readBackFrameSynchronous(false);
@@ -1385,7 +1400,7 @@ final class GpuRasterizer3D {
       int width = viewportWidth;
       int height = viewportHeight;
       int count = width * height;
-      ensureReadbackCapacity(count, copyDepth);
+      ensureReadbackCapacity(count, copyDepth, true);
 
       GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
       colorReadback.clear();
@@ -1425,7 +1440,7 @@ final class GpuRasterizer3D {
          throw new IllegalStateException("Direct presentation target is too large to read back");
       }
       int physicalCount = (int)physicalCountLong;
-      ensureReadbackCapacity(physicalCount, copyDepth);
+      ensureReadbackCapacity(physicalCount, copyDepth, true);
       int readY = directCanvasHeight - directTargetY - directTargetHeight;
 
       GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
@@ -1600,19 +1615,42 @@ final class GpuRasterizer3D {
    }
 
    private static void ensureReadbackCapacity(int pixels, boolean copyDepth) {
+      ensureReadbackCapacity(pixels, copyDepth, false);
+   }
+
+   private static void ensureReadbackCapacity(int pixels, boolean copyDepth, boolean allowShrink) {
       int colorBytes = pixels * 4;
-      if (colorReadback == null || colorReadback.capacity() < colorBytes) {
+      if (colorReadback == null
+         || colorReadback.capacity() < colorBytes
+         || allowShrink && shouldShrink(colorReadback.capacity(), colorBytes)) {
          colorReadback = BufferUtils.createByteBuffer(colorBytes);
       }
-      if (copyDepth && (depthReadback == null || depthReadback.capacity() < pixels)) {
+      if (copyDepth
+         && (depthReadback == null
+            || depthReadback.capacity() < pixels
+            || allowShrink && shouldShrink(depthReadback.capacity(), pixels))) {
          depthReadback = BufferUtils.createFloatBuffer(pixels);
       }
    }
 
    private static void ensureTextureUploadCapacity(int bytes) {
-      if (textureUploadBuffer == null || textureUploadBuffer.capacity() < bytes) {
+      if (textureUploadBuffer == null
+         || textureUploadBuffer.capacity() < bytes
+         || shouldShrink(textureUploadBuffer.capacity(), bytes)) {
          textureUploadBuffer = BufferUtils.createByteBuffer(bytes);
       }
+   }
+
+   private static boolean shouldShrink(long capacity, long required) {
+      return required > 0L
+         && capacity > required
+         && capacity >= required * BUFFER_SHRINK_RATIO;
+   }
+
+   private static void releaseStagingBuffers() {
+      colorReadback = null;
+      depthReadback = null;
+      textureUploadBuffer = null;
    }
 
    private static void setColor(int rgb, float scale, float alpha) {
@@ -1954,6 +1992,7 @@ final class GpuRasterizer3D {
       resetBatch();
       resetBatchPipelineTracking();
       Arrays.fill(textureDirty, true);
+      releaseStagingBuffers();
    }
 
    private static boolean triangleVisible(int x0, int y0, int x1, int y1, int x2, int y2) {
