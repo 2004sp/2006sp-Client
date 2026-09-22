@@ -178,6 +178,18 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
                makeCurrent();
                try {
                   action.run();
+               } catch (Throwable throwable) {
+                  // The action failed with this presentation context current.
+                  // Delete live GL resources before releasing the context and
+                  // later clearing their Java handles.
+                  if (!isDisplayable()
+                     || throwable instanceof IllegalStateException
+                        && "Canvas not yet displayable".equals(throwable.getMessage())) {
+                     displayabilityLost[0] = true;
+                  } else {
+                     cleanupCurrentContextResources();
+                     failure[0] = throwable;
+                  }
                } finally {
                   releaseContext();
                }
@@ -659,7 +671,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.contextReady = true;
          System.out.println("GPU direct presentation surface initialized through AWT paint lifecycle.");
       } catch (Throwable failure) {
-         markFailed(failure);
+         markFailed(failure, true);
       }
    }
 
@@ -705,7 +717,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
          swapBuffers();
       } catch (LWJGLException failure) {
-         markFailed(failure);
+         markFailed(failure, true);
       } finally {
          synchronized (this) {
             this.frameUploadInProgress = false;
@@ -906,6 +918,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
                GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
             } catch (Throwable ignored) {
             }
+            deleteUploadPbos();
             this.pboUnavailable = true;
             System.err.println("GPU presentation PBO upload unavailable; using direct dirty-rectangle uploads.");
          }
@@ -1241,31 +1254,133 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             + "  gl_FragColor = vec4(ui.rgb, alpha);\n"
             + "}\n";
 
-      int vertexShader = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
-      int fragmentShader = compileShader(GL20.GL_FRAGMENT_SHADER, fragmentSource);
-      int program = GL20.glCreateProgram();
-      GL20.glAttachShader(program, vertexShader);
-      GL20.glAttachShader(program, fragmentShader);
-      GL20.glLinkProgram(program);
-      if (GL20.glGetProgrami(program, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
-         throw new IllegalStateException("GPU presentation shader link failed: " + GL20.glGetProgramInfoLog(program, 4096));
+      int vertexShader = 0;
+      int fragmentShader = 0;
+      int program = 0;
+      boolean linked = false;
+      try {
+         vertexShader = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
+         fragmentShader = compileShader(GL20.GL_FRAGMENT_SHADER, fragmentSource);
+         program = GL20.glCreateProgram();
+         GL20.glAttachShader(program, vertexShader);
+         GL20.glAttachShader(program, fragmentShader);
+         GL20.glLinkProgram(program);
+         if (GL20.glGetProgrami(program, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
+            throw new IllegalStateException("GPU presentation shader link failed: " + GL20.glGetProgramInfoLog(program, 4096));
+         }
+         linked = true;
+         return program;
+      } finally {
+         if (vertexShader != 0) {
+            try {
+               GL20.glDeleteShader(vertexShader);
+            } catch (Throwable ignored) {
+            }
+         }
+         if (fragmentShader != 0) {
+            try {
+               GL20.glDeleteShader(fragmentShader);
+            } catch (Throwable ignored) {
+            }
+         }
+         if (!linked && program != 0) {
+            try {
+               GL20.glDeleteProgram(program);
+            } catch (Throwable ignored) {
+            }
+         }
       }
-      GL20.glDeleteShader(vertexShader);
-      GL20.glDeleteShader(fragmentShader);
-      return program;
    }
 
    private static int compileShader(int type, String source) {
       int shader = GL20.glCreateShader(type);
-      GL20.glShaderSource(shader, source);
-      GL20.glCompileShader(shader);
-      if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
-         throw new IllegalStateException("GPU presentation shader compile failed: " + GL20.glGetShaderInfoLog(shader, 4096));
+      boolean compiled = false;
+      try {
+         GL20.glShaderSource(shader, source);
+         GL20.glCompileShader(shader);
+         if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
+            throw new IllegalStateException("GPU presentation shader compile failed: " + GL20.glGetShaderInfoLog(shader, 4096));
+         }
+         compiled = true;
+         return shader;
+      } finally {
+         if (!compiled && shader != 0) {
+            try {
+               GL20.glDeleteShader(shader);
+            } catch (Throwable ignored) {
+            }
+         }
       }
-      return shader;
+   }
+
+   private void deleteUploadPbos() {
+      for (int pbo : this.uploadPbos) {
+         if (pbo != 0) {
+            try {
+               GL15.glDeleteBuffers(pbo);
+            } catch (Throwable ignored) {
+            }
+         }
+      }
+      Arrays.fill(this.uploadPbos, 0);
+      this.uploadPboCapacity = 0;
+      this.uploadPboWriteIndex = 0;
+   }
+
+   private void cleanupCurrentContextResources() {
+      try {
+         GL20.glUseProgram(0);
+      } catch (Throwable ignored) {
+      }
+      try {
+         GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
+      } catch (Throwable ignored) {
+      }
+      try {
+         GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+      } catch (Throwable ignored) {
+      }
+
+      if (this.overlayTexture != 0) {
+         try {
+            GL11.glDeleteTextures(this.overlayTexture);
+         } catch (Throwable ignored) {
+         }
+      }
+      if (this.retainedFrameTexture != 0) {
+         try {
+            GL11.glDeleteTextures(this.retainedFrameTexture);
+         } catch (Throwable ignored) {
+         }
+      }
+      if (this.softwareFrameTexture != 0) {
+         try {
+            GL11.glDeleteTextures(this.softwareFrameTexture);
+         } catch (Throwable ignored) {
+         }
+      }
+      if (this.overlayProgram != 0) {
+         try {
+            GL20.glDeleteProgram(this.overlayProgram);
+         } catch (Throwable ignored) {
+         }
+      }
+      deleteUploadPbos();
+
+      try {
+         GpuRasterizer3D.releasePresentationContextResources(this);
+      } catch (Throwable ignored) {
+      }
    }
 
    private void markFailed(Throwable failure) {
+      markFailed(failure, false);
+   }
+
+   private void markFailed(Throwable failure, boolean contextCurrent) {
+      if (contextCurrent) {
+         cleanupCurrentContextResources();
+      }
       this.failed = true;
       this.contextReady = false;
       this.sceneBackbufferPending = false;
