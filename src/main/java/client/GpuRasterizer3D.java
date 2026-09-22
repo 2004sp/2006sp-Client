@@ -245,6 +245,7 @@ final class GpuRasterizer3D {
          presentationCanvas.requestInitialization();
          presentationTransitionSoftware = true;
          try {
+            prepareSceneRasterBuffers();
             renderer.run();
          } finally {
             presentationTransitionSoftware = false;
@@ -278,7 +279,7 @@ final class GpuRasterizer3D {
 
                try {
                   beginFrame(fogEnabled, fogDistanceOffset);
-                  prepareDirectUiOverlayBuffer();
+                  prepareSceneRasterBuffers();
                   rendered[0] = true;
                   renderer.run();
                   completed[0] = endFrame();
@@ -297,7 +298,7 @@ final class GpuRasterizer3D {
       }
 
       beginFrame(fogEnabled, fogDistanceOffset);
-      prepareDirectUiOverlayBuffer();
+      prepareSceneRasterBuffers();
       renderer.run();
       return endFrame();
    }
@@ -384,11 +385,14 @@ final class GpuRasterizer3D {
       return frameOpen && frameActive && !frameSoftwareFallback;
    }
 
-   static void prepareDirectUiOverlayBuffer() {
+   static void prepareSceneRasterBuffers() {
       if (isFrameActive() && frameDirectPresentation && canUseDirectPresentation() && Rasterizer2D.pixels != null) {
          Arrays.fill(Rasterizer2D.pixels, UI_TRANSPARENT_KEY);
          Rasterizer2D.markGpuOverlayCleared();
+         return;
       }
+
+      Rasterizer2D.clear();
    }
 
    static boolean endFrame() {
@@ -1791,9 +1795,11 @@ final class GpuRasterizer3D {
 
             if (copyDepth) {
                float gpuDepth = depthReadback.get(sourceIndex);
-               if (gpuDepth < 0.9999999F) {
-                  Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
-               }
+               // Direct frames do not pre-clear the CPU depth buffer. Mirror
+               // the GL clear value so software fallback never sees stale depth.
+               Rasterizer2D.depthBuffer[destination + x] = gpuDepth < 0.9999999F
+                  ? gpuDepth * DEPTH_SCALE
+                  : Float.MAX_VALUE;
             }
          }
       }
