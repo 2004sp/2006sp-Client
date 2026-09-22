@@ -66,7 +66,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private volatile boolean hasPresentedFrame;
    private boolean everPresentedFrame;
    private boolean initialClearNeeded = true;
-   private boolean directWarmupPending;
+   private int directTransitionGuardFrames;
+   private final ByteBuffer transitionProbe = BufferUtils.createByteBuffer(4);
 
    private volatile boolean retainedFrameActive;
    private ByteBuffer retainedFrameBytes;
@@ -293,7 +294,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       // direct frame. Freeze those GPU resources until the first post-load
       // frame is presented instead of copying GL_FRONT through the CPU.
       this.retainedFrameActive = true;
-      this.directWarmupPending = true;
+      this.directTransitionGuardFrames = Math.max(this.directTransitionGuardFrames, 3);
       this.sceneBackbufferPending = false;
       return true;
    }
@@ -450,14 +451,23 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             uploadOverlay(frame);
             renderFrame(frame);
 
-            // The first direct frame after an opaque software/fullscreen frame
-            // or a region hold is a warm-up frame. Resource/buffer rebuilds in
-            // the legacy client can leave that first scene incomplete. Render
-            // it fully into the backbuffer but keep the previous front buffer
-            // visible; the next direct frame is the one that becomes visible.
-            if (directWarmupPending) {
-               directWarmupPending = false;
+            // After a software/fullscreen frame or a region rebuild, keep the
+            // previous front buffer visible for several complete direct renders.
+            // The old client rebuilds multiple software/scene buffers across
+            // adjacent frames, so a single warm-up frame is not sufficient.
+            if (directTransitionGuardFrames > 0) {
+               directTransitionGuardFrames--;
                return;
+            }
+
+            // Transition safety is fail-closed: if the fully composed GL
+            // backbuffer is effectively all black, do not swap it. This probe
+            // only runs at a transition boundary, not during steady-state
+            // rendering, so the synchronous 1x1 reads do not affect normal FPS.
+            if (retainedFrameActive || !lastPresentedFrameStateValid) {
+               if (isComposedBackbufferEffectivelyBlack(frame)) {
+                  return;
+               }
             }
 
             try {
@@ -555,7 +565,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
       if (presented) {
          this.lastPresentedFrameStateValid = false;
-         this.directWarmupPending = true;
+         this.directTransitionGuardFrames = Math.max(this.directTransitionGuardFrames, 3);
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
          this.everPresentedFrame = true;
@@ -705,29 +715,22 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
       try {
-         // Region-transition retention must win over every normal paint.
-         // Recompose the last successfully swapped scene + overlay directly
-         // from persistent GL textures. This removes GL_FRONT readback and
-         // prevents an AWT repaint from exposing an uninitialized backbuffer.
+         // Region retention means "leave the visible front buffer alone".
+         // Repainting and swapping an otherwise unchanged frame can expose an
+         // undefined/cleared backbuffer on some Windows driver/compositor paths.
+         // If the context is still the same, do nothing at all.
          if (this.retainedFrameActive) {
-            if (this.lastPresentedFrameStateValid
-               && GpuRasterizer3D.getPresentationSceneTexture() != 0
-               && this.overlayTexture != 0) {
-               renderFrame(this.lastPresentedFrameState);
-               swapBuffers();
-               this.initialClearNeeded = false;
-               this.hasPresentedFrame = true;
+            if (!this.initialClearNeeded && this.hasPresentedFrame) {
                return;
             }
 
-            // If the native peer/context was recreated during loading, the old
-            // shared textures are gone. Seed the new context from the complete
-            // software framebuffer rather than clearing the surface to black.
+            // A genuinely recreated context has no valid front buffer. Seed it
+            // from the complete software framebuffer before any swap/clear.
             if (renderInitialSoftwareFrame()) {
                swapBuffers();
                this.initialClearNeeded = false;
                this.hasPresentedFrame = true;
-               return;
+               this.everPresentedFrame = true;
             }
             return;
          }
@@ -1143,6 +1146,50 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       return this.softwareFrameTexture;
    }
 
+   private boolean isComposedBackbufferEffectivelyBlack(FrameState frame) {
+      int targetWidth = Math.max(1, frame.targetWidth);
+      int targetHeight = Math.max(1, frame.targetHeight);
+      int viewportY = Math.max(0, this.getHeight() - frame.targetY - targetHeight);
+      int nonDarkSamples = 0;
+
+      GL11.glReadBuffer(GL11.GL_BACK);
+      try {
+         // Sample a 5x5 grid inside the actual presentation target. The normal
+         // game UI/minimap/world guarantees multiple non-dark samples even in
+         // very dark scenes, while the reported failure is a uniform black
+         // compositor frame.
+         for (int gy = 0; gy < 5; gy++) {
+            int y = viewportY + Math.min(targetHeight - 1, (2 * gy + 1) * targetHeight / 10);
+            for (int gx = 0; gx < 5; gx++) {
+               int x = frame.targetX + Math.min(targetWidth - 1, (2 * gx + 1) * targetWidth / 10);
+               this.transitionProbe.clear();
+               GL11.glReadPixels(
+                  x,
+                  y,
+                  1,
+                  1,
+                  GL_BGRA,
+                  GL11.GL_UNSIGNED_BYTE,
+                  this.transitionProbe
+               );
+
+               int blue = this.transitionProbe.get(0) & 255;
+               int green = this.transitionProbe.get(1) & 255;
+               int red = this.transitionProbe.get(2) & 255;
+               if (red > 12 || green > 12 || blue > 12) {
+                  nonDarkSamples++;
+                  if (nonDarkSamples >= 2) {
+                     return false;
+                  }
+               }
+            }
+         }
+         return true;
+      } finally {
+         GL11.glReadBuffer(GL11.GL_BACK);
+      }
+   }
+
    private void renderSoftwareFrame(SoftwareFrameState frame) {
       int canvasWidth = Math.max(1, this.getWidth());
       int canvasHeight = Math.max(1, this.getHeight());
@@ -1483,7 +1530,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.softwareFrameWidth = 0;
       this.softwareFrameHeight = 0;
       this.lastPresentedFrameStateValid = false;
-      this.directWarmupPending = false;
+      this.directTransitionGuardFrames = 0;
    }
 
    private void releaseStagingIfIdle() {
