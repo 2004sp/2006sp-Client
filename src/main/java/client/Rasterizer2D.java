@@ -11,6 +11,11 @@ public class Rasterizer2D extends CacheableNode {
    public static int centerY;
    public static int viewportCenterY;
    public static float[] depthBuffer;
+   private static boolean encodeGpuOverlayAlpha;
+
+   static void setEncodeGpuOverlayAlpha(boolean enabled) {
+      encodeGpuOverlayAlpha = enabled;
+   }
 
    /**
     * Blend a legacy software-UI pixel while preserving real alpha for the
@@ -27,7 +32,7 @@ public class Rasterizer2D extends CacheableNode {
          return sourceRgb;
       }
 
-      if (GpuRasterizer3D.isDirectUiOverlayPrepared()) {
+      if (encodeGpuOverlayAlpha) {
          int destinationRgb = destination & 0x00FFFFFF;
          int destinationAlpha = destination >>> 24;
 
