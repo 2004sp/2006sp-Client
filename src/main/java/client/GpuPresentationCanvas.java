@@ -50,6 +50,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    private volatile boolean contextReady;
    private volatile boolean failed;
+   private volatile boolean initializationBootstrapPending;
    private int overlayTexture;
    private int overlayWidth;
    private int overlayHeight;
@@ -112,6 +113,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    @Override
    public void removeNotify() {
       this.contextReady = false;
+      this.initializationBootstrapPending = false;
       this.sceneBackbufferPending = false;
       resetContextState();
       GpuRasterizer3D.presentationContextLost(this);
@@ -124,11 +126,50 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
     * calling makeCurrent() before the first paint races peer creation on Windows.
     */
    void requestInitialization() {
-      if (this.contextReady || this.failed) {
+      if (this.contextReady || this.failed || this.initializationBootstrapPending) {
          return;
       }
-      this.owner.setGpuPresentationSurface(true);
-      this.repaint();
+
+      this.initializationBootstrapPending = true;
+      Runnable bootstrap = new Runnable() {
+         @Override
+         public void run() {
+            try {
+               if (contextReady || failed) {
+                  return;
+               }
+
+               if (!isDisplayable()) {
+                  // If a visible GPU card lost its peer, let AWT rebuild it.
+                  // When the software/login card is visible, never switch cards
+                  // just to initialize OpenGL; retry on the next completed frame.
+                  if (ClientWindow.isGpuPresentationVisible()) {
+                     owner.setGpuPresentationSurface(true);
+                     repaint();
+                  }
+                  return;
+               }
+
+               if (ClientWindow.isGpuPresentationVisible()) {
+                  repaint();
+               } else {
+                  // LWJGL2 creates AWTGLCanvas' context inside final paint().
+                  // Its paint() only requires a displayable peer, not visibility,
+                  // so initialize and seed the hidden GPU canvas while the
+                  // software card remains continuously visible.
+                  GpuPresentationCanvas.this.paint(null);
+               }
+            } finally {
+               initializationBootstrapPending = false;
+            }
+         }
+      };
+
+      if (EventQueue.isDispatchThread()) {
+         bootstrap.run();
+      } else {
+         EventQueue.invokeLater(bootstrap);
+      }
    }
 
    boolean isContextReady() {
@@ -246,64 +287,16 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    }
 
    boolean retainPresentedFrameForTransition() {
-      if (!hasPresentedFrame() || this.retainedFrameActive) {
-         return this.retainedFrameActive;
+      if (!hasPresentedFrame()) {
+         return false;
       }
 
-      final boolean[] captured = new boolean[1];
-      boolean ran = runInContext(new Runnable() {
-         @Override
-         public void run() {
-            int width = Math.max(1, GpuPresentationCanvas.this.getWidth());
-            int height = Math.max(1, GpuPresentationCanvas.this.getHeight());
-            long pixelCount = (long)width * (long)height;
-            if (pixelCount > Integer.MAX_VALUE / 4L) {
-               return;
-            }
-
-            // Reconstruct the exact last direct scene + overlay into the
-            // backbuffer before reading it. Reading GL_FRONT after an AWT
-            // swap is unreliable on some Windows compositor/driver paths and
-            // can yield a transient black frame during region changes.
-            if (lastPresentedFrameStateValid
-               && GpuRasterizer3D.getPresentationSceneTexture() != 0
-               && overlayTexture != 0) {
-               initializeGlResources();
-               renderFrame(lastPresentedFrameState);
-               GL11.glReadBuffer(GL11.GL_BACK);
-            } else {
-               // Compatibility fallback for software-only presented frames.
-               GL11.glReadBuffer(GL11.GL_FRONT);
-            }
-
-            ensureRetainedFrameCapacity((int)pixelCount);
-            ByteBuffer destination = retainedFrameBytes;
-            destination.clear();
-            destination.limit((int)pixelCount * 4);
-
-            GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
-            GL11.glReadPixels(
-               0,
-               0,
-               width,
-               height,
-               GL_BGRA,
-               GL11.GL_UNSIGNED_BYTE,
-               destination
-            );
-            GL11.glReadBuffer(GL11.GL_BACK);
-
-            destination.position(0);
-            destination.limit((int)pixelCount * 4);
-            retainedFrameWidth = width;
-            retainedFrameHeight = height;
-            retainedFrameTextureDirty = true;
-            retainedFrameActive = true;
-            sceneBackbufferPending = false;
-            captured[0] = true;
-         }
-      });
-      return ran && captured[0];
+      // The scene and UI textures already contain the exact last swapped
+      // direct frame. Freeze those GPU resources until the first post-load
+      // frame is presented instead of copying GL_FRONT through the CPU.
+      this.retainedFrameActive = true;
+      this.sceneBackbufferPending = false;
+      return true;
    }
 
    private void ensureRetainedFrameCapacity(int pixels) {
@@ -696,14 +689,30 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
       try {
-         // Region-transition retention must win over the pending-scene guard.
-         // AWT can repaint while terrain is rebuilding or while the peer is
-         // being recreated; redraw the captured visible frame instead of
-         // exposing an invalid/cleared drawable.
-         if (this.retainedFrameActive && renderRetainedFrame()) {
-            swapBuffers();
-            this.initialClearNeeded = false;
-            this.hasPresentedFrame = true;
+         // Region-transition retention must win over every normal paint.
+         // Recompose the last successfully swapped scene + overlay directly
+         // from persistent GL textures. This removes GL_FRONT readback and
+         // prevents an AWT repaint from exposing an uninitialized backbuffer.
+         if (this.retainedFrameActive) {
+            if (this.lastPresentedFrameStateValid
+               && GpuRasterizer3D.getPresentationSceneTexture() != 0
+               && this.overlayTexture != 0) {
+               renderFrame(this.lastPresentedFrameState);
+               swapBuffers();
+               this.initialClearNeeded = false;
+               this.hasPresentedFrame = true;
+               return;
+            }
+
+            // If the native peer/context was recreated during loading, the old
+            // shared textures are gone. Seed the new context from the complete
+            // software framebuffer rather than clearing the surface to black.
+            if (renderInitialSoftwareFrame()) {
+               swapBuffers();
+               this.initialClearNeeded = false;
+               this.hasPresentedFrame = true;
+               return;
+            }
             return;
          }
 
@@ -1423,6 +1432,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
       this.failed = true;
       this.contextReady = false;
+      this.initializationBootstrapPending = false;
       this.sceneBackbufferPending = false;
       resetContextState();
       GpuRasterizer3D.presentationContextLost(this);
