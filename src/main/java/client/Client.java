@@ -1293,6 +1293,9 @@ public class Client extends GameShell {
 
       if (screenMode != 0) {
          this.frameBuffer.drawGraphics(0, super.graphics, 0);
+         if (this.loadingStage == 2) {
+            GpuRasterizer3D.requestPresentationInitialization();
+         }
          return;
       }
 
@@ -1301,6 +1304,9 @@ public class Client extends GameShell {
          && presentation.width == fixedWidth
          && presentation.height == fixedHeight) {
          this.frameBuffer.drawGraphics(0, super.graphics, 0);
+         if (this.loadingStage == 2) {
+            GpuRasterizer3D.requestPresentationInitialization();
+         }
          return;
       }
 
@@ -1342,6 +1348,10 @@ public class Client extends GameShell {
             fixedHeight,
             this.frameBuffer
          );
+      }
+
+      if (this.loadingStage == 2) {
+         GpuRasterizer3D.requestPresentationInitialization();
       }
    }
 
