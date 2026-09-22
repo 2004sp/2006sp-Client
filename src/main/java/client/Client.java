@@ -5986,6 +5986,7 @@ public class Client extends GameShell {
 
          if (loggedIn) {
             this.mainGameProcessor();
+            this.updateParticles();
          } else {
             Client client = this;
             if (super.clickButton == 1 && client.clickX >= 725 && client.clickX <= 760 && client.clickY >= 463 && client.clickY <= 499) {
@@ -14239,7 +14240,7 @@ public class Client extends GameShell {
 
                      // Particles share the same canvas depth buffer as the
                      // scene while direct GPU presentation is active.
-                     client.updateParticles();
+                     client.drawParticles();
                   }
                }
             );
@@ -20078,15 +20079,31 @@ public class Client extends GameShell {
       return true;
    }
    private void updateParticles() {
+      Iterator iterator = this.particles.iterator();
+
+      while (iterator.hasNext()) {
+         Particle particle;
+         if ((particle = (Particle)iterator.next()) != null) {
+            particle.update();
+            if (particle.isDead()) {
+               this.deadParticles.add(particle);
+            }
+         }
+      }
+
+      this.particles.removeAll(this.deadParticles);
+      this.deadParticles.clear();
+   }
+
+   private void drawParticles() {
       if (particleRenderingEnabled) {
          Iterator iterator = this.particles.iterator();
 
          while (iterator.hasNext()) {
             Particle particle;
             if ((particle = (Particle)iterator.next()) != null) {
-               particle.update();
                if (particle.isDead()) {
-                  this.deadParticles.add(particle);
+                  continue;
                } else {
                   int particleXOrYawCosine = particle.getPosition().getX();
                   int particleX = particle.getPosition().getY();
@@ -20190,25 +20207,7 @@ public class Client extends GameShell {
                }
             }
          }
-      } else {
-         Iterator iterator2 = this.particles.iterator();
-
-         while (iterator2.hasNext()) {
-            Particle particle2;
-            if ((particle2 = (Particle)iterator2.next()) != null) {
-               particle2.update();
-               if (particle2.isDead()) {
-                  this.deadParticles.add(particle2);
-               }
-            }
-         }
-
-         this.particles.removeAll(this.deadParticles);
-         this.deadParticles.clear();
       }
-
-      this.particles.removeAll(this.deadParticles);
-      this.deadParticles.clear();
    }
    private void updateFog() {
       if (fogEnabled) {
