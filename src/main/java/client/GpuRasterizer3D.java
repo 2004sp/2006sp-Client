@@ -33,8 +33,10 @@ final class GpuRasterizer3D {
    private static final int TEXTURE_GRID_SIZE = 8;
    private static final int WHITE_TEXTURE_CELL = 63;
    private static final int BATCH_NONE = 0;
-   private static final int BATCH_TEXTURED = 1;
-   private static final int BATCH_PARTICLE = 2;
+   private static final int BATCH_DEPTH_ONLY = 1;
+   private static final int BATCH_OPAQUE = 2;
+   private static final int BATCH_TRANSLUCENT = 3;
+   private static final int BATCH_PARTICLE = 4;
    private static final int FLOATS_PER_VERTEX = 11;
    private static final int VERTEX_STRIDE_BYTES = FLOATS_PER_VERTEX * 4;
    private static final int MAX_BATCH_VERTICES = 98304;
@@ -145,6 +147,9 @@ final class GpuRasterizer3D {
    private static boolean frameFogEnabled;
    private static float frameFogStart;
    private static float frameFogEnd;
+   // Opaque/depth-only batches may use the hardware depth test until a
+   // legacy translucent triangle writes painter-ordered depth into the buffer.
+   private static boolean frameDepthRejectionSafe;
 
    static {
       Arrays.fill(textureDirty, true);
@@ -314,6 +319,7 @@ final class GpuRasterizer3D {
       frameFogEnabled = fogEnabled;
       frameFogStart = 1430.0F + fogDistanceOffset;
       frameFogEnd = 2100.0F + fogDistanceOffset;
+      frameDepthRejectionSafe = false;
       resetBatch();
       resetBatchPipelineTracking();
       preparedClipMinX = Integer.MIN_VALUE;
@@ -364,6 +370,7 @@ final class GpuRasterizer3D {
          GL11.glDepthMask(true);
          GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
          GL11.glColorMask(true, true, true, false);
+         frameDepthRejectionSafe = true;
          frameActive = true;
          return true;
       } catch (Throwable failure) {
@@ -413,6 +420,7 @@ final class GpuRasterizer3D {
          frameActive = false;
          frameSoftwareFallback = false;
          frameDirectPresentation = false;
+         frameDepthRejectionSafe = false;
          resetBatch();
       }
       return completed;
@@ -2031,10 +2039,10 @@ final class GpuRasterizer3D {
    private static void queueDepthTriangle(
       float x0, float y0, float d0, float x1, float y1, float d1, float x2, float y2, float d2
    ) {
-      ensureBatch(BATCH_TEXTURED, atlasTexture, 3);
-      putVertex(x0, y0, -clampDepth(d0), 1.0F, 1.0F, 1.0F, 0.0F, 0.5F, 0.5F, WHITE_TEXTURE_CELL, 1.0F);
-      putVertex(x1, y1, -clampDepth(d1), 1.0F, 1.0F, 1.0F, 0.0F, 0.5F, 0.5F, WHITE_TEXTURE_CELL, 1.0F);
-      putVertex(x2, y2, -clampDepth(d2), 1.0F, 1.0F, 1.0F, 0.0F, 0.5F, 0.5F, WHITE_TEXTURE_CELL, 1.0F);
+      ensureBatch(BATCH_DEPTH_ONLY, 0, 3);
+      putVertex(x0, y0, -clampDepth(d0), 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F);
+      putVertex(x1, y1, -clampDepth(d1), 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F);
+      putVertex(x2, y2, -clampDepth(d2), 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 1.0F);
    }
 
    private static void queueColorTriangle(
@@ -2043,7 +2051,8 @@ final class GpuRasterizer3D {
       float x2, float y2, float d2, int rgb2,
       float alpha
    ) {
-      ensureBatch(BATCH_TEXTURED, atlasTexture, 3);
+      int mode = alpha >= 0.99999F ? BATCH_OPAQUE : BATCH_TRANSLUCENT;
+      ensureBatch(mode, atlasTexture, 3);
       putColorVertex(x0, y0, d0, rgb0, alpha);
       putColorVertex(x1, y1, d1, rgb1, alpha);
       putColorVertex(x2, y2, d2, rgb2, alpha);
@@ -2066,7 +2075,7 @@ final class GpuRasterizer3D {
       float x1, float y1, float d1, float shade1, float s1, float t1, float q1,
       float x2, float y2, float d2, float shade2, float s2, float t2, float q2
    ) {
-      ensureBatch(BATCH_TEXTURED, atlasTexture, 3);
+      ensureBatch(BATCH_OPAQUE, atlasTexture, 3);
       putVertex(x0, y0, -clampDepth(d0), shade0, shade0, shade0, 1.0F, s0, t0, textureCell, q0);
       putVertex(x1, y1, -clampDepth(d1), shade1, shade1, shade1, 1.0F, s1, t1, textureCell, q1);
       putVertex(x2, y2, -clampDepth(d2), shade2, shade2, shade2, 1.0F, s2, t2, textureCell, q2);
@@ -2132,8 +2141,6 @@ final class GpuRasterizer3D {
       GL11.glColorMask(true, true, true, false);
       GL11.glDisable(GL11.GL_ALPHA_TEST);
       GL11.glDisable(GL11.GL_FOG);
-      GL11.glEnable(GL11.GL_BLEND);
-      GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
       GL11.glShadeModel(GL11.GL_SMOOTH);
 
       batchPipelinePrepared = true;
@@ -2146,9 +2153,39 @@ final class GpuRasterizer3D {
          return;
       }
 
-      if (mode == BATCH_TEXTURED) {
+      GL11.glDisable(GL11.GL_ALPHA_TEST);
+      GL11.glDisable(GL11.GL_FOG);
+
+      if (mode == BATCH_DEPTH_ONLY) {
+         // Depth-only terrain must not pay for atlas sampling or scene shading.
+         // Keep legacy painter semantics after translucent depth has appeared.
+         GL20.glUseProgram(0);
+         sceneShaderConfigured = false;
+         GL11.glDisable(GL11.GL_TEXTURE_2D);
+         GL11.glDisable(GL11.GL_BLEND);
+         GL11.glDisableClientState(GL11.GL_COLOR_ARRAY);
+         GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
+         GL11.glColorMask(false, false, false, false);
+         GL11.glDepthFunc(frameDepthRejectionSafe ? GL11.GL_LEQUAL : GL11.GL_ALWAYS);
          GL11.glDepthMask(true);
-         GL11.glDepthFunc(GL11.GL_ALWAYS);
+      } else if (mode == BATCH_OPAQUE || mode == BATCH_TRANSLUCENT) {
+         GL11.glEnableClientState(GL11.GL_COLOR_ARRAY);
+         GL11.glEnableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
+         GL11.glColorMask(true, true, true, false);
+         GL11.glDepthMask(true);
+
+         if (mode == BATCH_OPAQUE) {
+            GL11.glDisable(GL11.GL_BLEND);
+            GL11.glDepthFunc(frameDepthRejectionSafe ? GL11.GL_LEQUAL : GL11.GL_ALWAYS);
+         } else {
+            // Legacy alpha faces are painter ordered and write depth. Once one
+            // is submitted, that depth cannot safely reject later opaque faces.
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glDepthFunc(GL11.GL_ALWAYS);
+            frameDepthRejectionSafe = false;
+         }
+
          GL11.glEnable(GL11.GL_TEXTURE_2D);
          GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
          if (sceneShaderConfigured) {
@@ -2159,7 +2196,13 @@ final class GpuRasterizer3D {
          }
       } else if (mode == BATCH_PARTICLE) {
          GL20.glUseProgram(0);
+         sceneShaderConfigured = false;
+         GL11.glEnableClientState(GL11.GL_COLOR_ARRAY);
+         GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
+         GL11.glColorMask(true, true, true, false);
          GL11.glDisable(GL11.GL_TEXTURE_2D);
+         GL11.glEnable(GL11.GL_BLEND);
+         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
          GL11.glDepthFunc(GL11.GL_LEQUAL);
          GL11.glDepthMask(false);
       }
