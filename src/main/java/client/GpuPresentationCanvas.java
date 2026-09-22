@@ -486,7 +486,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          @Override
          public void run() {
             initializeGlResources();
-            uploadSoftwareFrame(frame);
+            uploadSoftwareFrame(frame, GpuPresentationCanvas.this.softwareFrameUploadBytes);
             renderSoftwareFrame(frame);
             try {
                swapBuffers();
@@ -731,12 +731,19 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
 
       int count = (int)pixelCount;
-      ensureSoftwareFrameUploadCapacity(count);
-      this.softwareFrameUploadInts.clear();
-      this.softwareFrameUploadInts.put(frameBuffer.pixels, 0, count);
-      this.softwareFrameUploadInts.flip();
-      this.softwareFrameUploadBytes.position(0);
-      this.softwareFrameUploadBytes.limit(count * 4);
+      int byteCount = count * 4;
+
+      // paintGL() runs on the AWT event thread while presentSoftwareFrame()
+      // can prepare a fallback frame on the game thread. Do not share the
+      // mutable position/limit state of softwareFrameUploadInts between them.
+      // This seed upload only runs during presentation initialization, so a
+      // short-lived staging buffer avoids the race without adding steady-state
+      // allocation to software fallback frames.
+      ByteBuffer uploadBytes = BufferUtils.createByteBuffer(byteCount).order(ByteOrder.nativeOrder());
+      IntBuffer uploadInts = uploadBytes.asIntBuffer();
+      uploadInts.put(frameBuffer.pixels, 0, count);
+      uploadBytes.position(0);
+      uploadBytes.limit(byteCount);
 
       SoftwareFrameState frame = new SoftwareFrameState(
          frameWidth,
@@ -746,7 +753,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          Math.max(1, this.getWidth()),
          Math.max(1, this.getHeight())
       );
-      uploadSoftwareFrame(frame);
+      uploadSoftwareFrame(frame, uploadBytes);
       renderSoftwareFrame(frame);
       return true;
    }
@@ -1023,11 +1030,11 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.uploadPboWriteIndex = 0;
    }
 
-   private void uploadSoftwareFrame(SoftwareFrameState frame) {
+   private void uploadSoftwareFrame(SoftwareFrameState frame, ByteBuffer uploadBytes) {
       GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, ensureSoftwareFrameTexture(frame.frameWidth, frame.frameHeight));
 
-      ByteBuffer upload = this.softwareFrameUploadBytes.duplicate().order(ByteOrder.nativeOrder());
+      ByteBuffer upload = uploadBytes.duplicate().order(ByteOrder.nativeOrder());
       upload.position(0);
       upload.limit(frame.frameWidth * frame.frameHeight * 4);
       GL11.glTexSubImage2D(
