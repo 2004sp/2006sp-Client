@@ -94,11 +94,6 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.addFocusListener(owner);
    }
 
-   @Override
-   public void addNotify() {
-      super.addNotify();
-   }
-
    /**
     * Canvas.update() normally erases the heavyweight peer to its background
     * color before paint(). During live resize/peer recreation that erase can
