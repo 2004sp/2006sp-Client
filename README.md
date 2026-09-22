@@ -81,6 +81,15 @@ still use a small bounding-box readback. If a legacy-only triangle is encountere
 mid-frame, accumulated GPU output is copied back once and the rest of that frame
 continues in software.
 
+GPU staging memory deliberately uses resize hysteresis. Small window-size changes
+keep existing direct buffers to avoid allocation churn, but a buffer or fallback
+Pbuffer is downsized once its capacity is at least four times the current
+requirement. Temporary transition-frame storage is released after the handoff,
+and renderer disable/context loss drops reusable CPU staging buffers. As a
+result, native/heap usage can remain somewhat above the exact current frame size
+during normal resizing, but a temporary 4K/fullscreen resize is not retained as
+the permanent staging-memory high-water mark.
+
 ## Configuration
 
 Client preferences are stored in `runtime/userConfig.cfg`. This includes display
