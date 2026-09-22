@@ -283,6 +283,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             retainedFrameHeight = height;
             retainedFrameTextureDirty = true;
             retainedFrameActive = true;
+            // A retained front-buffer snapshot is authoritative during a
+            // region rebuild. Do not let an older unpresented scene-pending
+            // flag suppress repainting that snapshot.
+            sceneBackbufferPending = false;
             captured[0] = true;
          }
       });
@@ -666,7 +670,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    @Override
    protected void paintGL() {
-      if (failed || this.sceneBackbufferPending) {
+      if (failed) {
          return;
       }
 
@@ -674,10 +678,18 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
       try {
+         // Region-transition retention must win over the pending-scene guard.
+         // AWT can repaint while terrain is rebuilding or while the peer is
+         // being recreated; redraw the captured visible frame instead of
+         // exposing an invalid/cleared drawable.
          if (this.retainedFrameActive && renderRetainedFrame()) {
             swapBuffers();
             this.initialClearNeeded = false;
             this.hasPresentedFrame = true;
+            return;
+         }
+
+         if (this.sceneBackbufferPending) {
             return;
          }
 
