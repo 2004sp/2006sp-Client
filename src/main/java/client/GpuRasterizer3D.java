@@ -983,7 +983,11 @@ final class GpuRasterizer3D {
    }
 
    private static boolean canDraw(float depth0, float depth1, float depth2) {
-      if (!frameOpen && rendererUsesPresentationContext) {
+      // Auxiliary UI/model renders can run after a direct scene frame has
+      // completed but before that shared frame is presented. Keep them on the
+      // software rasterizer instead of replacing the shared Pbuffer, which
+      // would destroy the pending presentation texture and thrash contexts.
+      if (!frameOpen && (rendererUsesPresentationContext || pbufferSharesPresentationContext)) {
          return false;
       }
       if (frameOpen && frameSoftwareFallback) {
