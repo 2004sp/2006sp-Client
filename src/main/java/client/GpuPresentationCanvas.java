@@ -20,9 +20,10 @@ import org.lwjgl.opengl.PixelFormat;
 /**
  * AWT-hosted OpenGL presentation surface.
  *
- * The 3D scene is rendered on the game thread into a Pbuffer and copied into a
- * texture shared with this canvas' context. The existing software framebuffer is
- * uploaded as a UI texture; scene + UI are composited here before the canvas swaps.
+ * The 3D scene is rendered on the game thread into a texture shared with this
+ * canvas' context (with a framebuffer-copy fallback on older drivers). The
+ * existing software framebuffer is uploaded as a UI texture; scene + UI are
+ * composited here before the canvas swaps.
  *
  * The old client does not maintain per-pixel alpha for its software UI. During
  * direct presentation the untouched 3D viewport is filled with a dedicated
@@ -1275,6 +1276,11 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private void renderFrame(FrameState frame) {
       int canvasWidth = Math.max(1, this.getWidth());
       int canvasHeight = Math.max(1, this.getHeight());
+
+      // The scene is produced by the shared Pbuffer context. Queue a GPU-side
+      // dependency before sampling it instead of forcing the producer thread
+      // through glFinish() every frame.
+      GpuRasterizer3D.waitForPresentationScene();
       int sceneTexture = GpuRasterizer3D.getPresentationSceneTexture();
       if (sceneTexture == 0) {
          throw new IllegalStateException("Direct GPU scene texture is not ready for presentation");
@@ -1304,8 +1310,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glLoadIdentity();
       GL11.glEnable(GL11.GL_TEXTURE_2D);
 
-      // glCopyTexSubImage2D copied the Pbuffer in OpenGL's bottom-left texture
-      // orientation. Flip T while drawing so logical UI Y=0 remains the top.
+      // Both direct FBO rendering and the compatibility framebuffer-copy path
+      // use OpenGL's bottom-left texture orientation. Flip T while drawing so
+      // logical UI Y=0 remains the top.
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, sceneTexture);
       GL11.glBegin(GL11.GL_QUADS);
       GL11.glTexCoord2f(0.0F, 1.0F);
