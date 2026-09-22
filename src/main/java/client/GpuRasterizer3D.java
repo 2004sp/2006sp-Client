@@ -1031,7 +1031,7 @@ final class GpuRasterizer3D {
          throw new IllegalStateException("Pbuffer remained active while entering direct canvas rendering");
       }
 
-      resetRendererResourceHandles();
+      deleteRendererResources();
       initializeCurrentContextResources(true);
       System.out.println(
          "GPU renderer initialized in AWTGLCanvas context "
@@ -1085,10 +1085,79 @@ final class GpuRasterizer3D {
       setDirectFrameReady(false);
       frameDirectPresentation = false;
       directModeLogged = false;
-      if (rendererUsesPresentationContext) {
+      if (pbuffer == null) {
+         // The AWT context is already gone or is being destroyed, so its GL
+         // objects no longer need explicit deletion. Forget every possible
+         // direct-context handle, including a partially initialized renderer.
          resetRendererResourceHandles();
       }
       releaseStagingBuffers();
+   }
+
+   static void releasePresentationContextResources(GpuPresentationCanvas canvas) {
+      if (presentationCanvas != canvas || pbuffer != null) {
+         return;
+      }
+      deleteRendererResources();
+   }
+
+   private static void deleteColorPbos() {
+      try {
+         GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
+      } catch (Throwable ignored) {
+      }
+      for (int pbo : colorPbos) {
+         if (pbo != 0) {
+            try {
+               GL15.glDeleteBuffers(pbo);
+            } catch (Throwable ignored) {
+            }
+         }
+      }
+      Arrays.fill(colorPbos, 0);
+      Arrays.fill(colorPboReady, false);
+      colorPboWriteIndex = 0;
+      colorPboBytes = 0;
+   }
+
+   private static void deleteRendererResources() {
+      try {
+         GL20.glUseProgram(0);
+      } catch (Throwable ignored) {
+      }
+      try {
+         GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
+      } catch (Throwable ignored) {
+      }
+      try {
+         GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
+      } catch (Throwable ignored) {
+      }
+      try {
+         GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+      } catch (Throwable ignored) {
+      }
+
+      if (vertexBufferObject != 0) {
+         try {
+            GL15.glDeleteBuffers(vertexBufferObject);
+         } catch (Throwable ignored) {
+         }
+      }
+      if (shaderProgram != 0) {
+         try {
+            GL20.glDeleteProgram(shaderProgram);
+         } catch (Throwable ignored) {
+         }
+      }
+      if (atlasTexture != 0) {
+         try {
+            GL11.glDeleteTextures(atlasTexture);
+         } catch (Throwable ignored) {
+         }
+      }
+      deleteColorPbos();
+      resetRendererResourceHandles();
    }
 
    private static void resetRendererResourceHandles() {
@@ -1298,41 +1367,89 @@ final class GpuRasterizer3D {
             + "  gl_FragColor = color;\n"
             + "}\n";
 
-      int vertexShader = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
-      int fragmentShader = compileShader(GL20.GL_FRAGMENT_SHADER, fragmentSource);
-      shaderProgram = GL20.glCreateProgram();
-      GL20.glAttachShader(shaderProgram, vertexShader);
-      GL20.glAttachShader(shaderProgram, fragmentShader);
-      GL20.glLinkProgram(shaderProgram);
-      if (GL20.glGetProgrami(shaderProgram, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
-         throw new IllegalStateException("GPU shader link failed: " + GL20.glGetProgramInfoLog(shaderProgram, 4096));
+      int vertexShader = 0;
+      int fragmentShader = 0;
+      int program = 0;
+      boolean initialized = false;
+      try {
+         vertexShader = compileShader(GL20.GL_VERTEX_SHADER, vertexSource);
+         fragmentShader = compileShader(GL20.GL_FRAGMENT_SHADER, fragmentSource);
+         program = GL20.glCreateProgram();
+         GL20.glAttachShader(program, vertexShader);
+         GL20.glAttachShader(program, fragmentShader);
+         GL20.glLinkProgram(program);
+         if (GL20.glGetProgrami(program, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
+            throw new IllegalStateException("GPU shader link failed: " + GL20.glGetProgramInfoLog(program, 4096));
+         }
+
+         int newUniformAtlas = GL20.glGetUniformLocation(program, "uAtlas");
+         int newUniformTextureSize = GL20.glGetUniformLocation(program, "uTextureSize");
+         int newUniformFogEnabled = GL20.glGetUniformLocation(program, "uFogEnabled");
+         int newUniformFogStart = GL20.glGetUniformLocation(program, "uFogStart");
+         int newUniformFogEnd = GL20.glGetUniformLocation(program, "uFogEnd");
+         int newUniformDepthScale = GL20.glGetUniformLocation(program, "uDepthScale");
+         int newUniformFogColor = GL20.glGetUniformLocation(program, "uFogColor");
+
+         GL20.glUseProgram(program);
+         GL20.glUniform1i(newUniformAtlas, 0);
+         GL20.glUniform1f(newUniformDepthScale, DEPTH_SCALE);
+         GL20.glUniform3f(newUniformFogColor, 149.0F / 255.0F, 150.0F / 255.0F, 152.0F / 255.0F);
+         GL20.glUseProgram(0);
+
+         uniformAtlas = newUniformAtlas;
+         uniformTextureSize = newUniformTextureSize;
+         uniformFogEnabled = newUniformFogEnabled;
+         uniformFogStart = newUniformFogStart;
+         uniformFogEnd = newUniformFogEnd;
+         uniformDepthScale = newUniformDepthScale;
+         uniformFogColor = newUniformFogColor;
+         shaderProgram = program;
+         initialized = true;
+      } finally {
+         try {
+            GL20.glUseProgram(0);
+         } catch (Throwable ignored) {
+         }
+         if (vertexShader != 0) {
+            try {
+               GL20.glDeleteShader(vertexShader);
+            } catch (Throwable ignored) {
+            }
+         }
+         if (fragmentShader != 0) {
+            try {
+               GL20.glDeleteShader(fragmentShader);
+            } catch (Throwable ignored) {
+            }
+         }
+         if (!initialized && program != 0) {
+            try {
+               GL20.glDeleteProgram(program);
+            } catch (Throwable ignored) {
+            }
+         }
       }
-      GL20.glDeleteShader(vertexShader);
-      GL20.glDeleteShader(fragmentShader);
-
-      uniformAtlas = GL20.glGetUniformLocation(shaderProgram, "uAtlas");
-      uniformTextureSize = GL20.glGetUniformLocation(shaderProgram, "uTextureSize");
-      uniformFogEnabled = GL20.glGetUniformLocation(shaderProgram, "uFogEnabled");
-      uniformFogStart = GL20.glGetUniformLocation(shaderProgram, "uFogStart");
-      uniformFogEnd = GL20.glGetUniformLocation(shaderProgram, "uFogEnd");
-      uniformDepthScale = GL20.glGetUniformLocation(shaderProgram, "uDepthScale");
-      uniformFogColor = GL20.glGetUniformLocation(shaderProgram, "uFogColor");
-
-      GL20.glUseProgram(shaderProgram);
-      GL20.glUniform1i(uniformAtlas, 0);
-      GL20.glUniform1f(uniformDepthScale, DEPTH_SCALE);
-      GL20.glUniform3f(uniformFogColor, 149.0F / 255.0F, 150.0F / 255.0F, 152.0F / 255.0F);
-      GL20.glUseProgram(0);
    }
 
    private static int compileShader(int type, String source) {
       int shader = GL20.glCreateShader(type);
-      GL20.glShaderSource(shader, source);
-      GL20.glCompileShader(shader);
-      if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
-         throw new IllegalStateException("GPU shader compile failed: " + GL20.glGetShaderInfoLog(shader, 4096));
+      boolean compiled = false;
+      try {
+         GL20.glShaderSource(shader, source);
+         GL20.glCompileShader(shader);
+         if (GL20.glGetShaderi(shader, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
+            throw new IllegalStateException("GPU shader compile failed: " + GL20.glGetShaderInfoLog(shader, 4096));
+         }
+         compiled = true;
+         return shader;
+      } finally {
+         if (!compiled && shader != 0) {
+            try {
+               GL20.glDeleteShader(shader);
+            } catch (Throwable ignored) {
+            }
+         }
       }
-      return shader;
    }
 
    private static void useSceneShader(boolean fogEnabled) {
@@ -1393,6 +1510,7 @@ final class GpuRasterizer3D {
             GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
          } catch (Throwable ignored) {
          }
+         deleteColorPbos();
          pboUnavailable = true;
          System.err.println("GPU PBO readback unavailable; using synchronous color readback.");
          readBackFrameSynchronous(false);
@@ -1966,48 +2084,25 @@ final class GpuRasterizer3D {
             if (!pbuffer.isCurrent()) {
                pbuffer.makeCurrent();
             }
-            if (vertexBufferObject != 0) {
-               GL15.glDeleteBuffers(vertexBufferObject);
-            }
-            if (shaderProgram != 0) {
-               GL20.glDeleteProgram(shaderProgram);
-            }
-            if (atlasTexture != 0) {
-               GL11.glDeleteTextures(atlasTexture);
-            }
-            for (int pbo : colorPbos) {
-               if (pbo != 0) {
-                  GL15.glDeleteBuffers(pbo);
-               }
-            }
+            deleteRendererResources();
          } catch (Throwable ignored) {
          }
          try {
             pbuffer.destroy();
          } catch (Throwable ignored) {
          }
+      } else if (directPresentationExecution) {
+         // Direct rendering executes inside GpuPresentationCanvas.runInContext,
+         // so a failure here still has the AWT context current.
+         deleteRendererResources();
       }
       pbuffer = null;
-      rendererUsesPresentationContext = false;
+      resetRendererResourceHandles();
       setDirectFrameReady(false);
       frameDirectPresentation = false;
       directModeLogged = false;
       bufferWidth = 0;
       bufferHeight = 0;
-      viewportWidth = -1;
-      viewportHeight = -1;
-      vertexBufferObject = 0;
-      shaderProgram = 0;
-      atlasTexture = 0;
-      atlasTextureSize = 0;
-      legacyTextureSize = 0;
-      Arrays.fill(colorPbos, 0);
-      Arrays.fill(colorPboReady, false);
-      colorPboBytes = 0;
-      colorPboWriteIndex = 0;
-      resetBatch();
-      resetBatchPipelineTracking();
-      Arrays.fill(textureDirty, true);
       releaseStagingBuffers();
    }
 
