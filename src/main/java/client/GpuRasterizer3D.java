@@ -685,6 +685,8 @@ final class GpuRasterizer3D {
             presentationSceneTexture,
             0
          );
+         GL11.glDrawBuffer(EXTFramebufferObject.GL_COLOR_ATTACHMENT0_EXT);
+         GL11.glReadBuffer(EXTFramebufferObject.GL_COLOR_ATTACHMENT0_EXT);
 
          EXTFramebufferObject.glBindRenderbufferEXT(
             EXTFramebufferObject.GL_RENDERBUFFER_EXT,
@@ -725,6 +727,8 @@ final class GpuRasterizer3D {
          }
          try {
             EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
+            GL11.glDrawBuffer(GL11.GL_BACK);
+            GL11.glReadBuffer(GL11.GL_BACK);
          } catch (Throwable ignored) {
          }
          presentationFramebufferActive = false;
@@ -743,6 +747,8 @@ final class GpuRasterizer3D {
       }
       try {
          EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
+         GL11.glDrawBuffer(GL11.GL_BACK);
+         GL11.glReadBuffer(GL11.GL_BACK);
       } catch (Throwable ignored) {
       } finally {
          presentationFramebufferActive = false;
