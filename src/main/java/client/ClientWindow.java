@@ -584,7 +584,7 @@ public final class ClientWindow extends Client implements ActionListener {
             }
 
             if (text.equalsIgnoreCase("Reload Userconfig")) {
-               Client.loadUserConfig();
+               Client.reloadUserConfig();
                if (gpuRendererMenuItem != null && softwareRendererMenuItem != null) {
                   gpuRendererMenuItem.setSelected(GpuRasterizer3D.isRequested());
                   softwareRendererMenuItem.setSelected(!GpuRasterizer3D.isRequested());
