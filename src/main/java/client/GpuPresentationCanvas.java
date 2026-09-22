@@ -577,15 +577,27 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
 
+      final boolean[] swapped = new boolean[1];
       boolean presented = runInContext(new Runnable() {
          @Override
          public void run() {
             initializeGlResources();
             uploadSoftwareFrame(frame, GpuPresentationCanvas.this.softwareFrameUploadBytes);
             renderSoftwareFrame(frame);
+
+            // A software fallback is common immediately after a region rebuild
+            // while legacy textures/models are being repopulated. Never let
+            // that fallback replace the retained old-region snapshot: it can
+            // contain an incomplete/cleared scene and was the remaining
+            // one-frame black-flash path.
+            if (retainedFrameActive) {
+               directTransitionGuardFrames = Math.max(directTransitionGuardFrames, 3);
+               return;
+            }
+
             try {
                swapBuffers();
-               finishTransitionFrameRetention();
+               swapped[0] = true;
             } catch (LWJGLException failure) {
                throw new RuntimeException(failure);
             }
@@ -597,13 +609,20 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          releaseStagingIfIdle();
       }
       if (presented) {
-         this.lastPresentedFrameStateValid = false;
-         this.directTransitionGuardFrames = Math.max(this.directTransitionGuardFrames, 3);
          this.sceneBackbufferPending = false;
-         this.hasPresentedFrame = true;
-         this.everPresentedFrame = true;
-         this.owner.setGpuPresentationSurface(true);
+
+         if (swapped[0]) {
+            this.lastPresentedFrameStateValid = false;
+            this.directTransitionGuardFrames = Math.max(this.directTransitionGuardFrames, 3);
+            this.hasPresentedFrame = true;
+            this.everPresentedFrame = true;
+            this.owner.setGpuPresentationSurface(true);
+         }
       }
+      // Returning true while a region snapshot is retained intentionally tells
+      // Client.drawFrameBufferToWindow() that the fallback was handled. The
+      // visible frame remains the retained snapshot until direct presentation
+      // produces a validated replacement.
       return presented;
    }
 
