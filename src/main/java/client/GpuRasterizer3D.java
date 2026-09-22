@@ -116,6 +116,9 @@ final class GpuRasterizer3D {
    private static int presentationFramebufferHeight;
    private static boolean presentationFramebufferActive;
    private static boolean presentationFramebufferUnavailable;
+   private static int presentationPreviousDrawBuffer;
+   private static int presentationPreviousReadBuffer;
+   private static boolean presentationBufferSelectionSaved;
    private static volatile GLSync presentationSceneFence;
    private static int bufferWidth;
    private static int bufferHeight;
@@ -689,6 +692,10 @@ final class GpuRasterizer3D {
          int targetHeight = Math.max(1, height);
          ensurePresentationSceneTexture(targetWidth, targetHeight);
 
+         presentationPreviousDrawBuffer = GL11.glGetInteger(GL11.GL_DRAW_BUFFER);
+         presentationPreviousReadBuffer = GL11.glGetInteger(GL11.GL_READ_BUFFER);
+         presentationBufferSelectionSaved = true;
+
          if (presentationFramebuffer == 0) {
             presentationFramebuffer = EXTFramebufferObject.glGenFramebuffersEXT();
          }
@@ -747,12 +754,7 @@ final class GpuRasterizer3D {
             EXTFramebufferObject.glBindRenderbufferEXT(EXTFramebufferObject.GL_RENDERBUFFER_EXT, 0);
          } catch (Throwable ignored) {
          }
-         try {
-            EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
-            GL11.glDrawBuffer(GL11.GL_BACK);
-            GL11.glReadBuffer(GL11.GL_BACK);
-         } catch (Throwable ignored) {
-         }
+         restorePresentationDefaultFramebuffer();
          presentationFramebufferActive = false;
          deletePresentationFramebufferResources();
          presentationFramebufferUnavailable = true;
@@ -768,12 +770,22 @@ final class GpuRasterizer3D {
          return;
       }
       try {
-         EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
-         GL11.glDrawBuffer(GL11.GL_BACK);
-         GL11.glReadBuffer(GL11.GL_BACK);
-      } catch (Throwable ignored) {
+         restorePresentationDefaultFramebuffer();
       } finally {
          presentationFramebufferActive = false;
+      }
+   }
+
+   private static void restorePresentationDefaultFramebuffer() {
+      try {
+         EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
+         if (presentationBufferSelectionSaved) {
+            GL11.glDrawBuffer(presentationPreviousDrawBuffer);
+            GL11.glReadBuffer(presentationPreviousReadBuffer);
+         }
+      } catch (Throwable ignored) {
+      } finally {
+         presentationBufferSelectionSaved = false;
       }
    }
 
@@ -832,10 +844,7 @@ final class GpuRasterizer3D {
 
    private static void deletePresentationFramebufferResources() {
       presentationFramebufferActive = false;
-      try {
-         EXTFramebufferObject.glBindFramebufferEXT(EXTFramebufferObject.GL_FRAMEBUFFER_EXT, 0);
-      } catch (Throwable ignored) {
-      }
+      restorePresentationDefaultFramebuffer();
       try {
          EXTFramebufferObject.glBindRenderbufferEXT(EXTFramebufferObject.GL_RENDERBUFFER_EXT, 0);
       } catch (Throwable ignored) {
@@ -1688,6 +1697,9 @@ final class GpuRasterizer3D {
       presentationFramebufferHeight = 0;
       presentationFramebufferActive = false;
       presentationFramebufferUnavailable = false;
+      presentationPreviousDrawBuffer = 0;
+      presentationPreviousReadBuffer = 0;
+      presentationBufferSelectionSaved = false;
       presentationSceneFence = null;
       Arrays.fill(colorPbos, 0);
       Arrays.fill(colorPboReady, false);
