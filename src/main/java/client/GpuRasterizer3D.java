@@ -247,7 +247,10 @@ final class GpuRasterizer3D {
          if (pbuffer != null) {
             destroyContext();
          }
-         presentationCanvas.requestInitialization();
+         // Keep presenting the completed software frame while the AWT canvas
+         // is not initialized. Client.drawFrameBufferToWindow() starts the
+         // canvas only after a full loadingStage==2 frame has reached the
+         // software surface, preventing a black CardLayout handoff.
          presentationTransitionSoftware = true;
          try {
             prepareSceneRasterBuffers();
@@ -345,12 +348,6 @@ final class GpuRasterizer3D {
             makeCurrent();
             frameDirectPresentation = true;
          } else {
-            if (presentationCanvas != null
-               && !presentationCanvas.isContextReady()
-               && !presentationCanvas.hasFailed()) {
-               presentationCanvas.requestInitialization();
-            }
-
             ensureContext(Rasterizer2D.width, Rasterizer2D.height, false);
             makeCurrent();
             frameDirectPresentation = false;
@@ -485,12 +482,6 @@ final class GpuRasterizer3D {
       if (!queued) {
          if (presentationCanvas.hasFailed()) {
             presentationCanvas.deactivate();
-         } else {
-            // AWT can temporarily recreate the heavyweight canvas peer (for
-            // example during card/layout changes). Keep GPU presentation
-            // requested and retry initialization rather than bouncing between
-            // the GPU and Java cards, which widens the displayability race.
-            presentationCanvas.requestInitialization();
          }
       }
       return queued;
@@ -522,9 +513,6 @@ final class GpuRasterizer3D {
          targetWidth,
          targetHeight
       );
-      if (!presented && !presentationCanvas.hasFailed()) {
-         presentationCanvas.requestInitialization();
-      }
       return presented;
    }
 
@@ -543,11 +531,21 @@ final class GpuRasterizer3D {
          return false;
       }
 
-      // Freeze the frame that is actually visible. If a newer scene was
-      // rendered but has not reached the front buffer yet, do not allow it to
-      // replace the retained transition frame after loadingStage changes.
+      // Reconstruct/capture the last successfully presented frame before
+      // invalidating the pending direct-frame token.
+      boolean retained = presentationCanvas.retainPresentedFrameForTransition();
       setDirectFrameReady(false);
-      return presentationCanvas.retainPresentedFrameForTransition();
+      return retained;
+   }
+
+   static void requestPresentationInitialization() {
+      if (requested
+         && !unavailable
+         && presentationCanvas != null
+         && !presentationCanvas.hasFailed()
+         && !presentationCanvas.isContextReady()) {
+         presentationCanvas.requestInitialization();
+      }
    }
 
    private static boolean canUseDirectPresentation() {
@@ -646,9 +644,10 @@ final class GpuRasterizer3D {
    }
 
    static int getPresentationSceneTexture() {
-      return directFrameReady && pbufferSharesPresentationContext
-         ? presentationSceneTexture
-         : 0;
+      // The most recently completed scene texture remains valid after
+      // directFrameReady is consumed. Region-transition retention uses it to
+      // reconstruct the exact last presented frame without GL_FRONT readback.
+      return pbufferSharesPresentationContext ? presentationSceneTexture : 0;
    }
 
    static void invalidateTexture(int textureId) {
