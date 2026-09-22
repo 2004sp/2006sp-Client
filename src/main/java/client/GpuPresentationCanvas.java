@@ -68,6 +68,9 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private boolean everPresentedFrame;
    private boolean initialClearNeeded = true;
    private int directTransitionGuardFrames;
+   private volatile long lastPresentationNanos;
+   private volatile long lastPresentationEdtWaitNanos;
+   private volatile long lastContextActionNanos;
    private final ByteBuffer transitionProbe = BufferUtils.createByteBuffer(4);
 
    private volatile boolean retainedFrameActive;
@@ -176,6 +179,14 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       return contextReady && !failed && isDisplayable();
    }
 
+   long getLastPresentationNanos() {
+      return this.lastPresentationNanos;
+   }
+
+   long getLastPresentationEdtWaitNanos() {
+      return this.lastPresentationEdtWaitNanos;
+   }
+
    boolean isInitializationPending() {
       return !contextReady && !failed;
    }
@@ -208,11 +219,13 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       Runnable contextAction = new Runnable() {
          @Override
          public void run() {
+            long contextStartedNanos = System.nanoTime();
             // isContextReady() was checked on the render thread, but AWT can
             // recreate a heavyweight Canvas peer before this runnable reaches
             // the EDT. Recheck here, immediately before makeCurrent().
             if (!contextReady || failed || !isDisplayable()) {
                displayabilityLost[0] = true;
+               lastContextActionNanos = Math.max(0L, System.nanoTime() - contextStartedNanos);
                return;
             }
 
@@ -246,6 +259,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
                } else {
                   failure[0] = throwable;
                }
+            } finally {
+               lastContextActionNanos = Math.max(0L, System.nanoTime() - contextStartedNanos);
             }
          }
       };
@@ -384,6 +399,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          return false;
       }
 
+      long presentationStartedNanos = System.nanoTime();
+
       BufferedImageGraphicsBuffer ownerBuffer = this.owner.frameBuffer;
       final BufferedImageGraphicsBuffer dirtyBuffer = ownerBuffer != null
          && ownerBuffer.pixels == uiPixels
@@ -478,6 +495,8 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
 
       final boolean[] swapped = new boolean[1];
+      this.lastContextActionNanos = 0L;
+      long handoffStartedNanos = System.nanoTime();
       boolean presented = runInContext(new Runnable() {
          @Override
          public void run() {
@@ -513,6 +532,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             }
          }
       });
+      long handoffNanos = Math.max(0L, System.nanoTime() - handoffStartedNanos);
+      long contextNanos = this.lastContextActionNanos;
+      this.lastPresentationEdtWaitNanos = Math.max(0L, handoffNanos - contextNanos);
+      this.lastPresentationNanos = Math.max(0L, System.nanoTime() - presentationStartedNanos);
 
       synchronized (this) {
          this.paintingBuffer = -1;
