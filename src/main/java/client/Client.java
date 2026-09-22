@@ -16100,6 +16100,15 @@ public class Client extends GameShell {
       if (!this.loadingError) {
          sceneDrawCounter++;
          if (!loggedIn) {
+            // The login screen is rendered through the legacy Java framebuffer.
+            // Direct GPU presentation uses a separate CardLayout surface, so
+            // leaving that card visible after logout hides the login screen
+            // behind the now-idle OpenGL canvas. Switch presentation back to
+            // the software card without changing the selected renderer; the
+            // next logged-in GPU frame will activate the GL surface again.
+            if (this instanceof ClientWindow) {
+               ((ClientWindow)this).setGpuPresentationSurface(false);
+            }
             this.drawLoginScreen(false);
          } else {
             this.frameBuffer.initDrawingArea();
