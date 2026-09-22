@@ -149,6 +149,10 @@ final class GpuRasterizer3D {
    private static int colorPboBytes;
    private static boolean pboUnavailable;
 
+   private static int[] frameColorTarget;
+   private static float[] frameDepthTarget;
+   private static int frameRasterWidth;
+   private static int frameRasterHeight;
    private static boolean frameFogEnabled;
    private static float frameFogStart;
    private static float frameFogEnd;
@@ -327,6 +331,10 @@ final class GpuRasterizer3D {
       frameActive = false;
       frameSoftwareFallback = false;
       frameDirectPresentation = false;
+      frameColorTarget = null;
+      frameDepthTarget = null;
+      frameRasterWidth = 0;
+      frameRasterHeight = 0;
       setDirectFrameReady(false);
       frameFogEnabled = fogEnabled;
       frameFogStart = 1430.0F + fogDistanceOffset;
@@ -344,6 +352,14 @@ final class GpuRasterizer3D {
          return false;
       }
 
+      // Pin the legacy software scene target for the lifetime of this GPU
+      // frame. Rasterizer2D is global mutable state and can be rebound while a
+      // fallback readback is still in flight.
+      frameColorTarget = Rasterizer2D.pixels;
+      frameDepthTarget = Rasterizer2D.depthBuffer;
+      frameRasterWidth = Rasterizer2D.width;
+      frameRasterHeight = Rasterizer2D.height;
+
       try {
          if (directPresentationExecution) {
             ensureContext(directTargetWidth, directTargetHeight, true);
@@ -355,7 +371,7 @@ final class GpuRasterizer3D {
             frameDirectPresentation = false;
          }
 
-         configureViewport(Rasterizer2D.width, Rasterizer2D.height);
+         configureViewport(frameRasterWidth, frameRasterHeight);
          ensureTextureAtlas();
 
          // The UI compositor also uses GL_SCISSOR_TEST in this same context.
@@ -392,8 +408,8 @@ final class GpuRasterizer3D {
    }
 
    static void prepareSceneRasterBuffers() {
-      if (isFrameActive() && frameDirectPresentation && canUseDirectPresentation() && Rasterizer2D.pixels != null) {
-         Arrays.fill(Rasterizer2D.pixels, UI_TRANSPARENT_KEY);
+      if (isFrameActive() && frameDirectPresentation && canUseDirectPresentation() && frameColorTarget != null) {
+         Arrays.fill(frameColorTarget, UI_TRANSPARENT_KEY);
          Rasterizer2D.markGpuOverlayCleared();
          return;
       }
@@ -440,6 +456,10 @@ final class GpuRasterizer3D {
          frameSoftwareFallback = false;
          frameDirectPresentation = false;
          frameDepthRejectionSafe = false;
+         frameColorTarget = null;
+         frameDepthTarget = null;
+         frameRasterWidth = 0;
+         frameRasterHeight = 0;
          resetBatch();
       }
       return completed;
@@ -1772,7 +1792,11 @@ final class GpuRasterizer3D {
             throw new IllegalStateException("Unable to map completed GPU color PBO");
          }
          mapped.order(ByteOrder.nativeOrder());
-         copyColorReadback(mapped, width, height);
+         int[] colorTarget = getFrameColorTarget();
+         if (colorTarget == null) {
+            throw new IllegalStateException("GPU async readback lost its software frame target");
+         }
+         copyColorReadback(mapped, colorTarget, width, height);
          GL15.glUnmapBuffer(GL21.GL_PIXEL_PACK_BUFFER);
 
          GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER, 0);
@@ -1791,6 +1815,18 @@ final class GpuRasterizer3D {
       }
    }
 
+   private static int[] getFrameColorTarget() {
+      return frameColorTarget != null ? frameColorTarget : Rasterizer2D.pixels;
+   }
+
+   private static float[] getFrameDepthTarget() {
+      return frameDepthTarget != null ? frameDepthTarget : Rasterizer2D.depthBuffer;
+   }
+
+   private static int getFrameRasterWidth() {
+      return frameRasterWidth > 0 ? frameRasterWidth : Rasterizer2D.width;
+   }
+
    private static int readBackFrameSynchronous(boolean copyDepth) {
       synchronized (CONTEXT_LOCK) {
          return readBackFrameSynchronousLocked(copyDepth);
@@ -1807,6 +1843,11 @@ final class GpuRasterizer3D {
 
       int width = viewportWidth;
       int height = viewportHeight;
+      int[] colorTarget = getFrameColorTarget();
+      float[] depthTarget = copyDepth ? getFrameDepthTarget() : null;
+      if (colorTarget == null || copyDepth && depthTarget == null) {
+         throw new IllegalStateException("GPU fallback lost its software frame target");
+      }
       int count = width * height;
       ensureReadbackCapacity(count, copyDepth, true);
       ByteBuffer colorBuffer = colorReadback;
@@ -1819,7 +1860,7 @@ final class GpuRasterizer3D {
       colorBuffer.clear();
       colorBuffer.limit(count * 4);
       GL11.glReadPixels(0, 0, width, height, GL_BGRA, GL11.GL_UNSIGNED_BYTE, colorBuffer);
-      copyColorReadback(colorBuffer, width, height);
+      copyColorReadback(colorBuffer, colorTarget, width, height);
 
       if (copyDepth) {
          depthBuffer.clear();
@@ -1831,7 +1872,7 @@ final class GpuRasterizer3D {
             for (int x = 0; x < width; x++) {
                float gpuDepth = depthBuffer.get(source + x);
                if (gpuDepth < 0.9999999F) {
-                  Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
+                  depthTarget[destination + x] = gpuDepth * DEPTH_SCALE;
                }
             }
          }
@@ -1873,6 +1914,12 @@ final class GpuRasterizer3D {
       if (physicalCountLong > Integer.MAX_VALUE / 4L) {
          throw new IllegalStateException("Direct presentation scene is too large to read back");
       }
+      int[] colorTarget = getFrameColorTarget();
+      float[] depthTargetArray = copyDepth ? getFrameDepthTarget() : null;
+      if (colorTarget == null || copyDepth && depthTargetArray == null) {
+         throw new IllegalStateException("GPU direct fallback lost its software frame target");
+      }
+
       int physicalCount = (int)physicalCountLong;
       ensureReadbackCapacity(physicalCount, copyDepth, true);
       ByteBuffer colorBuffer = colorReadback;
@@ -1928,13 +1975,13 @@ final class GpuRasterizer3D {
                directTargetWidth
             ) - readMinX;
             int sourceIndex = sourceY * readWidth + sourceX;
-            Rasterizer2D.pixels[destination + x] = packedColors.get(sourceIndex) & 0x00FFFFFF;
+            colorTarget[destination + x] = packedColors.get(sourceIndex) & 0x00FFFFFF;
 
             if (copyDepth) {
                float gpuDepth = depthBuffer.get(sourceIndex);
                // Direct frames do not pre-clear the CPU depth buffer. Mirror
                // the GL clear value so software fallback never sees stale depth.
-               Rasterizer2D.depthBuffer[destination + x] = gpuDepth < 0.9999999F
+               depthTargetArray[destination + x] = gpuDepth < 0.9999999F
                   ? gpuDepth * DEPTH_SCALE
                   : Float.MAX_VALUE;
             }
@@ -1963,12 +2010,15 @@ final class GpuRasterizer3D {
       return (int)(((long)value * targetSize + sourceSize - 1L) / sourceSize);
    }
 
-   private static void copyColorReadback(ByteBuffer sourceBuffer, int width, int height) {
+   private static void copyColorReadback(ByteBuffer sourceBuffer, int[] destinationPixels, int width, int height) {
+      if (sourceBuffer == null || destinationPixels == null) {
+         throw new IllegalStateException("GPU color readback lost its staging or destination buffer");
+      }
       sourceBuffer.rewind();
       IntBuffer packedColors = sourceBuffer.asIntBuffer();
       for (int readRow = 0; readRow < height; readRow++) {
          packedColors.position(readRow * width);
-         packedColors.get(Rasterizer2D.pixels, (height - 1 - readRow) * width, width);
+         packedColors.get(destinationPixels, (height - 1 - readRow) * width, width);
       }
    }
 
@@ -2020,10 +2070,17 @@ final class GpuRasterizer3D {
          GL11.glReadPixels(bounds.minX, readY, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depthBuffer);
       }
 
+      int[] colorTarget = getFrameColorTarget();
+      float[] depthTargetArray = copyDepth ? getFrameDepthTarget() : null;
+      int rasterWidth = getFrameRasterWidth();
+      if (colorTarget == null || copyDepth && depthTargetArray == null || rasterWidth <= 0) {
+         throw new IllegalStateException("GPU bounded readback lost its software frame target");
+      }
+
       int legacyAlpha = Rasterizer3D.alpha;
       for (int readRow = 0; readRow < height; readRow++) {
          int logicalY = bounds.maxY - 1 - readRow;
-         int destination = logicalY * Rasterizer2D.width + bounds.minX;
+         int destination = logicalY * rasterWidth + bounds.minX;
          int sourceRow = readRow * width;
 
          for (int x = 0; x < width; x++) {
@@ -2034,7 +2091,7 @@ final class GpuRasterizer3D {
                if (gpuDepth >= 0.9999999F) {
                   continue;
                }
-               Rasterizer2D.depthBuffer[destination + x] = gpuDepth * DEPTH_SCALE;
+               depthTargetArray[destination + x] = gpuDepth * DEPTH_SCALE;
             } else {
                // Colour-only bounded readbacks are not used by the batched
                // frame path. Keep this branch conservative if one is added.
@@ -2050,12 +2107,12 @@ final class GpuRasterizer3D {
                   int sourceWeight = 256 - legacyAlpha;
                   int source = ((rgb & 16711935) * sourceWeight >> 8 & 16711935)
                      + ((rgb & 65280) * sourceWeight >> 8 & 65280);
-                  int destinationRgb = Rasterizer2D.pixels[destinationIndex];
+                  int destinationRgb = colorTarget[destinationIndex];
                   int destinationColor = ((destinationRgb & 16711935) * legacyAlpha >> 8 & 16711935)
                      + ((destinationRgb & 65280) * legacyAlpha >> 8 & 65280);
-                  Rasterizer2D.pixels[destinationIndex] = source + destinationColor;
+                  colorTarget[destinationIndex] = source + destinationColor;
                } else {
-                  Rasterizer2D.pixels[destinationIndex] = rgb;
+                  colorTarget[destinationIndex] = rgb;
                }
             }
          }
