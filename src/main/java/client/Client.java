@@ -1232,6 +1232,15 @@ public class Client extends GameShell {
       int sceneWidth = this.gameScreenImageProducer != null ? this.gameScreenImageProducer.getWidth() : logicalWidth;
       int sceneHeight = this.gameScreenImageProducer != null ? this.gameScreenImageProducer.getHeight() : logicalHeight;
 
+      // Region loading intentionally produces no new complete scene. Never
+      // enter either presentation path here: the software framebuffer contains
+      // only the loading/UI raster and, after direct rendering, may contain the
+      // 0x010203 chroma-key scene placeholder. Keep the already-swapped GPU
+      // front buffer visible until loadingStage returns to 2.
+      if (ClientWindow.isGpuPresentationVisible() && this.loadingStage != 2) {
+         return;
+      }
+
       if (GpuRasterizer3D.presentDirectFrame(
          this.frameBuffer.pixels,
          softwareUiChanged,
@@ -1250,18 +1259,17 @@ public class Client extends GameShell {
       }
 
       if (ClientWindow.isGpuPresentationVisible()) {
-         // Region rebuilds do not produce a new 3D frame. Keep the last
-         // completed GPU frame on screen rather than exposing the keyed
-         // software overlay (which appears as a black transition).
-         if (this.loadingStage != 2 && GpuRasterizer3D.canRetainPresentedFrame()) {
+         // If the native GL context is being created/recreated after the scene
+         // render, do not upload frameBuffer as an opaque fallback. A direct
+         // frame clears its software scene area to the chroma key, so doing so
+         // produces the observed whole-screen black flash.
+         if (GpuRasterizer3D.isDirectPresentationTransitioning()) {
             return;
          }
 
-         // A scene can intentionally fall back to the software rasterizer for
-         // one frame (for example when an unsupported triangle is encountered).
-         // Present that completed software framebuffer through the same GL
-         // canvas so resizable mode never flashes the Swing/software card.
-         if (this.loadingStage == 2 && GpuRasterizer3D.presentSoftwareFrame(
+         // A genuine mid-frame GPU fallback has already read the rendered scene
+         // back into the software buffer, so it is safe to present opaquely.
+         if (GpuRasterizer3D.presentSoftwareFrame(
             this.frameBuffer.pixels,
             logicalWidth,
             logicalHeight,
@@ -1270,17 +1278,7 @@ public class Client extends GameShell {
             presentation.width,
             presentation.height
          )) {
-            // The software fallback used a separate opaque presentation
-            // texture. Recompose the keyed software UI on the next direct
-            // frame so the retained overlay texture is immediately current.
             this.requestSoftwareUiRefresh();
-            return;
-         }
-
-         // Keep the GPU card visible while AWT creates or recreates its native
-         // GL context. Hiding it here destroys the initialization handshake and
-         // widens the peer-recreation race.
-         if (GpuRasterizer3D.isDirectPresentationTransitioning()) {
             return;
          }
       }
