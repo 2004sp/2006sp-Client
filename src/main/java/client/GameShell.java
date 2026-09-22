@@ -22,10 +22,7 @@ import java.util.Iterator;
 public class GameShell extends Applet implements FocusListener, KeyListener, MouseListener, MouseMotionListener, MouseWheelListener, WindowListener, Runnable {
    private int shutdownCountdown;
    private int delayTime = 20;
-   int minimumSleepTime = 1;
-   private final long[] timingSamples = new long[10];
    int fps;
-   private boolean unusedFlag = false;
    private boolean softwareUiRefreshRequested = true;
    int canvasWidth;
    int canvasHeight;

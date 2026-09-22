@@ -2677,7 +2677,7 @@ final class Rasterizer3D extends Rasterizer2D {
    public static void drawShadedTriangle(
       boolean useFallback, int y0, int y1, int y2, int x0, int x1, int x2, int color0, int color1, int color2, float depth0, float depth1, float depth2
    ) {
-      if (GpuRasterizer3D.drawShadedTriangle(useFallback, y0, y1, y2, x0, x1, x2, color0, color1, color2, depth0, depth1, depth2)) {
+      if (GpuRasterizer3D.drawShadedTriangle(y0, y1, y2, x0, x1, x2, color0, color1, color2, depth0, depth1, depth2)) {
          return;
       }
 

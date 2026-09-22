@@ -83,7 +83,6 @@ final class GpuRasterizer3D {
    private static int preparedClipMaxY = Integer.MIN_VALUE;
 
    private static final boolean[] textureDirty = new boolean[TEXTURE_COUNT];
-   private static boolean cachedLowMemory = Rasterizer3D.lowMemory;
    private static int atlasTexture;
    private static int atlasTextureSize;
    private static int legacyTextureSize;
@@ -327,10 +326,6 @@ final class GpuRasterizer3D {
    }
 
    static boolean endFrame() {
-      return endFrame(false);
-   }
-
-   static boolean endFrame(boolean ignoredCopyDepth) {
       if (!frameOpen) {
          return false;
       }
@@ -620,7 +615,6 @@ final class GpuRasterizer3D {
    }
 
    static boolean drawShadedTriangle(
-      boolean useFallback,
       int y0, int y1, int y2, int x0, int x1, int x2,
       int color0, int color1, int color2,
       float depth0, float depth1, float depth2
@@ -1050,7 +1044,6 @@ final class GpuRasterizer3D {
       resetBatchPipelineTracking();
 
       Arrays.fill(textureDirty, true);
-      cachedLowMemory = Rasterizer3D.lowMemory;
       viewportWidth = -1;
       viewportHeight = -1;
       scissorX = Integer.MIN_VALUE;
@@ -1159,7 +1152,6 @@ final class GpuRasterizer3D {
       atlasTexture = GL11.glGenTextures();
       atlasTextureSize = wantedAtlasSize;
       legacyTextureSize = wantedTextureSize;
-      cachedLowMemory = Rasterizer3D.lowMemory;
 
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
