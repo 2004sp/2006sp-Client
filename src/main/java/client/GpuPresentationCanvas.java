@@ -286,17 +286,50 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    }
 
    boolean retainPresentedFrameForTransition() {
-      if (!hasPresentedFrame()) {
+      if (!hasPresentedFrame() || !this.lastPresentedFrameStateValid) {
          return false;
       }
 
-      // The scene and UI textures already contain the exact last swapped
-      // direct frame. Freeze those GPU resources until the first post-load
-      // frame is presented instead of copying GL_FRONT through the CPU.
-      this.retainedFrameActive = true;
-      this.directTransitionGuardFrames = Math.max(this.directTransitionGuardFrames, 3);
-      this.sceneBackbufferPending = false;
-      return true;
+      final boolean[] captured = new boolean[1];
+      boolean ran = runInContext(new Runnable() {
+         @Override
+         public void run() {
+            int width = Math.max(1, GpuPresentationCanvas.this.getWidth());
+            int height = Math.max(1, GpuPresentationCanvas.this.getHeight());
+
+            // Rebuild the exact last successfully swapped direct frame into the
+            // backbuffer, then copy it GPU->GPU into a dedicated transition
+            // texture. The visible front buffer is never touched here.
+            initializeGlResources();
+            renderFrame(lastPresentedFrameState);
+
+            int texture = ensureRetainedFrameTexture(width, height);
+            GL11.glReadBuffer(GL11.GL_BACK);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
+            GL11.glCopyTexSubImage2D(
+               GL11.GL_TEXTURE_2D,
+               0,
+               0,
+               0,
+               0,
+               0,
+               width,
+               height
+            );
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+            GL11.glReadBuffer(GL11.GL_BACK);
+            GL11.glFinish();
+
+            retainedFrameWidth = width;
+            retainedFrameHeight = height;
+            retainedFrameTextureDirty = false;
+            retainedFrameActive = true;
+            directTransitionGuardFrames = Math.max(directTransitionGuardFrames, 3);
+            sceneBackbufferPending = false;
+            captured[0] = true;
+         }
+      });
+      return ran && captured[0];
    }
 
    private void ensureRetainedFrameCapacity(int pixels) {
@@ -715,17 +748,21 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
       try {
-         // Region retention means "leave the visible front buffer alone".
-         // Repainting and swapping an otherwise unchanged frame can expose an
-         // undefined/cleared backbuffer on some Windows driver/compositor paths.
-         // If the context is still the same, do nothing at all.
+         // During a region rebuild, repaint from the dedicated
+         // GPU snapshot captured before loading began. This is independent of
+         // the mutable scene/overlay textures and avoids relying on front-buffer
+         // persistence through Windows/AWT compositor events.
          if (this.retainedFrameActive) {
-            if (!this.initialClearNeeded && this.hasPresentedFrame) {
+            if (renderRetainedFrame()) {
+               swapBuffers();
+               this.initialClearNeeded = false;
+               this.hasPresentedFrame = true;
+               this.everPresentedFrame = true;
                return;
             }
 
-            // A genuinely recreated context has no valid front buffer. Seed it
-            // from the complete software framebuffer before any swap/clear.
+            // Only reached if the GL context itself was recreated and the
+            // snapshot texture was lost. Seed from software rather than black.
             if (renderInitialSoftwareFrame()) {
                swapBuffers();
                this.initialClearNeeded = false;
@@ -821,31 +858,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
 
    private boolean renderRetainedFrame() {
       if (!this.retainedFrameActive
-         || this.retainedFrameBytes == null
+         || this.retainedFrameTexture == 0
          || this.retainedFrameWidth <= 0
          || this.retainedFrameHeight <= 0) {
          return false;
-      }
-
-      int texture = ensureRetainedFrameTexture(this.retainedFrameWidth, this.retainedFrameHeight);
-      if (this.retainedFrameTextureDirty) {
-         ByteBuffer upload = this.retainedFrameBytes.duplicate().order(ByteOrder.nativeOrder());
-         upload.position(0);
-         upload.limit(this.retainedFrameWidth * this.retainedFrameHeight * 4);
-         GL15.glBindBuffer(GL21.GL_PIXEL_UNPACK_BUFFER, 0);
-         GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
-         GL11.glTexSubImage2D(
-            GL11.GL_TEXTURE_2D,
-            0,
-            0,
-            0,
-            this.retainedFrameWidth,
-            this.retainedFrameHeight,
-            GL_BGRA,
-            GL11.GL_UNSIGNED_BYTE,
-            upload
-         );
-         this.retainedFrameTextureDirty = false;
       }
 
       int canvasWidth = Math.max(1, this.getWidth());
@@ -864,8 +880,10 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glLoadIdentity();
       GL11.glEnable(GL11.GL_TEXTURE_2D);
       GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-      GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, this.retainedFrameTexture);
 
+      // The snapshot came from GL_BACK, so flip T while drawing it back to the
+      // top-left logical canvas orientation.
       GL11.glBegin(GL11.GL_QUADS);
       GL11.glTexCoord2f(0.0F, 1.0F);
       GL11.glVertex2f(0.0F, 0.0F);
@@ -877,6 +895,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       GL11.glVertex2f(0.0F, canvasHeight);
       GL11.glEnd();
 
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
       GL11.glDisable(GL11.GL_TEXTURE_2D);
       return true;
    }
@@ -908,7 +927,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
             GL11.GL_UNSIGNED_BYTE,
             (ByteBuffer)null
          );
-         this.retainedFrameTextureDirty = true;
+         this.retainedFrameTextureDirty = false;
       }
       return this.retainedFrameTexture;
    }
