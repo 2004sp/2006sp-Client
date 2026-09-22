@@ -81,6 +81,7 @@ final class GpuRasterizer3D {
    private static long fallbackSyncReadbackNanos;
    private static long fallbackSyncReadbackMaxNanos;
    private static long fallbackSyncReadbackPixels;
+   private static volatile long lastSceneFrameNanos;
 
    private static boolean frameOpen;
    private static boolean frameActive;
@@ -188,6 +189,25 @@ final class GpuRasterizer3D {
       return requested;
    }
 
+   static long getLastSceneFrameNanos() {
+      return lastSceneFrameNanos;
+   }
+
+   static long getLastPresentationNanos() {
+      GpuPresentationCanvas canvas = presentationCanvas;
+      return canvas != null ? canvas.getLastPresentationNanos() : 0L;
+   }
+
+   static long getLastPresentationEdtWaitNanos() {
+      GpuPresentationCanvas canvas = presentationCanvas;
+      return canvas != null ? canvas.getLastPresentationEdtWaitNanos() : 0L;
+   }
+
+   private static boolean finishTimedSceneFrame(long startedNanos, boolean completed) {
+      lastSceneFrameNanos = Math.max(0L, System.nanoTime() - startedNanos);
+      return completed;
+   }
+
    static synchronized String getFallbackDiagnostics() {
       StringBuilder summary = new StringBuilder(256);
       summary.append("GPU fallback diagnostics: total=").append(fallbackCount);
@@ -252,6 +272,8 @@ final class GpuRasterizer3D {
          return false;
       }
 
+      long frameStartedNanos = System.nanoTime();
+
       if (requested
          && !unavailable
          && presentationCanvas != null
@@ -276,7 +298,7 @@ final class GpuRasterizer3D {
          } finally {
             presentationTransitionSoftware = false;
          }
-         return false;
+         return finishTimedSceneFrame(frameStartedNanos, false);
       }
 
       if (requested
@@ -318,7 +340,7 @@ final class GpuRasterizer3D {
                }
 
                if (rendered) {
-                  return completed;
+                  return finishTimedSceneFrame(frameStartedNanos, completed);
                }
             }
          }
@@ -327,7 +349,7 @@ final class GpuRasterizer3D {
       beginFrame(fogEnabled, fogDistanceOffset);
       prepareSceneRasterBuffers();
       renderer.run();
-      return endFrame();
+      return finishTimedSceneFrame(frameStartedNanos, endFrame());
    }
 
    static void beginFrame() {
