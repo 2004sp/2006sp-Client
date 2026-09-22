@@ -536,11 +536,18 @@ final class GpuRasterizer3D {
    }
 
    static boolean retainPresentedFrameForRegionTransition() {
-      return requested
-         && !unavailable
-         && presentationCanvas != null
-         && !presentationCanvas.hasFailed()
-         && presentationCanvas.retainPresentedFrameForTransition();
+      if (!requested
+         || unavailable
+         || presentationCanvas == null
+         || presentationCanvas.hasFailed()) {
+         return false;
+      }
+
+      // Freeze the frame that is actually visible. If a newer scene was
+      // rendered but has not reached the front buffer yet, do not allow it to
+      // replace the retained transition frame after loadingStage changes.
+      setDirectFrameReady(false);
+      return presentationCanvas.retainPresentedFrameForTransition();
    }
 
    private static boolean canUseDirectPresentation() {
