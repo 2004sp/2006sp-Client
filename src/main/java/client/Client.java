@@ -2574,6 +2574,24 @@ public class Client extends GameShell {
       bufferedReader.close();
       userConfigLoaded = true;
    }
+
+   public static void reloadUserConfig() throws IOException {
+      userConfigLoaded = false;
+      loadUserConfig();
+
+      Client client = clientInstance;
+      if (client != null) {
+         // Config-backed UI settings such as UI_SCALE_PERCENT are read at
+         // render time, but direct GPU presentation may retain the previous
+         // software overlay until it is explicitly dirtied.
+         client.requestSoftwareUiRefresh();
+         client.needDrawTabArea = true;
+         client.inputTaken = true;
+         client.tabAreaAltered = true;
+         client.chatSettingsRedraw = true;
+      }
+   }
+
    private static String formatAmountLong(int inventoryAmount) {
       String text = String.valueOf(inventoryAmount);
       for (int loopIndex = text.length() - 3; loopIndex > 0; loopIndex -= 3) {
