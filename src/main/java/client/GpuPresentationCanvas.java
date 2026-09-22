@@ -66,6 +66,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
    private volatile boolean hasPresentedFrame;
    private boolean everPresentedFrame;
    private boolean initialClearNeeded = true;
+   private boolean directWarmupPending;
 
    private volatile boolean retainedFrameActive;
    private ByteBuffer retainedFrameBytes;
@@ -292,6 +293,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       // direct frame. Freeze those GPU resources until the first post-load
       // frame is presented instead of copying GL_FRONT through the CPU.
       this.retainedFrameActive = true;
+      this.directWarmupPending = true;
       this.sceneBackbufferPending = false;
       return true;
    }
@@ -440,14 +442,27 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          this.frameUploadInProgress = true;
       }
 
+      final boolean[] swapped = new boolean[1];
       boolean presented = runInContext(new Runnable() {
          @Override
          public void run() {
             initializeGlResources();
             uploadOverlay(frame);
             renderFrame(frame);
+
+            // The first direct frame after an opaque software/fullscreen frame
+            // or a region hold is a warm-up frame. Resource/buffer rebuilds in
+            // the legacy client can leave that first scene incomplete. Render
+            // it fully into the backbuffer but keep the previous front buffer
+            // visible; the next direct frame is the one that becomes visible.
+            if (directWarmupPending) {
+               directWarmupPending = false;
+               return;
+            }
+
             try {
                swapBuffers();
+               swapped[0] = true;
                finishTransitionFrameRetention();
             } catch (LWJGLException failure) {
                throw new RuntimeException(failure);
@@ -464,14 +479,17 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
          if (dirtyBuffer != null) {
             dirtyBuffer.clearGpuDirtyTiles();
          }
-         this.lastPresentedFrameState.copyPresentationFrom(frame);
-         this.lastPresentedFrameStateValid = true;
          this.sceneBackbufferPending = false;
-         this.hasPresentedFrame = true;
-         this.everPresentedFrame = true;
-         // Reveal the heavyweight GL card only after the complete frame has
-         // already been swapped. This avoids a black card during re-login.
-         this.owner.setGpuPresentationSurface(true);
+
+         if (swapped[0]) {
+            this.lastPresentedFrameState.copyPresentationFrom(frame);
+            this.lastPresentedFrameStateValid = true;
+            this.hasPresentedFrame = true;
+            this.everPresentedFrame = true;
+            // Reveal the heavyweight GL card only after the complete frame has
+            // already been swapped. This avoids a black card during re-login.
+            this.owner.setGpuPresentationSurface(true);
+         }
       }
       return presented;
    }
@@ -537,6 +555,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       }
       if (presented) {
          this.lastPresentedFrameStateValid = false;
+         this.directWarmupPending = true;
          this.sceneBackbufferPending = false;
          this.hasPresentedFrame = true;
          this.everPresentedFrame = true;
@@ -1464,6 +1483,7 @@ final class GpuPresentationCanvas extends AWTGLCanvas {
       this.softwareFrameWidth = 0;
       this.softwareFrameHeight = 0;
       this.lastPresentedFrameStateValid = false;
+      this.directWarmupPending = false;
    }
 
    private void releaseStagingIfIdle() {
