@@ -17,13 +17,13 @@ import org.lwjgl.opengl.PixelFormat;
  * GPU-backed triangle rasterizer for the legacy software client.
  *
  * Scene triangles are accumulated into a VBO-backed atlas batch and rasterized
- * by OpenGL. When the AWTGL presentation canvas is available, the main scene is
- * rendered straight into that canvas' backbuffer; only the legacy software UI is
- * uploaded before the same backbuffer is swapped. While that canvas is starting,
- * transitional frames stay on the software rasterizer instead of constructing a
- * throwaway Pbuffer. A Pbuffer remains as the GPU compatibility path when direct
- * AWT presentation is unavailable. Synchronous readback is
- * reserved for mid-frame software fallback and legacy bounded draws.
+ * by OpenGL. When the AWTGL presentation canvas is available, the game thread
+ * renders into a Pbuffer that shares objects with the canvas context, copies the
+ * completed scene into a shared texture, then lets the canvas composite the
+ * legacy software UI and swap. While that canvas is starting, transitional
+ * frames stay on the software rasterizer. A non-shared Pbuffer remains as the
+ * GPU compatibility path when direct presentation is unavailable. Synchronous
+ * readback is reserved for fallback and legacy bounded draws.
  */
 final class GpuRasterizer3D {
    private static final float DEPTH_SCALE = 1048576.0F;
@@ -412,9 +412,18 @@ final class GpuRasterizer3D {
          if (frameActive) {
             flushBatch();
             finishBatchPipeline();
-            if (frameDirectPresentation && canUseDirectPresentation()) {
-               finishDirectPresentationFrame();
-               setDirectFrameReady(true);
+            if (frameDirectPresentation) {
+               if (canUseDirectPresentation()) {
+                  finishDirectPresentationFrame();
+                  setDirectFrameReady(true);
+               } else {
+                  // The AWT peer can be recreated after this frame started.
+                  // Direct frames render at the physical presentation size, so
+                  // use the direct readback path to resample back into the
+                  // logical software buffer instead of the ordinary async PBO
+                  // path, which assumes 1:1 framebuffer dimensions.
+                  readBackFrameSynchronous(false);
+               }
             } else {
                readBackFrameAsync();
                if (presentationCanvas != null && !isDirectPresentationTransitioning()) {
