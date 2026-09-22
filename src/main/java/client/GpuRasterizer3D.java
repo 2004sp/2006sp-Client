@@ -156,9 +156,9 @@ final class GpuRasterizer3D {
    private static boolean frameFogEnabled;
    private static float frameFogStart;
    private static float frameFogEnd;
-   // Opaque/depth-only batches may use the hardware depth test until a
-   // legacy translucent triangle writes painter-ordered depth into the buffer.
-   private static boolean frameDepthRejectionSafe;
+   // Scene triangles follow the legacy rasterizer's painter order. The depth
+   // buffer records the most recently drawn surface for later particle tests;
+   // it must not reject scene faces, including coplanar floor overlays.
 
    static {
       Arrays.fill(textureDirty, true);
@@ -339,7 +339,6 @@ final class GpuRasterizer3D {
       frameFogEnabled = fogEnabled;
       frameFogStart = 1430.0F + fogDistanceOffset;
       frameFogEnd = 2100.0F + fogDistanceOffset;
-      frameDepthRejectionSafe = false;
       resetBatch();
       resetBatchPipelineTracking();
       preparedClipMinX = Integer.MIN_VALUE;
@@ -393,7 +392,6 @@ final class GpuRasterizer3D {
          GL11.glDepthMask(true);
          GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
          GL11.glColorMask(true, true, true, false);
-         frameDepthRejectionSafe = true;
          frameActive = true;
          return true;
       } catch (Throwable failure) {
@@ -455,8 +453,7 @@ final class GpuRasterizer3D {
          frameActive = false;
          frameSoftwareFallback = false;
          frameDirectPresentation = false;
-         frameDepthRejectionSafe = false;
-         frameColorTarget = null;
+            frameColorTarget = null;
          frameDepthTarget = null;
          frameRasterWidth = 0;
          frameRasterHeight = 0;
@@ -2363,7 +2360,8 @@ final class GpuRasterizer3D {
 
       if (mode == BATCH_DEPTH_ONLY) {
          // Depth-only terrain must not pay for atlas sampling or scene shading.
-         // Keep legacy painter semantics after translucent depth has appeared.
+         // The software rasterizer only records depth here; it never rejects a
+         // later scene face against previously written depth.
          GL20.glUseProgram(0);
          sceneShaderConfigured = false;
          GL11.glDisable(GL11.GL_TEXTURE_2D);
@@ -2371,7 +2369,7 @@ final class GpuRasterizer3D {
          GL11.glDisableClientState(GL11.GL_COLOR_ARRAY);
          GL11.glDisableClientState(GL11.GL_TEXTURE_COORD_ARRAY);
          GL11.glColorMask(false, false, false, false);
-         GL11.glDepthFunc(frameDepthRejectionSafe ? GL11.GL_LEQUAL : GL11.GL_ALWAYS);
+         GL11.glDepthFunc(GL11.GL_ALWAYS);
          GL11.glDepthMask(true);
       } else if (mode == BATCH_OPAQUE || mode == BATCH_TRANSLUCENT) {
          GL11.glEnableClientState(GL11.GL_COLOR_ARRAY);
@@ -2381,15 +2379,15 @@ final class GpuRasterizer3D {
 
          if (mode == BATCH_OPAQUE) {
             GL11.glDisable(GL11.GL_BLEND);
-            GL11.glDepthFunc(frameDepthRejectionSafe ? GL11.GL_LEQUAL : GL11.GL_ALWAYS);
+            // Preserve the legacy painter order. Coplanar overlays such as
+            // carpets/floor decorations otherwise z-fight as the camera moves.
+            GL11.glDepthFunc(GL11.GL_ALWAYS);
          } else {
-            // Legacy alpha faces are painter ordered and write depth. Once one
-            // is submitted, that depth cannot safely reject later opaque faces.
+            // Legacy alpha faces are painter ordered and write depth too.
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glDepthFunc(GL11.GL_ALWAYS);
-            frameDepthRejectionSafe = false;
-         }
+               }
 
          GL11.glEnable(GL11.GL_TEXTURE_2D);
          GL11.glBindTexture(GL11.GL_TEXTURE_2D, atlasTexture);
