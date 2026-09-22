@@ -137,6 +137,7 @@ final class GpuRasterizer3D {
 
    static void setPresentationCanvas(GpuPresentationCanvas canvas) {
       presentationCanvas = canvas;
+      Rasterizer2D.setEncodeGpuOverlayAlpha(isDirectUiOverlayPrepared());
    }
 
    static void setEnabled(boolean enabled) {
