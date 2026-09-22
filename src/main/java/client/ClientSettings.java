@@ -550,12 +550,6 @@ public final class ClientSettings {
             writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "[CAMERA_REFRESH_RATE];120");
             writeLine(bufferedWriter, "");
-            writeLine(bufferedWriter, "//CAMERA_REFRESH_RATE - Parameters for customization:");
-            writeLine(bufferedWriter, "//50-240 = render refresh rate in frames per second.");
-            writeLine(bufferedWriter, "//Game simulation remains at 50 Hz; higher values only increase redraw/camera smoothness.");
-            writeLine(bufferedWriter, "");
-            writeLine(bufferedWriter, "[CAMERA_REFRESH_RATE];120");
-            writeLine(bufferedWriter, "");
             writeLine(bufferedWriter, "//FISH_ICONS - Parameters for customization:");
             writeLine(bufferedWriter, "//1 = enable, 0 = disable\t//shows fish icons over fishing spots");
             writeLine(bufferedWriter, "");
