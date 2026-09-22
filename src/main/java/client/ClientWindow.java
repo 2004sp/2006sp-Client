@@ -221,7 +221,14 @@ public final class ClientWindow extends Client implements ActionListener {
             }
             clientCardLayout.show(clientPanel, target ? "gpu" : "software");
             clientPanel.revalidate();
-            clientPanel.repaint();
+            // The GPU canvas has already swapped a complete frame before this
+            // card switch. Repainting the opaque black parent here can be
+            // composited one beat before the heavyweight Canvas becomes
+            // visible, producing the login "black flash". Only repaint when
+            // returning to the software card.
+            if (!target) {
+               clientPanel.repaint();
+            }
             if (target && gpuPresentationCanvas != null) {
                gpuPresentationCanvas.requestFocusInWindow();
             } else {
