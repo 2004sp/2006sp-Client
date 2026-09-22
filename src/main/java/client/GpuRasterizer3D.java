@@ -590,7 +590,10 @@ final class GpuRasterizer3D {
          directTargetHeight
       );
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
-      GL11.glFlush();
+      // The next consumer is a different GL context on the EDT. glFlush()
+      // only submits this context's commands; it does not guarantee that the
+      // shared texture copy has completed before that context samples it.
+      GL11.glFinish();
 
       presentationCanvas.markSceneBackbufferPending();
       if (!directModeLogged) {
