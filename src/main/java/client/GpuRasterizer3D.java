@@ -1630,6 +1630,11 @@ final class GpuRasterizer3D {
             || depthReadback.capacity() < pixels
             || allowShrink && shouldShrink(depthReadback.capacity(), pixels))) {
          depthReadback = BufferUtils.createFloatBuffer(pixels);
+      } else if (!copyDepth
+         && allowShrink
+         && depthReadback != null
+         && shouldShrink(depthReadback.capacity(), pixels)) {
+         depthReadback = BufferUtils.createFloatBuffer(pixels);
       }
    }
 
@@ -1644,7 +1649,7 @@ final class GpuRasterizer3D {
    private static boolean shouldShrink(long capacity, long required) {
       return required > 0L
          && capacity > required
-         && capacity >= required * BUFFER_SHRINK_RATIO;
+         && capacity / BUFFER_SHRINK_RATIO >= required;
    }
 
    private static void releaseStagingBuffers() {
