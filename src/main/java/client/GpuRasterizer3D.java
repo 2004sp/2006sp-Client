@@ -974,7 +974,7 @@ final class GpuRasterizer3D {
          // viewport/depth state. Repeating those JNI calls for every triangle
          // is especially expensive in resizable mode.
          if (!frameActive) {
-            ensureContext(Rasterizer2D.width, Rasterizer2D.height);
+            ensureContext(Rasterizer2D.width, Rasterizer2D.height, false);
             makeCurrent();
             configureViewport(Rasterizer2D.width, Rasterizer2D.height);
             GL11.glEnable(GL11.GL_SCISSOR_TEST);
