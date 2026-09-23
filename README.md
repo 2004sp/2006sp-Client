@@ -33,7 +33,7 @@ cannot compile the source.
 From File Explorer, double-click `build.bat`. From Command Prompt, run:
 
 ```bat
-cd /d "C:\Users\Callum\Downloads\New folder\2006sp client"
+cd /d "location of server"
 build.bat
 ```
 
@@ -53,7 +53,7 @@ compile.
 3. Run the client:
 
 ```bat
-cd /d "C:\Users\Callum\Downloads\New folder\2006sp client"
+cd /d "location of server"
 run.bat
 ```
 
