@@ -2399,8 +2399,13 @@ public class Client extends GameShell {
          customSprites[51].drawSprite(localScreenMode + 18, screenMode2 + 18);
 
          for (int itemSearchResultNameIndex = 0; itemSearchResultNameIndex < this.clanChatMode; itemSearchResultNameIndex++) {
-            int mouseX = this.getMenuMouseX();
-            int mouseY = this.getMenuMouseY();
+            // Item-search results are part of the resizable chat UI, so use the
+            // translated logical mouse position. Raw coordinates are only
+            // appropriate for the separately scaled context-menu overlay; using
+            // them here makes GE buy-result hover/selection drift at non-100%
+            // UI scales, and chatTypeView can point at the wrong item.
+            int mouseX = super.mouseX;
+            int mouseY = super.mouseY;
             int scalar;
             if ((scalar = itemSearchResultNameIndex * 14 - this.autoCastId + 14) > 0 && scalar < height + 1) {
                bitmapFont.textLeft(10508800, formatItemSearchName(this.itemSearchResultNames[itemSearchResultNameIndex]), scalar + screenMode2, localScreenMode + 77);

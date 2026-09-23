@@ -573,6 +573,7 @@ public final class Widget {
 
       configureCastleWarsCatapultInterface();
       configureCastleWarsManualInterface();
+      configureWorldTeleportInterface(newFont);
 
       if (Client.getClient().graphicsEnabled) {
          QuestEntry.categorizeQuests();
@@ -595,6 +596,363 @@ public final class Widget {
 
       spriteCache = null;
    }
+   private static void configureWorldTeleportInterface(RichTextFont[] fonts) {
+      final int rootId = 19600;
+      final int backgroundId = 19601;
+      final int titleId = 19602;
+      final int subtitleId = 19603;
+      final int firstButtonId = 19610;
+      final int destinationButtonCount = 9;
+      final int pageButtonId = 19619;
+      final int closeButtonId = 19620;
+      final int backButtonId = 19621;
+      final int firstLabelId = 19630;
+      final int pageLabelId = 19639;
+      final int backLabelId = 19604;
+      final int lastWidgetId = pageLabelId;
+
+      if (widgets == null || fonts == null || fonts.length < 3) {
+         return;
+      }
+      if (widgets.length <= lastWidgetId) {
+         widgets = java.util.Arrays.copyOf(widgets, lastWidgetId + 1);
+      }
+
+      Widget bankRoot = getWidget(5292);
+      Widget bankBackground = null;
+      int backgroundX = 18;
+      int backgroundY = 18;
+      int backgroundWidth = 476;
+      int backgroundHeight = 286;
+      int largestVisualArea = -1;
+
+      if (bankRoot != null && bankRoot.childIds != null) {
+         for (int childIndex = 0; childIndex < bankRoot.childIds.length; childIndex++) {
+            Widget candidate = getWidget(bankRoot.childIds[childIndex]);
+            if (!isVisualWidget(candidate)) {
+               continue;
+            }
+            int area = Math.max(1, candidate.width) * Math.max(1, candidate.height);
+            if (area > largestVisualArea) {
+               largestVisualArea = area;
+               bankBackground = candidate;
+               backgroundX = bankRoot.childX[childIndex];
+               backgroundY = bankRoot.childY[childIndex];
+               backgroundWidth = candidate.width;
+               backgroundHeight = candidate.height;
+            }
+         }
+      }
+
+      if (backgroundWidth < 260 || backgroundHeight < 150) {
+         bankBackground = null;
+         backgroundX = 18;
+         backgroundY = 18;
+         backgroundWidth = 476;
+         backgroundHeight = 286;
+      }
+
+      Widget root = new Widget();
+      root.id = rootId;
+      root.parentId = -1;
+      root.type = 0;
+      root.optionType = 0;
+      root.width = 512;
+      root.height = 334;
+      root.scrollMax = 334;
+      root.hoverId = -1;
+      widgets[rootId] = root;
+
+      Widget background = createVisualClone(backgroundId, rootId, bankBackground,
+            backgroundWidth, backgroundHeight);
+      widgets[backgroundId] = background;
+
+      Widget title = createTeleportTextWidget(titleId, rootId, fonts[2],
+            "City Teleports", backgroundWidth, 20, 0xff981f);
+      Widget subtitle = createTeleportTextWidget(subtitleId, rootId, fonts[1],
+            "Select a destination", backgroundWidth, 18, 0xffffff);
+      widgets[titleId] = title;
+      widgets[subtitleId] = subtitle;
+
+      Widget confirmButtonSource = findGrandExchangeConfirmButton();
+      // The original GE confirm sprite is quite large. Scale it down so all
+      // nine destinations fit as a clean 3x3 grid inside the bank frame.
+      int buttonWidth = 86;
+      int buttonHeight = 22;
+      int horizontalGap = 5;
+      int verticalGap = 5;
+      int columns = 3;
+      int rows = 3;
+      int gridWidth = columns * buttonWidth + (columns - 1) * horizontalGap;
+      int gridHeight = rows * buttonHeight + (rows - 1) * verticalGap;
+      int gridX = backgroundX + (backgroundWidth - gridWidth) / 2;
+      int gridY = backgroundY + 55;
+      int navigationY = 0;
+
+      root.childIds = new int[2 + destinationButtonCount * 2 + 4 + 1];
+      root.childX = new int[root.childIds.length];
+      root.childY = new int[root.childIds.length];
+      int childIndex = 0;
+      setChild(root, childIndex++, backgroundId, backgroundX, backgroundY);
+      setChild(root, childIndex++, titleId, backgroundX, backgroundY + 9);
+
+      for (int index = 0; index < destinationButtonCount; index++) {
+         int buttonId = firstButtonId + index;
+         int labelId = firstLabelId + index;
+         int column = index % columns;
+         int row = index / columns;
+         int x = gridX + column * (buttonWidth + horizontalGap);
+         int y = gridY + row * (buttonHeight + verticalGap);
+
+         Widget button = createTeleportButton(buttonId, rootId, confirmButtonSource,
+               buttonWidth, buttonHeight, "Teleport");
+         Widget label = createTeleportTextWidget(labelId, rootId, fonts[0],
+               "", buttonWidth, buttonHeight, 0xffffff);
+         widgets[buttonId] = button;
+         widgets[labelId] = label;
+         setChild(root, childIndex++, buttonId, x, y);
+         setChild(root, childIndex++, labelId, x, y + Math.max(0, (buttonHeight - 11) / 2));
+      }
+
+      int navigationButtonWidth = 112;
+      int navigationButtonHeight = 24;
+      int navigationMargin = 18;
+      navigationY = backgroundY + backgroundHeight - navigationButtonHeight - 14;
+      int backButtonX = backgroundX + navigationMargin;
+      int pageButtonX = backgroundX + backgroundWidth - navigationMargin - navigationButtonWidth;
+
+      Widget backButton = createTeleportButton(backButtonId, rootId, confirmButtonSource,
+            navigationButtonWidth, navigationButtonHeight, "Previous page");
+      Widget backLabel = createTeleportTextWidget(backLabelId, rootId, fonts[0],
+            "", navigationButtonWidth, navigationButtonHeight, 0xffffff);
+      widgets[backButtonId] = backButton;
+      widgets[backLabelId] = backLabel;
+      setChild(root, childIndex++, backButtonId, backButtonX, navigationY);
+      setChild(root, childIndex++, backLabelId, backButtonX,
+            navigationY + Math.max(0, (navigationButtonHeight - 11) / 2));
+
+      Widget pageButton = createTeleportButton(pageButtonId, rootId, confirmButtonSource,
+            navigationButtonWidth, navigationButtonHeight, "Next page");
+      Widget pageLabel = createTeleportTextWidget(pageLabelId, rootId, fonts[0],
+            "Next ->", navigationButtonWidth, navigationButtonHeight, 0xffffff);
+      widgets[pageButtonId] = pageButton;
+      widgets[pageLabelId] = pageLabel;
+      setChild(root, childIndex++, pageButtonId, pageButtonX, navigationY);
+      setChild(root, childIndex++, pageLabelId, pageButtonX,
+            navigationY + Math.max(0, (navigationButtonHeight - 11) / 2));
+
+      Widget closeSource = findBankCloseButton(bankRoot);
+      Widget closeButton = createTeleportButton(closeButtonId, rootId, closeSource,
+            closeSource == null ? 42 : closeSource.width,
+            closeSource == null ? 18 : closeSource.height, "Close Window");
+      if (closeSource == null) {
+         closeButton.type = 4;
+         closeButton.font = fonts[1];
+         closeButton.message = "Close";
+         closeButton.textAlignment = 1;
+         closeButton.textShadow = true;
+         closeButton.textColor = 0xff981f;
+      }
+      widgets[closeButtonId] = closeButton;
+
+      int closeX = backgroundX + backgroundWidth - closeButton.width - 8;
+      int closeY = backgroundY + 7;
+      if (bankRoot != null && closeSource != null) {
+         int sourceChildIndex = findChildIndex(bankRoot, closeSource.id);
+         if (sourceChildIndex >= 0) {
+            closeX = bankRoot.childX[sourceChildIndex];
+            closeY = bankRoot.childY[sourceChildIndex];
+         }
+      }
+      setChild(root, childIndex++, closeButtonId, closeX, closeY);
+
+      // Subtitle is added last so it stays crisp above the bank-style frame.
+      int[] oldIds = root.childIds;
+      int[] oldX = root.childX;
+      int[] oldY = root.childY;
+      root.childIds = java.util.Arrays.copyOf(oldIds, oldIds.length + 1);
+      root.childX = java.util.Arrays.copyOf(oldX, oldX.length + 1);
+      root.childY = java.util.Arrays.copyOf(oldY, oldY.length + 1);
+      setChild(root, root.childIds.length - 1, subtitleId, backgroundX, backgroundY + 31);
+   }
+
+   private static Widget getWidget(int widgetId) {
+      return widgets != null && widgetId >= 0 && widgetId < widgets.length
+            ? widgets[widgetId] : null;
+   }
+
+   private static boolean isVisualWidget(Widget widget) {
+      if (widget == null || widget.width <= 0 || widget.height <= 0) {
+         return false;
+      }
+      if (widget.type == 3) {
+         return true;
+      }
+      return (widget.type == 5 || widget.type == 17 || widget.type == 18 || widget.type == 19)
+            && (widget.disabledSprite != null || widget.enabledSprite != null);
+   }
+
+   private static Widget createVisualClone(int widgetId, int parentId, Widget source,
+         int fallbackWidth, int fallbackHeight) {
+      Widget widget = new Widget();
+      widget.id = widgetId;
+      widget.parentId = parentId;
+      widget.optionType = 0;
+      widget.hoverId = -1;
+      widget.width = source != null && source.width > 0 ? source.width : fallbackWidth;
+      widget.height = source != null && source.height > 0 ? source.height : fallbackHeight;
+
+      if (source != null && source.type == 3) {
+         widget.type = 3;
+         widget.filled = source.filled;
+         widget.opacity = source.opacity;
+         widget.textColor = source.textColor;
+         widget.secondaryColor = source.secondaryColor;
+         widget.defaultHoverColor = source.defaultHoverColor;
+         widget.secondaryHoverColor = source.secondaryHoverColor;
+      } else if (source != null && (source.disabledSprite != null || source.enabledSprite != null)) {
+         widget.type = 5;
+         widget.disabledSprite = source.disabledSprite != null ? source.disabledSprite : source.enabledSprite;
+         widget.enabledSprite = source.enabledSprite != null ? source.enabledSprite : source.disabledSprite;
+      } else {
+         widget.type = 3;
+         widget.filled = true;
+         widget.opacity = 0;
+         widget.textColor = 0x3d3529;
+         widget.secondaryColor = 0x3d3529;
+         widget.defaultHoverColor = 0x3d3529;
+         widget.secondaryHoverColor = 0x3d3529;
+      }
+      return widget;
+   }
+
+   private static Widget createTeleportButton(int widgetId, int parentId, Widget source,
+         int width, int height, String tooltip) {
+      Widget widget = createVisualClone(widgetId, parentId, source, width, height);
+      widget.width = width;
+      widget.height = height;
+      widget.optionType = 1;
+      widget.tooltip = tooltip;
+      widget.hoverId = -1;
+
+      // Type-5 widgets draw the sprite at its native dimensions, so changing
+      // only widget.width/height would shrink the hitbox but not the artwork.
+      // Scale the GE button sprites themselves to keep the visual grid tidy.
+      if (source != null && widget.type == 5) {
+         Sprite disabled = source.disabledSprite != null
+               ? source.disabledSprite : source.enabledSprite;
+         Sprite enabled = source.enabledSprite != null
+               ? source.enabledSprite : disabled;
+         widget.disabledSprite = scaleTeleportSprite(disabled, width, height);
+         widget.enabledSprite = scaleTeleportSprite(enabled, width, height);
+      }
+      return widget;
+   }
+
+   private static Sprite scaleTeleportSprite(Sprite source, int width, int height) {
+      if (source == null || source.pixels == null || source.spriteWidth <= 0
+            || source.spriteHeight <= 0 || width <= 0 || height <= 0) {
+         return source;
+      }
+      if (source.spriteWidth == width && source.spriteHeight == height) {
+         return source;
+      }
+
+      int[] pixels = new int[width * height];
+      for (int y = 0; y < height; y++) {
+         int sourceY = y * source.spriteHeight / height;
+         int sourceRow = sourceY * source.spriteWidth;
+         int targetRow = y * width;
+         for (int x = 0; x < width; x++) {
+            int sourceX = x * source.spriteWidth / width;
+            pixels[targetRow + x] = source.pixels[sourceRow + sourceX];
+         }
+      }
+
+      Sprite scaled = new Sprite(width, height, 0, 0, pixels);
+      scaled.canvasWidth = width;
+      scaled.canvasHeight = height;
+      return scaled;
+   }
+
+   private static Widget createTeleportTextWidget(int widgetId, int parentId,
+         RichTextFont font, String text, int width, int height, int color) {
+      Widget widget = new Widget();
+      widget.id = widgetId;
+      widget.parentId = parentId;
+      widget.type = 4;
+      widget.optionType = 0;
+      widget.hoverId = -1;
+      widget.width = width;
+      widget.height = height;
+      widget.font = font;
+      widget.textAlignment = 1;
+      widget.textShadow = true;
+      widget.message = text;
+      widget.secondaryText = "";
+      widget.textColor = color;
+      widget.secondaryColor = color;
+      widget.defaultHoverColor = color;
+      widget.secondaryHoverColor = color;
+      return widget;
+   }
+
+   private static Widget findGrandExchangeConfirmButton() {
+      int[] preferredIds = new int[]{18896, 18945};
+      for (int widgetId : preferredIds) {
+         Widget widget = getWidget(widgetId);
+         if (isVisualWidget(widget)) {
+            return widget;
+         }
+      }
+
+      int upperBound = Math.min(widgets.length - 1, 19018);
+      for (int widgetId = 18890; widgetId <= upperBound; widgetId++) {
+         Widget widget = getWidget(widgetId);
+         if (!isVisualWidget(widget) || widget.tooltip == null) {
+            continue;
+         }
+         if (widget.tooltip.toLowerCase().contains("confirm")) {
+            return widget;
+         }
+      }
+      return null;
+   }
+
+   private static Widget findBankCloseButton(Widget bankRoot) {
+      if (bankRoot == null || bankRoot.childIds == null) {
+         return null;
+      }
+      for (int childId : bankRoot.childIds) {
+         Widget child = getWidget(childId);
+         if (child == null || child.tooltip == null || !isVisualWidget(child)) {
+            continue;
+         }
+         if (child.tooltip.toLowerCase().contains("close")) {
+            return child;
+         }
+      }
+      return null;
+   }
+
+   private static int findChildIndex(Widget parent, int childId) {
+      if (parent == null || parent.childIds == null) {
+         return -1;
+      }
+      for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
+         if (parent.childIds[childIndex] == childId) {
+            return childIndex;
+         }
+      }
+      return -1;
+   }
+
+   private static void setChild(Widget parent, int childIndex, int childId, int x, int y) {
+      parent.childIds[childIndex] = childId;
+      parent.childX[childIndex] = x;
+      parent.childY[childIndex] = y;
+   }
+
    private static void configureCastleWarsManualInterface() {
       // Cache 377's Castle Wars manual uses the standard book interface.
       // The arrow sprites are present, but this cache has them decoded without
