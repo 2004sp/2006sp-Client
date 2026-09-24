@@ -9476,6 +9476,7 @@ public class Client extends GameShell {
                   text14 = "It's a " + itemDefinition.name + ".";
                }
 
+               text14 = text14 + " (id=" + menuParam2Entry + ")";
                this.pushMessage(text14, 0, "", 0, 0, 0);
                if (showAlchValueOnExamine && itemDefinition.getLowAlchValue() > 0) {
                   String text15 = itemDefinition.name
@@ -9520,7 +9521,9 @@ public class Client extends GameShell {
                   text16 = "It's a " + objectDefinition.name + ".";
                }
 
-               this.pushMessage(text16, 0, "", 0, 0, 0);
+               int examinedObjectId = menuParam2Entry >> 14 & 32767;
+            text16 = text16 + " (id=" + examinedObjectId + ")";
+            this.pushMessage(text16, 0, "", 0, 0, 0);
             }
 
             if (menuActionId == 244) {
@@ -9547,6 +9550,7 @@ public class Client extends GameShell {
                   text17 = "It's a " + itemDefinition2.name + ".";
                }
 
+               text17 = text17 + " (id=" + menuParam2Entry + ")";
                this.pushMessage(text17, 0, "", 0, 0, 0);
                if (showAlchValueOnExamine && itemDefinition2.getLowAlchValue() > 0) {
                   String text18 = itemDefinition2.name
