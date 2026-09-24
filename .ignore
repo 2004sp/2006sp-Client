@@ -1,0 +1,7 @@
+# Keep ordinary ripgrep searches focused on editable text.
+# These files remain tracked by Git; search an excluded path explicitly when needed.
+build/
+lib/
+runtime/cache/
+runtime/natives/
+runtime/Screenshots/

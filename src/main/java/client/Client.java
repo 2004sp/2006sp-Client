@@ -72,19 +72,6 @@ public class Client extends GameShell {
    private static final int RESIZABLE_MINIMAP_UI_HEIGHT = 177;
    private static final int CENTERED_INTERFACE_UI_WIDTH = 512;
    private static final int CENTERED_INTERFACE_UI_HEIGHT = 334;
-   private static final int CASTLE_WARS_WAITING_INTERFACE_ID = 6673;
-   private static final int CASTLE_WARS_WAITING_TIMER_TEXT_ID = 6570;
-   private static final int CASTLE_WARS_GAME_INTERFACE_ID = 11344;
-   private static final int CASTLE_WARS_ZAMORAK_SCORE_TEXT_ID = 11345;
-   private static final int CASTLE_WARS_SARADOMIN_SCORE_TEXT_ID = 11346;
-   private static final int CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID = 11349;
-   private static final int CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID = 11350;
-   private static final int CASTLE_WARS_MAIN_DOOR_TEXT_ID = 11352;
-   private static final int CASTLE_WARS_TIMER_TEXT_ID = 11353;
-   private static final int CASTLE_WARS_SIDE_DOOR_TEXT_ID = 11356;
-   private static final int CASTLE_WARS_TUNNEL_ONE_TEXT_ID = 11358;
-   private static final int CASTLE_WARS_TUNNEL_TWO_TEXT_ID = 11360;
-   private static final int CASTLE_WARS_CATAPULT_TEXT_ID = 11362;
    public static int logoStyle = 0;
    public static boolean customSettingVisiblePlayerNames = false;
    public static String version = "v1.0";
@@ -199,8 +186,7 @@ public class Client extends GameShell {
    private static int textureAnimationNoiseCounter;
    private int hintIconDrawType;
    public int openInterfaceId;
-   private int castleWarsCatapultAimX = 15;
-   private int castleWarsCatapultAimY = 15;
+   private final CastleWarsOverlay castleWarsOverlay = new CastleWarsOverlay();
    private int cameraPositionX;
    private int cameraPositionZ;
    private int xCameraPos;
@@ -2193,82 +2179,11 @@ public class Client extends GameShell {
       }
    }
    private void drawExperienceDrops() {
-      int scalar = -1;
-      int localProjectedEntityX;
-      int localProjectedEntityY;
-      if (xpDropPosition == 2) {
-         localProjectedEntityX = this.projectedEntityX;
-         localProjectedEntityY = this.projectedEntityY;
-         if (screenMode != 0) {
-            scalar = localProjectedEntityY - 100;
-         }
-      } else {
-         localProjectedEntityX = screenMode == 0 ? 510 : clientWidth - 250;
-         localProjectedEntityY = 100;
-      }
-
-      int scalar2 = 0;
-      BitmapFont bitmapFont = null;
-      if (xpDropSize == 0) {
-         bitmapFont = this.smallFont;
-      } else if (xpDropSize == 1) {
-         bitmapFont = this.plainFont;
-      } else if (xpDropSize == 2) {
-         bitmapFont = this.boldFont;
-      }
-
-      Iterator iterator = ExperienceDrop.drops.iterator();
-
-      while (iterator.hasNext()) {
-         ExperienceDrop experienceDrop;
-         if ((experienceDrop = (ExperienceDrop)iterator.next()) != null) {
-            if (experienceDrop.y == -1) {
-               experienceDrop.y = localProjectedEntityY + scalar2 * 24;
-            }
-
-            String text = "+" + this.numberFormat.format(experienceDrop.experience) + " xp";
-            int measuredTextWidth = bitmapFont.getTextWidth(text);
-            int scalar3 = localProjectedEntityX - measuredTextWidth;
-            int sourceMeasuredTextWidth = measuredTextWidth;
-            int localSpriteWidth = 0;
-            if (xpDropSize > 0) {
-               scalar3 -= 5;
-            }
-
-            Sprite sprite;
-            if (xpDropSize > 0) {
-               sprite = this.skillIconSprites[experienceDrop.skillId];
-            } else {
-               sprite = customSprites[53 + experienceDrop.skillId];
-            }
-
-            if (sprite != null) {
-               localSpriteWidth = sprite.spriteWidth + 3;
-               if (xpDropPosition == 2 && xpDropSize > 0) {
-                  localSpriteWidth = sprite.spriteWidth + 8;
-               }
-
-               sourceMeasuredTextWidth += localSpriteWidth;
-               if (xpDropPosition == 1) {
-                  sprite.drawOutlinedSprite(scalar3 - localSpriteWidth, experienceDrop.y - sprite.spriteHeight, 0);
-               } else {
-                  sprite.drawOutlinedSprite(localProjectedEntityX - sourceMeasuredTextWidth / 2, experienceDrop.y - sprite.spriteHeight, 0);
-               }
-            }
-
-            if (xpDropPosition == 1) {
-               bitmapFont.textLeftShadow(true, localProjectedEntityX - measuredTextWidth, xpDropColor, text, experienceDrop.y);
-            } else {
-               bitmapFont.textLeftShadow(true, localProjectedEntityX - sourceMeasuredTextWidth / 2 + localSpriteWidth, xpDropColor, text, experienceDrop.y);
-            }
-
-            scalar2++;
-            experienceDrop.y--;
-            if (experienceDrop.y == scalar) {
-               iterator.remove();
-            }
-         }
-      }
+      ExperienceDropRenderer.draw(
+            xpDropPosition, xpDropSize, xpDropColor,
+            screenMode, clientWidth, this.projectedEntityX, this.projectedEntityY,
+            this.smallFont, this.plainFont, this.boldFont,
+            this.skillIconSprites, customSprites, this.numberFormat);
    }
    private static String wrapText(String text, int scalarArgument, BitmapFont bitmapFont) {
       if (bitmapFont.getTextWidth(text) > scalarArgument) {
@@ -16212,379 +16127,36 @@ public class Client extends GameShell {
          return combatLevel > 0 ? "@gr1@" : "@yel@";
       }
    }
-   private static boolean shouldCenterInterface(Widget widget) {
+   static boolean shouldCenterInterface(Widget widget) {
       if (screenMode == 0) {
          return false;
       } else {
          return clientWidth >= 900 && clientHeight >= 650 ? true : widget != null && (widget.spriteXOffset != -1 || widget.spriteYOffset != -1);
       }
    }
-   private int getCastleWarsViewportWidth() {
-      if (this.gameScreenImageProducer != null) {
-         return this.gameScreenImageProducer.getWidth();
-      }
-      return screenMode == 0 ? 512 : clientWidth;
+
+   // CastleWarsOverlay reuses the cache-authored objective icons.
+   void drawCastleWarsWidgetLayer(Widget root, int x, int y) {
+      this.drawInterface(0, x, root, y);
    }
 
-   private int getCastleWarsViewportHeight() {
-      if (this.gameScreenImageProducer != null) {
-         return this.gameScreenImageProducer.getHeight();
+   private void drawCastleWarsWalkableOverlay(boolean waiting) {
+      int overlayWidth = this.gameScreenImageProducer != null
+            ? this.gameScreenImageProducer.getWidth() : (screenMode == 0 ? 512 : clientWidth);
+      int overlayHeight = this.gameScreenImageProducer != null
+            ? this.gameScreenImageProducer.getHeight() : (screenMode == 0 ? 334 : clientHeight);
+      int topRightReservedWidth = screenMode == 0 ? 0
+            : scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
+      if (waiting) {
+         this.castleWarsOverlay.drawCastleWarsWaitingOverlay(
+               this.richBoldFont, overlayWidth, topRightReservedWidth);
+      } else {
+         int bottomReservedHeight = screenMode == 0 || !this.chatMessagesVisible ? 0
+               : scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
+         this.castleWarsOverlay.drawCastleWarsGameOverlay(
+               this, this.richPlainFont, this.richBoldFont,
+               overlayWidth, overlayHeight, topRightReservedWidth, bottomReservedHeight);
       }
-      return screenMode == 0 ? 334 : clientHeight;
-   }
-
-   private int getCastleWarsTopRightReservedWidth() {
-      if (screenMode == 0) {
-         return 0;
-      }
-      return scaledUiDimension(RESIZABLE_MINIMAP_UI_WIDTH);
-   }
-
-   private int getCastleWarsBottomReservedHeight() {
-      if (screenMode == 0 || !this.chatMessagesVisible) {
-         return 0;
-      }
-      return scaledUiDimension(RESIZABLE_CHAT_UI_HEIGHT);
-   }
-
-   private int getCastleWarsSafeTopCenterX() {
-      int width = this.getCastleWarsViewportWidth();
-      int right = Math.max(160, width - this.getCastleWarsTopRightReservedWidth());
-      return right / 2;
-   }
-
-   private void drawCastleWarsWaitingOverlay() {
-      String timer = this.getCastleWarsInterfaceText(CASTLE_WARS_WAITING_TIMER_TEXT_ID);
-      if (timer.length() == 0) {
-         return;
-      }
-
-      // All fixed gameframes render the 3D scene into the same 512x334 raster,
-      // while every resizable frame renders into the full client raster. Draw
-      // the waiting timer from those actual bounds instead of cache-authored
-      // frame coordinates so 317, 459, 474, 474+orbs and OSRS resizable all
-      // land in the same visible place.
-      this.richBoldFont.drawCenteredString(
-            timer, this.getCastleWarsSafeTopCenterX(), 32, 16777215, 0);
-   }
-
-   private String getCastleWarsInterfaceText(int widgetId) {
-      if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
-            || Widget.widgets[widgetId] == null || Widget.widgets[widgetId].message == null) {
-         return "";
-      }
-      return Widget.widgets[widgetId].message;
-   }
-
-   private int getCastleWarsStatusColor(String status) {
-      if (status == null) {
-         return 16777215;
-      }
-
-      String lower = status.toLowerCase();
-      if (lower.contains("safe") || lower.contains("cleared")
-            || lower.contains("operational") || lower.contains("locked")) {
-         return 65280;
-      }
-      if (lower.contains("taken") || lower.contains("destroyed")
-            || lower.contains("collapsed") || lower.equals("health 0%")) {
-         return 16724787;
-      }
-      if (lower.contains("dropped") || lower.contains("unlocked")) {
-         return 16776960;
-      }
-      if (lower.startsWith("health ")) {
-         try {
-            int percentIndex = lower.indexOf('%');
-            int health = Integer.parseInt(lower.substring(7, percentIndex).trim());
-            if (health <= 25) {
-               return 16724787;
-            }
-            if (health <= 60) {
-               return 16776960;
-            }
-            return 65280;
-         } catch (Exception ignored) {
-         }
-      }
-      return 16777215;
-   }
-
-   private int parseCastleWarsCatapultAim(String text, int fallback) {
-      try {
-         int value = Integer.parseInt(text == null ? "" : text.trim());
-         return Math.max(0, Math.min(30, value));
-      } catch (Exception ignored) {
-         return fallback;
-      }
-   }
-
-   private void drawCastleWarsCatapultAimOverlay() {
-      if (Widget.widgets == null || 11169 >= Widget.widgets.length
-            || Widget.widgets[11169] == null) {
-         return;
-      }
-
-      Widget root = Widget.widgets[11169];
-      int baseX = 0;
-      int baseY = 0;
-      if (screenMode != 0 && shouldCenterInterface(root)) {
-         baseX = clientWidth / 2 - 256;
-         baseY = clientHeight / 2 - 167;
-      }
-
-      this.drawCastleWarsCatapultCoordinate(
-            11301, this.castleWarsCatapultAimX, baseX, baseY);
-      this.drawCastleWarsCatapultCoordinate(
-            11302, this.castleWarsCatapultAimY, baseX, baseY);
-   }
-
-   private void drawCastleWarsCatapultCoordinate(
-         int widgetId, int value, int baseX, int baseY) {
-      if (widgetId < 0 || widgetId >= Widget.widgets.length
-            || Widget.widgets[widgetId] == null) {
-         return;
-      }
-
-      int[] position = this.findCastleWarsWidgetPosition(
-            Widget.widgets[11169], widgetId, baseX, baseY, 0);
-      if (position == null) {
-         return;
-      }
-
-      Widget widget = Widget.widgets[widgetId];
-      int width = widget.width > 0 ? widget.width : 86;
-      int height = widget.height > 0 ? widget.height : 58;
-
-      // The cache contains static sample digits (12 / 34). Cover only the
-      // inside of their panel, keeping the native border, then draw the live
-      // server-authoritative coordinate over it.
-      int inset = 5;
-      int drawWidth = Math.max(24, Math.min(92, width) - inset * 2);
-      int drawHeight = Math.max(20, Math.min(62, height) - inset * 2);
-      Rasterizer2D.fillRectangleAlternate(
-            position[0] + inset, position[1] + inset,
-            drawWidth, drawHeight, 0x8b7b59);
-
-      String coordinate = value < 10 ? "0" + value : Integer.toString(value);
-      int textX = position[0] + inset + drawWidth / 2;
-      int textY = position[1] + inset + drawHeight / 2 + 5;
-      this.boldFont.textCenter(0x302719, coordinate, textY, textX);
-   }
-
-   private int[] findCastleWarsWidgetPosition(int targetWidgetId) {
-      if (Widget.widgets == null
-            || CASTLE_WARS_GAME_INTERFACE_ID >= Widget.widgets.length) {
-         return null;
-      }
-      return this.findCastleWarsWidgetPosition(
-            Widget.widgets[CASTLE_WARS_GAME_INTERFACE_ID],
-            targetWidgetId, 0, 0, 0);
-   }
-
-   private int[] findCastleWarsWidgetPosition(Widget parent, int targetWidgetId,
-                                               int baseX, int baseY, int depth) {
-      if (parent == null || parent.childIds == null
-            || parent.childX == null || parent.childY == null || depth > 12) {
-         return null;
-      }
-
-      for (int childIndex = 0; childIndex < parent.childIds.length; childIndex++) {
-         int childId = parent.childIds[childIndex];
-         if (childId < 0 || childId >= Widget.widgets.length) {
-            continue;
-         }
-
-         Widget child = Widget.widgets[childId];
-         if (child == null) {
-            continue;
-         }
-
-         int childX = baseX + parent.childX[childIndex] + child.runtimeXOffset;
-         int childY = baseY + parent.childY[childIndex]
-               - parent.scrollPosition + child.runtimeYOffset;
-         if (childId == targetWidgetId) {
-            return new int[]{childX, childY};
-         }
-
-         if (child.type == 0) {
-            int[] nested = this.findCastleWarsWidgetPosition(
-                  child, targetWidgetId, childX, childY, depth + 1);
-            if (nested != null) {
-               return nested;
-            }
-         }
-      }
-      return null;
-   }
-
-   private void drawCastleWarsNativeIconLayer(int statusX, int statusY) {
-      if (Widget.widgets == null
-            || CASTLE_WARS_GAME_INTERFACE_ID >= Widget.widgets.length
-            || CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID >= Widget.widgets.length) {
-         return;
-      }
-
-      Widget root = Widget.widgets[CASTLE_WARS_GAME_INTERFACE_ID];
-      Widget anchorText = Widget.widgets[CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID];
-      int[] anchorPosition = this.findCastleWarsWidgetPosition(
-            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID);
-      if (root == null || anchorText == null || anchorPosition == null) {
-         return;
-      }
-
-      int lineHeight = anchorText.font == null ? 12 : anchorText.font.lineHeight;
-      int desiredTextX = statusX + 32;
-      int nativeTextBaselineY = anchorPosition[1] + lineHeight;
-      int drawX = desiredTextX - anchorPosition[0];
-      int drawY = statusY - nativeTextBaselineY;
-
-      // Draw the original cache-authored Castle Wars graphics, but suppress
-      // its text because the relocated overlay draws the status strings itself.
-      // The native widgets still evaluate configs 377/378, so the cache chooses
-      // the proper Safe/Taken/Dropped, door, tunnel and catapult artwork.
-      int[] textWidgetIds = new int[]{
-            CASTLE_WARS_ZAMORAK_SCORE_TEXT_ID,
-            CASTLE_WARS_SARADOMIN_SCORE_TEXT_ID,
-            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID,
-            CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID,
-            CASTLE_WARS_MAIN_DOOR_TEXT_ID,
-            CASTLE_WARS_TIMER_TEXT_ID,
-            CASTLE_WARS_SIDE_DOOR_TEXT_ID,
-            CASTLE_WARS_TUNNEL_ONE_TEXT_ID,
-            CASTLE_WARS_TUNNEL_TWO_TEXT_ID,
-            CASTLE_WARS_CATAPULT_TEXT_ID,
-            11363, 11364, 11365, 11366
-      };
-      String[] messages = new String[textWidgetIds.length];
-      String[] secondaryTexts = new String[textWidgetIds.length];
-
-      for (int i = 0; i < textWidgetIds.length; i++) {
-         int widgetId = textWidgetIds[i];
-         if (widgetId >= 0 && widgetId < Widget.widgets.length
-               && Widget.widgets[widgetId] != null) {
-            messages[i] = Widget.widgets[widgetId].message;
-            secondaryTexts[i] = Widget.widgets[widgetId].secondaryText;
-            Widget.widgets[widgetId].message = "";
-            Widget.widgets[widgetId].secondaryText = "";
-         }
-      }
-
-      try {
-         this.drawInterface(0, drawX, root, drawY);
-      } finally {
-         for (int i = 0; i < textWidgetIds.length; i++) {
-            int widgetId = textWidgetIds[i];
-            if (widgetId >= 0 && widgetId < Widget.widgets.length
-                  && Widget.widgets[widgetId] != null) {
-               Widget.widgets[widgetId].message = messages[i];
-               Widget.widgets[widgetId].secondaryText = secondaryTexts[i];
-            }
-         }
-      }
-   }
-
-   private int getCastleWarsRelocatedTextBaselineY(int widgetId,
-                                                   int anchorBaselineY) {
-      if (Widget.widgets == null || widgetId < 0 || widgetId >= Widget.widgets.length
-            || CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID >= Widget.widgets.length) {
-         return anchorBaselineY;
-      }
-
-      Widget widget = Widget.widgets[widgetId];
-      Widget anchor = Widget.widgets[CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID];
-      int[] widgetPosition = this.findCastleWarsWidgetPosition(widgetId);
-      int[] anchorPosition = this.findCastleWarsWidgetPosition(
-            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID);
-      if (widget == null || anchor == null
-            || widgetPosition == null || anchorPosition == null) {
-         return anchorBaselineY;
-      }
-
-      int widgetLineHeight = widget.font == null ? 12 : widget.font.lineHeight;
-      int anchorLineHeight = anchor.font == null ? 12 : anchor.font.lineHeight;
-      int nativeWidgetBaselineY = widgetPosition[1] + widgetLineHeight;
-      int nativeAnchorBaselineY = anchorPosition[1] + anchorLineHeight;
-      return anchorBaselineY + nativeWidgetBaselineY - nativeAnchorBaselineY;
-   }
-
-   private void drawCastleWarsStatusLine(String label, int widgetId,
-                                         int x, int y) {
-      String status = this.getCastleWarsInterfaceText(widgetId);
-      int textX = x + 32;
-      this.richPlainFont.drawBasicString(label + ":", textX, y, 16777215, 0);
-      int statusTextX = textX + this.richPlainFont.getTextWidth(label + ":") + 6;
-      this.richBoldFont.drawBasicString(status, statusTextX, y,
-            this.getCastleWarsStatusColor(status), 0);
-   }
-
-   private void drawCastleWarsGameOverlay() {
-      String zamorakScore = this.getCastleWarsInterfaceText(
-            CASTLE_WARS_ZAMORAK_SCORE_TEXT_ID);
-      String saradominScore = this.getCastleWarsInterfaceText(
-            CASTLE_WARS_SARADOMIN_SCORE_TEXT_ID);
-      String timer = this.getCastleWarsInterfaceText(CASTLE_WARS_TIMER_TEXT_ID);
-      int overlayWidth = this.getCastleWarsViewportWidth();
-      int overlayHeight = this.getCastleWarsViewportHeight();
-
-      // Fixed 317/459/474 all use the same 512x334 scene raster. Resizable
-      // 474/474+orbs/OSRS use the full client raster, so reserve the scaled
-      // minimap area before centering top-of-screen Castle Wars information.
-      int safeTopRight = Math.max(160,
-            overlayWidth - this.getCastleWarsTopRightReservedWidth());
-      int scoreX = safeTopRight / 2;
-      this.richBoldFont.drawCenteredString(
-            zamorakScore + "     " + saradominScore,
-            scoreX, 32, 16777215, 0);
-
-      // Keep the objective/status stack inside the visible scene even at high
-      // UI scales. The chatbox can cover the bottom-left of resizable frames,
-      // so clamp the cache-derived status block above that reserved region.
-      int statusX = 10;
-      int lastStatusOffset = this.getCastleWarsRelocatedTextBaselineY(
-            CASTLE_WARS_CATAPULT_TEXT_ID, 0);
-      int statusBlockHeight = Math.max(112, lastStatusOffset + 18);
-      int safeBottom = overlayHeight - this.getCastleWarsBottomReservedHeight() - 8;
-      int desiredStatusY = Math.max(120, overlayHeight / 2 - 100);
-      int maxStatusY = Math.max(64, safeBottom - statusBlockHeight);
-      int statusY = Math.min(desiredStatusY, maxStatusY);
-
-      this.drawCastleWarsNativeIconLayer(statusX, statusY);
-      this.drawCastleWarsStatusLine("Zamorak flag",
-            CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(
-                  CASTLE_WARS_ZAMORAK_FLAG_TEXT_ID, statusY));
-      this.drawCastleWarsStatusLine("Saradomin flag",
-            CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(
-                  CASTLE_WARS_SARADOMIN_FLAG_TEXT_ID, statusY));
-      this.drawCastleWarsStatusLine("Main door",
-            CASTLE_WARS_MAIN_DOOR_TEXT_ID, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(
-                  CASTLE_WARS_MAIN_DOOR_TEXT_ID, statusY));
-      this.drawCastleWarsStatusLine("Side door",
-            CASTLE_WARS_SIDE_DOOR_TEXT_ID, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(
-                  CASTLE_WARS_SIDE_DOOR_TEXT_ID, statusY));
-      this.drawCastleWarsStatusLine("Tunnel 1",
-            CASTLE_WARS_TUNNEL_ONE_TEXT_ID, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(
-                  CASTLE_WARS_TUNNEL_ONE_TEXT_ID, statusY));
-      this.drawCastleWarsStatusLine("Tunnel 2",
-            CASTLE_WARS_TUNNEL_TWO_TEXT_ID, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(
-                  CASTLE_WARS_TUNNEL_TWO_TEXT_ID, statusY));
-      this.drawCastleWarsStatusLine("Catapult",
-            CASTLE_WARS_CATAPULT_TEXT_ID, statusX,
-            this.getCastleWarsRelocatedTextBaselineY(
-                  CASTLE_WARS_CATAPULT_TEXT_ID, statusY));
-
-      // The minimap is outside the scene raster in every fixed frame, but is
-      // overlaid on the scene in every resizable frame. Anchoring the clock to
-      // the safe top-right edge keeps it clear of 317-style, 474+orbs and OSRS
-      // minimaps without maintaining a separate coordinate table per frame.
-      int timerX = Math.max(80, safeTopRight - 42);
-      this.richBoldFont.drawCenteredString(timer, timerX, 50, 16777215, 0);
    }
 
    private void draw3dScreen() {
@@ -16685,10 +16257,10 @@ public class Client extends GameShell {
 
          this.animateInterface(this.animationCycleDelta, this.openWalkableInterface);
          this.centeredWalkableInterface = false;
-         if (this.openWalkableInterface == CASTLE_WARS_GAME_INTERFACE_ID) {
-            this.drawCastleWarsGameOverlay();
-         } else if (this.openWalkableInterface == CASTLE_WARS_WAITING_INTERFACE_ID) {
-            this.drawCastleWarsWaitingOverlay();
+         if (this.openWalkableInterface == CastleWarsOverlay.CASTLE_WARS_GAME_INTERFACE_ID) {
+            this.drawCastleWarsWalkableOverlay(false);
+         } else if (this.openWalkableInterface == CastleWarsOverlay.CASTLE_WARS_WAITING_INTERFACE_ID) {
+            this.drawCastleWarsWalkableOverlay(true);
          } else if (screenMode != 0 && shouldCenterInterface(Widget.widgets[this.openWalkableInterface])) {
             int top = screenMode == 0 ? 0 : clientWidth / 2 - 256;
             int screenMode2 = screenMode == 0 ? 0 : clientHeight / 2 - 167;
@@ -16708,7 +16280,7 @@ public class Client extends GameShell {
             this.drawInterface(0, 0, Widget.widgets[this.openInterfaceId], 0);
          }
          if (this.openInterfaceId == 11169) {
-            this.drawCastleWarsCatapultAimOverlay();
+            this.castleWarsOverlay.drawCastleWarsCatapultAimOverlay(this.boldFont);
          }
       }
 
@@ -19556,15 +19128,9 @@ public class Client extends GameShell {
             }
 
             if (inStream18 == 11301) {
-               this.castleWarsCatapultAimX =
-                     this.parseCastleWarsCatapultAim(text12, this.castleWarsCatapultAimX);
-               Widget.updateCastleWarsCatapultAimMarker(
-                     this.castleWarsCatapultAimX, this.castleWarsCatapultAimY);
+               this.castleWarsOverlay.updateCatapultAimX(text12);
             } else if (inStream18 == 11302) {
-               this.castleWarsCatapultAimY =
-                     this.parseCastleWarsCatapultAim(text12, this.castleWarsCatapultAimY);
-               Widget.updateCastleWarsCatapultAimMarker(
-                     this.castleWarsCatapultAimX, this.castleWarsCatapultAimY);
+               this.castleWarsOverlay.updateCatapultAimY(text12);
             }
 
             if (inStream18 == 5383) {

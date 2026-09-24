@@ -46,6 +46,17 @@ build/Client.jar
 Compiler diagnostics are written under `build/` if a source file fails to
 compile.
 
+For a command-line source check without packaging or a `pause`, run:
+
+```bat
+build.bat --check
+```
+
+It returns a nonzero exit code if any source fails to compile. To run the
+server-free smoke checks as well, run `check.bat`. These checks cover multi-sector
+cache reads and writes and chat encoding. A full `build.bat` build also returns a
+nonzero exit code on compiler errors and does not package an incomplete JAR.
+
 ## Run
 
 1. Build and start the matching server.
@@ -99,6 +110,9 @@ marked that way in the file.
 
 ## Project layout
 
+See [the source map](docs/source-map.md) for entry points by feature. The
+repository also has a short [working guide](AGENTS.md) for automated contributors.
+
 ```text
 src/main/java/       Client, renderer, networking, audio, UI, and world-map source
 lib/                 Bundled dependencies plus downloaded LWJGL jar
@@ -106,5 +120,6 @@ runtime/cache/       Required game cache and assets
 runtime/userConfig.cfg
 build.bat            Compiles and packages the client
 run.bat              Launches the built client
+check.bat            Compiles source and runs smoke checks
 build/Client.jar     Generated executable JAR
 ```

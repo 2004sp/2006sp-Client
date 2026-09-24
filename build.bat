@@ -2,6 +2,14 @@
 setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
+set "CHECK_ONLY=0"
+if /i "%~1"=="--check" (
+    set "CHECK_ONLY=1"
+) else if not "%~1"=="" (
+    echo Usage: build.bat [--check]
+    exit /b 1
+)
+
 set "SOURCE_DIR=src\main\java"
 set "OUTPUT_DIR=build"
 set "CLASSES_DIR=%OUTPUT_DIR%\classes"
@@ -30,27 +38,27 @@ where javac >nul 2>nul
 if errorlevel 1 (
     echo ERROR: javac was not found on PATH.
     echo Install a JDK, preferably JDK 8 for this client, and make sure javac is on PATH.
-    pause
+    if "%CHECK_ONLY%"=="0" pause
     exit /b 1
 )
 
-where jar >nul 2>nul
-if errorlevel 1 (
+if "%CHECK_ONLY%"=="0" where jar >nul 2>nul
+if "%CHECK_ONLY%"=="0" if errorlevel 1 (
     echo ERROR: jar was not found on PATH.
     echo Install a JDK, preferably JDK 8 for this client, and make sure jar is on PATH.
-    pause
+    if "%CHECK_ONLY%"=="0" pause
     exit /b 1
 )
 
-if not exist "%BASE_JAR%" (
+if "%CHECK_ONLY%"=="0" if not exist "%BASE_JAR%" (
     echo ERROR: Preserved runtime JAR is missing: %BASE_JAR%
-    pause
+    if "%CHECK_ONLY%"=="0" pause
     exit /b 1
 )
 
 if not exist "%SOURCE_DIR%" (
     echo ERROR: Source directory is missing: %SOURCE_DIR%
-    pause
+    if "%CHECK_ONLY%"=="0" pause
     exit /b 1
 )
 
@@ -58,22 +66,22 @@ if not exist "%LWJGL_JAR%" (
     call :download_file "%LWJGL_JAR%" "https://repo1.maven.org/maven2/org/lwjgl/lwjgl/lwjgl/2.9.3/lwjgl-2.9.3.jar"
     if errorlevel 1 (
         echo ERROR: Could not download LWJGL 2.9.3.
-        pause
+        if "%CHECK_ONLY%"=="0" pause
         exit /b 1
     )
 )
 
-if not exist "%LWJGL_NATIVES_JAR%" (
+if "%CHECK_ONLY%"=="0" if not exist "%LWJGL_NATIVES_JAR%" (
     call :download_file "%LWJGL_NATIVES_JAR%" "https://repo1.maven.org/maven2/org/lwjgl/lwjgl/lwjgl-platform/2.9.3/lwjgl-platform-2.9.3-natives-windows.jar"
     if errorlevel 1 (
         echo ERROR: Could not download LWJGL Windows natives.
-        pause
+        if "%CHECK_ONLY%"=="0" pause
         exit /b 1
     )
 )
 
-if not exist "%LWJGL_NATIVES_DIR%" mkdir "%LWJGL_NATIVES_DIR%"
-if not exist "%LWJGL_NATIVES_DIR%\lwjgl.dll" if not exist "%LWJGL_NATIVES_DIR%\lwjgl64.dll" (
+if "%CHECK_ONLY%"=="0" if not exist "%LWJGL_NATIVES_DIR%" mkdir "%LWJGL_NATIVES_DIR%"
+if "%CHECK_ONLY%"=="0" if not exist "%LWJGL_NATIVES_DIR%\lwjgl.dll" if not exist "%LWJGL_NATIVES_DIR%\lwjgl64.dll" (
     echo Extracting LWJGL native libraries...
     pushd "%LWJGL_NATIVES_DIR%"
     jar xf "..\..\%LWJGL_NATIVES_JAR%"
@@ -81,7 +89,7 @@ if not exist "%LWJGL_NATIVES_DIR%\lwjgl.dll" if not exist "%LWJGL_NATIVES_DIR%\l
     popd
     if not "!NATIVE_EXTRACT_ERROR!"=="0" (
         echo ERROR: Could not extract LWJGL native libraries.
-        pause
+        if "%CHECK_ONLY%"=="0" pause
         exit /b 1
     )
 )
@@ -237,6 +245,25 @@ for /f "usebackq delims=" %%F in ("%FAILED_LIST%") do set /a FAILED+=1
 
 :compile_complete
 
+echo.
+echo Source files considered: %TOTAL%
+echo Source overrides compiled: %SUCCESS%
+echo Source files with compiler errors: %FAILED%
+if %FAILED% GTR 0 (
+    echo Compiler diagnostics: %COMPILE_LOG%
+    if "%CHECK_ONLY%"=="0" pause
+    exit /b 1
+)
+if %TOTAL% EQU 0 (
+    echo ERROR: No Java source files were found under %SOURCE_DIR%.
+    if "%CHECK_ONLY%"=="0" pause
+    exit /b 1
+)
+if "%CHECK_ONLY%"=="1" (
+    echo Source check passed.
+    exit /b 0
+)
+
 rem Build a clean artifact. The preserved runtime JAR contributes only the
 rem Eclipse jar-in-jar launcher, its manifest and the embedded theme JAR.
 rem Original obfuscated client/a/b classes are deliberately excluded.
@@ -246,7 +273,7 @@ jar xf "..\..\%BASE_JAR%"
 if errorlevel 1 (
     popd
     echo ERROR: Failed to extract packaging resources from %BASE_JAR%.
-    pause
+    if "%CHECK_ONLY%"=="0" pause
     exit /b 1
 )
 popd
@@ -256,7 +283,7 @@ jar xf "..\..\%LWJGL_JAR%"
 if errorlevel 1 (
     popd
     echo ERROR: Failed to package LWJGL classes into %OUTPUT_JAR%.
-    pause
+    if "%CHECK_ONLY%"=="0" pause
     exit /b 1
 )
 popd
@@ -269,32 +296,14 @@ if exist "%OUTPUT_JAR%" del /q "%OUTPUT_JAR%"
 jar cfm "%OUTPUT_JAR%" "%CLEAN_MANIFEST%" -C "%PACKAGE_DIR%" .
 if errorlevel 1 (
     echo ERROR: Failed to create clean source-built %OUTPUT_JAR%.
-    pause
+    if "%CHECK_ONLY%"=="0" pause
     exit /b 1
 )
 
 echo.
 echo Built %OUTPUT_JAR%.
-echo Source files considered: %TOTAL%
-echo Source overrides applied: %SUCCESS%
-echo Source files still needing decompiler repair: %FAILED%
-
-if %FAILED% GTR 0 (
-    echo.
-    echo These files did NOT override the preserved runtime classes:
-    type "%FAILED_LIST%"
-    echo.
-    echo Full compiler diagnostics: %COMPILE_LOG%
-    echo Fix the compiler errors above, then run build.bat again.
-) else if %TOTAL% EQU 0 (
-    echo No changed Java source files were found, so the preserved runtime JAR was copied unchanged.
-) else (
-    echo All selected source overrides compiled successfully.
-)
-
-echo.
 echo Every Java source under %SOURCE_DIR% was included in this build.
-pause
+if "%CHECK_ONLY%"=="0" pause
 exit /b 0
 
 :download_file
