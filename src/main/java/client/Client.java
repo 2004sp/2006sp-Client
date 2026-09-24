@@ -743,7 +743,7 @@ public class Client extends GameShell {
       }
 
       bitMasks = new int[32];
-      byte bitMask = 2;
+      int bitMask = 2;
 
       for (int bitIndex = 0; bitIndex < 32; bitIndex++) {
          bitMasks[bitIndex] = bitMask - 1;
