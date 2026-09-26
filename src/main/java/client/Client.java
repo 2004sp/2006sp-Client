@@ -7709,12 +7709,17 @@ public class Client extends GameShell {
    }
    private boolean parseRevision443Packets() {
       try {
-            for (int i = 0; i < 5; i++) {
-               PacketFramer.Packet packet = this.revision443PacketFramer.poll(
-                  this.connection, this.incomingIsaacCipher);
-               if (packet == null) {
-                  break;
-               }
+         int packetBudget =
+                 localPlayer != null && !localPlayer.isVisible() ? 100 : 5;
+
+         for (int i = 0; i < packetBudget; i++) {
+            PacketFramer.Packet packet = this.revision443PacketFramer.poll(
+                    this.connection, this.incomingIsaacCipher);
+
+            if (packet == null) {
+               break;
+            }
+
                this.timeoutCounter = 0;
                if (packet.opcode == 121 || packet.opcode == 193) {
                   this.revision443Region = packet.opcode == 121
