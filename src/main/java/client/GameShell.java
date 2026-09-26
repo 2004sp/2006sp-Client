@@ -47,12 +47,15 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
    private int rawPendingClickX;
    private int rawPendingClickY;
    private long pendingClickTime;
+   private long pendingClickNanos;
    int clickButton;
    int clickX;
    int clickY;
    int rawClickX;
    int rawClickY;
    long clickTime;
+   private long lastClickInputWaitNanos;
+   private long lastClickProcessingNanos;
    final int[] keyStatus = new int[128];
    private final int[] keyQueue = new int[128];
    private int keyQueueReadIndex;
@@ -121,8 +124,19 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
             this.rawClickX = this.rawPendingClickX;
             this.rawClickY = this.rawPendingClickY;
             this.clickTime = this.pendingClickTime;
+            long clickNanos = this.pendingClickNanos;
             this.pendingMouseButton = 0;
+            if (this.clickButton != 0 && clickNanos != 0L) {
+               this.lastClickInputWaitNanos = Math.max(0L, System.nanoTime() - clickNanos);
+            }
+            long clickProcessingStartedNanos =
+               this.clickButton != 0 && clickNanos != 0L ? System.nanoTime() : 0L;
             this.processGameLoop();
+            if (clickProcessingStartedNanos != 0L) {
+               this.lastClickProcessingNanos = Math.max(
+                  0L, System.nanoTime() - clickProcessingStartedNanos
+               );
+            }
             // The legacy software UI advances with the 50 Hz game tick. The
             // high-FPS renderer consumes this flag once, so intermediate
             // camera/scene frames can reuse the last composed UI.
@@ -257,6 +271,14 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
       return requested;
    }
 
+   final long getLastClickInputWaitNanos() {
+      return this.lastClickInputWaitNanos;
+   }
+
+   final long getLastClickProcessingNanos() {
+      return this.lastClickProcessingNanos;
+   }
+
    final void requestSoftwareUiRefresh() {
       this.softwareUiRefreshRequested = true;
    }
@@ -373,6 +395,7 @@ public class GameShell extends Applet implements FocusListener, KeyListener, Mou
          this.rawPendingClickY = rawPendingClickYOrGetY;
          long pendingClickTime = this.pendingClickTime;
          this.pendingClickTime = System.currentTimeMillis();
+         this.pendingClickNanos = System.nanoTime();
          if (mouseEvent.getButton() == 2) {
             this.middleMouseDown = true;
             // Middle-mouse camera dragging is measured against raw AWT event

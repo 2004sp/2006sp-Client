@@ -106,6 +106,23 @@ public final class ItemDefinition {
       return revision443Definitions ? definitionCount
          : Client.extendedRevisionEnabled ? revisionDefinitionCount : definitionCount;
    }
+   public static boolean isValidDefinitionId(int id) {
+      if (id < 0) {
+         return false;
+      }
+      if (revision443Definitions) {
+         return definitionOffsets != null && id < definitionOffsets.length;
+      }
+      if (Client.hdModels && (id <= 7955 || id > 8118) && id != 552 && id != 553) {
+         return hdDefinitionOffsets != null && id < hdDefinitionOffsets.length;
+      }
+      if (Client.extendedRevisionEnabled
+            && (id > 8118 || Client.use2007Models && !Client.hdModels && id <= 7955)
+            && id != 552 && id != 553) {
+         return revisionDefinitionOffsets != null && id < revisionDefinitionOffsets.length;
+      }
+      return definitionOffsets != null && id < definitionOffsets.length;
+   }
    public static void unpackConfig(Archive archive) {
       revision443Definitions = false;
       revision443Models = null;
@@ -302,6 +319,10 @@ public final class ItemDefinition {
       return model;
    }
    public static ItemDefinition lookup(int sourceId) {
+      if (!isValidDefinitionId(sourceId)) {
+         return invalidDefinition(sourceId);
+      }
+
       for (int recentDefinitionIndex = 0; recentDefinitionIndex < 10; recentDefinitionIndex++) {
          if (recentDefinitions[recentDefinitionIndex].id == sourceId) {
             return recentDefinitions[recentDefinitionIndex];
@@ -416,6 +437,26 @@ public final class ItemDefinition {
 
       return itemDefinition;
    }
+   private static ItemDefinition invalidDefinition(int sourceId) {
+      ItemDefinition itemDefinition = new ItemDefinition();
+      itemDefinition.id = sourceId;
+      itemDefinition.inventoryModelId = -1;
+      itemDefinition.name = null;
+      itemDefinition.zoom2d = 2000;
+      itemDefinition.maleModel0 = -1;
+      itemDefinition.maleModel1 = -1;
+      itemDefinition.maleModel2 = -1;
+      itemDefinition.femaleModel0 = -1;
+      itemDefinition.femaleModel1 = -1;
+      itemDefinition.femaleModel2 = -1;
+      itemDefinition.primaryMaleHeadPiece = -1;
+      itemDefinition.secondaryMaleHeadPiece = -1;
+      itemDefinition.primaryFemaleHeadPiece = -1;
+      itemDefinition.secondaryFemaleHeadPiece = -1;
+      itemDefinition.notedId = -1;
+      itemDefinition.noteTemplateId = -1;
+      return itemDefinition;
+   }
    private void namespaceRevision443Models() {
       inventoryModelId = revision443Models.getRegisteredModelId(inventoryModelId);
       if (maleModel0 >= 0) maleModel0 = revision443Models.getRegisteredModelId(maleModel0);
@@ -430,6 +471,10 @@ public final class ItemDefinition {
       if (secondaryFemaleHeadPiece >= 0) secondaryFemaleHeadPiece = revision443Models.getRegisteredModelId(secondaryFemaleHeadPiece);
    }
    public static Sprite getSprite(int key, int newCanvasHeight, int pixel) {
+      if (!isValidDefinitionId(key)) {
+         return null;
+      }
+
       if (pixel == 0) {
          Sprite sprite;
          if ((sprite = (Sprite)spriteCache.get(key)) != null && sprite.canvasHeight != newCanvasHeight && sprite.canvasHeight != -1) {
@@ -457,6 +502,9 @@ public final class ItemDefinition {
          }
 
          if (localStackIds != -1) {
+            if (!isValidDefinitionId(localStackIds)) {
+               return null;
+            }
             itemDefinition = lookup(localStackIds);
          }
       }

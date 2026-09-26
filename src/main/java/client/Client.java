@@ -512,6 +512,10 @@ public class Client extends GameShell {
    private int unreadMessages;
    private static int audioNoiseCounter;
    private static boolean fpsOn;
+   private static boolean tickrateOn;
+   private long lastObservedServerTickNanos = -1L;
+   private double observedServerTickMillis = 600.0D;
+   private long lastPacketApplyNanos;
    public static boolean loggedIn;
    private boolean canMute;
    private boolean constructedViewport;
@@ -7286,6 +7290,36 @@ public class Client extends GameShell {
       return false;
    }
 
+   private static boolean isSkillGuideCategoryWidget(Widget widget) {
+      if (widget == null) {
+         return false;
+      }
+
+      int packedId = Interfaces.packedForRenderId(widget.id);
+      if (packedId < 0 || (packedId >>> 16) != 308) {
+         return false;
+      }
+
+      switch (packedId & 0xFFFF) {
+         case 108:
+         case 109:
+         case 112:
+         case 122:
+         case 125:
+         case 128:
+         case 131:
+         case 143:
+         case 146:
+         case 149:
+         case 159:
+         case 162:
+         case 165:
+            return true;
+         default:
+            return false;
+      }
+   }
+
    private int getHoveredBankTabActionIndex() {
       for (int menuIndex = this.menuActionCount - 1; menuIndex >= 0; menuIndex--) {
          int widgetId = this.menuParam1[menuIndex];
@@ -7761,6 +7795,7 @@ public class Client extends GameShell {
                      this.needDrawTabArea = true;
                   }
                } else if (packet.opcode == 29) {
+                  this.recordObservedServerTick();
                   this.updateRevision443Players(packet.payload);
                } else if (packet.opcode == 238) {
                   this.updateRevision443Npcs(packet.payload);
@@ -7782,6 +7817,31 @@ public class Client extends GameShell {
       }
       return true;
    }
+   private void recordObservedServerTick() {
+      long now = System.nanoTime();
+
+      if (this.lastObservedServerTickNanos != -1L) {
+         double sampleMillis =
+                 (now - this.lastObservedServerTickNanos) / 1_000_000.0D;
+
+         /*
+          * Reject obviously unrelated/invalid timing samples, but allow
+          * normal server jitter and moderately delayed cycles.
+          */
+         if (sampleMillis >= 300.0D && sampleMillis <= 3000.0D) {
+            /*
+             * Exponential moving average so the display does not jump
+             * around due to small network timing variations.
+             */
+            this.observedServerTickMillis =
+                    this.observedServerTickMillis * 0.90D
+                            + sampleMillis * 0.10D;
+         }
+      }
+
+      this.lastObservedServerTickNanos = now;
+   }
+
    private void openRevision443Cache() throws IOException {
       if (this.revision443Cache != null) {
          return;
@@ -7979,8 +8039,15 @@ public class Client extends GameShell {
    }
 
    private void mainGameProcessor() {
-      if (REVISION_443_LOGIN && !this.parseRevision443Packets()) {
-         return;
+      if (REVISION_443_LOGIN) {
+         long packetApplyStartedNanos = System.nanoTime();
+         boolean packetsAvailable = this.parseRevision443Packets();
+         this.lastPacketApplyNanos = Math.max(
+            0L, System.nanoTime() - packetApplyStartedNanos
+         );
+         if (!packetsAvailable) {
+            return;
+         }
       }
       if (screenMode != 0) {
          int physicalWidth = Math.max(minimumWindowWidth, (int)super.getSize().getWidth());
@@ -8003,7 +8070,16 @@ public class Client extends GameShell {
 
       int inventoryIdIndex = 0;
 
-      while (!REVISION_443_LOGIN && inventoryIdIndex < 5 && this.parsePacket()) {
+      while (!REVISION_443_LOGIN && inventoryIdIndex < 5) {
+         long packetApplyStartedNanos = System.nanoTime();
+         boolean packetApplied = this.parsePacket();
+         long packetApplyNanos = Math.max(
+            0L, System.nanoTime() - packetApplyStartedNanos
+         );
+         if (!packetApplied) {
+            break;
+         }
+         this.lastPacketApplyNanos = packetApplyNanos;
          inventoryIdIndex++;
       }
 
@@ -11472,6 +11548,19 @@ public class Client extends GameShell {
 
                if (this.inputString.equals("::fps")) {
                   fpsOn = !fpsOn;
+               }
+
+               if (this.inputString.equals("::tickrate")) {
+                  tickrateOn = !tickrateOn;
+
+                  /*
+                   * Reset measurement when enabling it so an old timestamp from
+                   * before the toggle cannot create a bogus first sample.
+                   */
+                  if (tickrateOn) {
+                     this.lastObservedServerTickNanos = -1L;
+                     this.observedServerTickMillis = 600.0D;
+                  }
                }
 
                if (this.inputString.startsWith("/")) {
@@ -16593,7 +16682,8 @@ public class Client extends GameShell {
                               }
                            }
 
-                           if (widget3.optionType == 6 && this.continuedDialogue) {
+                           if (widget3.optionType == 6 && this.continuedDialogue
+                                 && !isSkillGuideCategoryWidget(widget3)) {
                               text3 = "Please wait...";
                               secondaryColor2 = widget3.textColor;
                            }
@@ -18057,6 +18147,66 @@ public class Client extends GameShell {
                diagnosticsX, 16776960, 110
             );
          }
+         this.plainFont.textRight(
+            "Input wait:" + formatFrameMillis(this.getLastClickInputWaitNanos()) + "ms",
+            screenMode == 0 ? 507 : clientWidth - 320, 16776960, 125
+         );
+         this.plainFont.textRight(
+            "Client loop:" + formatFrameMillis(this.getLastClickProcessingNanos()) + "ms",
+            screenMode == 0 ? 507 : clientWidth - 320, 16776960, 140
+         );
+         this.plainFont.textRight(
+            "Packet apply:" + formatFrameMillis(this.lastPacketApplyNanos) + "ms",
+            screenMode == 0 ? 507 : clientWidth - 320, 16776960, 155
+         );
+      }
+
+      if (tickrateOn) {
+         int diagnosticsX =
+                 screenMode == 0 ? 507 : clientWidth - 320;
+
+         int diagnosticsY = fpsOn ? 170 : 20;
+
+         double tickMillis = this.observedServerTickMillis;
+         double ticksPerSecond =
+                 tickMillis <= 0.0D ? 0.0D : 1000.0D / tickMillis;
+
+         long roundedTenths =
+                 Math.round(tickMillis * 10.0D);
+
+         long tpsHundredths =
+                 Math.round(ticksPerSecond * 100.0D);
+
+         String tickMillisText =
+                 (roundedTenths / 10L)
+                         + "."
+                         + (roundedTenths % 10L);
+
+         long tpsWhole = tpsHundredths / 100L;
+         long tpsFraction = tpsHundredths % 100L;
+
+         String tpsText =
+                 tpsWhole
+                         + "."
+                         + (tpsFraction < 10L ? "0" : "")
+                         + tpsFraction;
+
+         int color = 16776960;
+
+         /*
+          * Mark unusually slow observed server cycles red.
+          * Normal RuneScape server cycle target is approximately 600 ms.
+          */
+         if (tickMillis > 750.0D) {
+            color = 16711680;
+         }
+
+         this.plainFont.textRight(
+                 "Tick:" + tickMillisText + "ms  TPS:" + tpsText,
+                 diagnosticsX,
+                 color,
+                 diagnosticsY
+         );
       }
 
       if (this.systemUpdateTime != 0) {
@@ -19812,6 +19962,7 @@ public class Client extends GameShell {
          this.prevPktType = this.lastOpcode;
          this.lastOpcode = this.pktType;
          if (this.pktType == 81) {
+            this.recordObservedServerTick();
             this.updatePlayers(this.pktSize, this.inStream);
             this.validLocalMap = false;
             this.pktType = -1;
