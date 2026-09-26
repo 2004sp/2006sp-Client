@@ -1,4 +1,7 @@
 package client;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.Map;
 public final class NpcDefinition {
    public int turnLeftAnimationId = -1;
    private static int cacheIndex;
@@ -8,6 +11,8 @@ public final class NpcDefinition {
    private static Buffer definitionData;
    private static Buffer hdDefinitionData;
    private static Buffer revisionDefinitionData;
+   private static boolean revision443Definitions;
+   private static Models revision443Models;
    public int combatLevel = -1;
    public String name;
    public String[] actions;
@@ -42,6 +47,19 @@ public final class NpcDefinition {
    private static int hdDefinitionCount;
    public static int revisionDefinitionCount;
    public static NpcDefinition lookup(int sourceId) {
+      if (revision443Definitions) {
+         for (NpcDefinition cached : recentDefinitions) {
+            if (cached != null && cached.id == sourceId) return cached;
+         }
+         cacheIndex = (cacheIndex + 1) % recentDefinitions.length;
+         NpcDefinition definition = new NpcDefinition();
+         definition.id = sourceId;
+         recentDefinitions[cacheIndex] = definition;
+         definitionData.currentPosition = definitionOffsets[sourceId];
+         definition.readValues(definitionData);
+         definition.namespaceRevision443Models();
+         return definition;
+      }
       if (Client.hdModels || Client.use2007Models) {
          if (sourceId == 748) {
             sourceId = 6088;
@@ -316,6 +334,8 @@ public final class NpcDefinition {
       return childIdIndex >= 0 && childIdIndex < this.childIds.length && this.childIds[childIdIndex] != -1 ? lookup(this.childIds[childIdIndex]) : null;
    }
    public static void unpackConfig(Archive archive) {
+      revision443Definitions = false;
+      revision443Models = null;
       definitionData = new Buffer(archive.getFile("npc.dat"));
       Buffer buffer = new Buffer(archive.getFile("npc.idx"));
       if (Client.hdModels) {
@@ -354,6 +374,56 @@ public final class NpcDefinition {
 
       for (int recentDefinitionIndex = 0; recentDefinitionIndex < 20; recentDefinitionIndex++) {
          recentDefinitions[recentDefinitionIndex] = new NpcDefinition();
+      }
+   }
+   public static void loadRevision443(Cache cache) throws IOException {
+      Map<Integer, byte[]> files = cache.readFiles(2, 9);
+      int maxId = -1;
+      for (Integer id : files.keySet()) maxId = Math.max(maxId, id.intValue());
+      int[] offsets = new int[maxId + 1];
+      ByteArrayOutputStream data = new ByteArrayOutputStream();
+      data.write(0);
+      data.write(0);
+      for (int id = 0; id <= maxId; id++) {
+         offsets[id] = data.size();
+         byte[] file = files.get(Integer.valueOf(id));
+         if (file == null) {
+            data.write(0);
+            continue;
+         }
+         Buffer audit = new Buffer(file);
+         audit.stringTerminator = 0;
+         try {
+            new NpcDefinition().readValues(audit);
+         } catch (RuntimeException exception) {
+            throw new IOException("Invalid 443 NPC " + id, exception);
+         }
+         if (audit.currentPosition != file.length) {
+            throw new IOException("443 NPC parser did not consume NPC " + id);
+         }
+         data.write(file, 0, file.length);
+      }
+      definitionData = new Buffer(data.toByteArray());
+      definitionData.stringTerminator = 0;
+      definitionOffsets = offsets;
+      definitionCount = offsets.length;
+      recentDefinitions = new NpcDefinition[20];
+      cacheIndex = 0;
+      modelCache = new LruCache(30);
+      revision443Models = Models.load(cache);
+      revision443Models.initializeModelNamespace();
+      revision443Definitions = true;
+   }
+   private void namespaceRevision443Models() {
+      if (modelIds != null) {
+         for (int i = 0; i < modelIds.length; i++) {
+            modelIds[i] = revision443Models.getRegisteredModelId(modelIds[i]);
+         }
+      }
+      if (headModelIds != null) {
+         for (int i = 0; i < headModelIds.length; i++) {
+            headModelIds[i] = revision443Models.getRegisteredModelId(headModelIds[i]);
+         }
       }
    }
    public static void nullLoader() {

@@ -7,6 +7,45 @@ audio, world map, and client configuration included in this repository.
 The default server entry is `127.0.0.1`, so the client connects to a server
 running on the same computer. The normal game port is `43594`.
 
+The revision 443 port is in progress. `run.bat` uses the 443 JS5 CRC fetch and
+RSA login path for testing against the server's 443 branch. The
+client also has a JS5 cache reader for 443 reference tables, named lookups,
+multi-file groups, and XTEA-encrypted map locations when a key is supplied. It
+can read those files either over JS5 or directly from the local
+`runtime/cache` directory. To check the active cache after
+running `build.bat --check`, use:
+
+```bat
+java -cp "build/classes;lib/client-runtime.jar;lib/lwjgl-2.9.3.jar;lib/theme.jar" client.CacheProbe "runtime\cache"
+```
+
+The 443 region loader reads terrain and locations only from JS5 archive 5.
+Missing location groups leave the corresponding squares without static objects;
+invalid or undecodable groups report an error.
+
+In 443 mode, startup opens JS5 and loads 443 definitions, textures, sounds, and
+fonts before the first region packet. It skips the 377 config, texture, and sound
+archives. The 443 path now initializes the model cache from JS5 archive 7 and
+skips the 377 version-list archive and `OnDemandFetcher`. It uses the 443
+Huffman wordpack and leaves chat filtering to the server, without loading the
+377 `wordenc` archive. The title and gameframe sprites load from JS5 archive 8,
+the title image from archive 10, and native interfaces from archive 3. Old
+decorative media groups without named 443 equivalents use empty placeholders.
+Music tracks and jingles load as MIDI from archives 6 and 11. The local interface
+audit (`client.InterfaceAudit`) checks every interface group. The 443
+game packet path loads terrain and XTEA-decrypted locations from JS5 archive 5,
+then builds the scene with 443 object definitions, models, sequences, and frames.
+The matching server's cache probe decodes all 791 audited map squares without a
+377 location fallback. The client cache probe validates the spawn region's 443
+locations and all 207 meshes used there. Opcode 29 is dispatched
+for local movement/teleports, nearby-player movement/add/remove records, and the
+server-used 443 player masks (appearance, forced movement/text, graphics, facing,
+animation, public chat, and hits). The post-login bridge also consumes the 443
+sidebar, skill, inventory/equipment, player-option, chat-mode, run-energy,
+interface-text, message, and walkable/main-interface packets needed by the
+server's normal initialization. Other game packets remain incomplete, so this
+mode is not yet a fully playable 443 client.
+
 ## Requirements
 
 - Windows (the included build and run scripts are batch files)
@@ -53,13 +92,15 @@ build.bat --check
 ```
 
 It returns a nonzero exit code if any source fails to compile. To run the
-server-free smoke checks as well, run `check.bat`. These checks cover multi-sector
-cache reads and writes and chat encoding. A full `build.bat` build also returns a
+server-free smoke checks as well, run `build.bat --smoke`. These checks cover multi-sector
+cache reads and writes, chat encoding, 443 JS5 framing and grouped-file decoding,
+and the encrypted 443 login packet layout.
+A full `build.bat` build also returns a
 nonzero exit code on compiler errors and does not package an incomplete JAR.
 
 ## Run
 
-1. Build and start the matching server.
+1. Build and start the matching revision 443 server.
 2. In the server control panel, click **Start Server**.
 3. Run the client:
 
@@ -68,9 +109,11 @@ cd /d "location of client"
 run.bat
 ```
 
-`run.bat` starts the client from the `runtime` directory so it can locate the
-cache and `userConfig.cfg`. It also prepares the tiled control-panel world map
-before launching `build/Client.jar`.
+`run.bat` starts the client from the `runtime` directory in revision 443 mode
+and reads the promoted cache from `runtime/cache`.
+
+The server's current `port/443` branch defaults to a 443 handshake. The client
+console prints the first 20 incoming 443 game packet opcodes and lengths after login.
 
 If the JAR is missing, run `build.bat` first. If the client cannot connect,
 confirm that the server is online and listening on port `43594`.
@@ -110,8 +153,24 @@ marked that way in the file.
 
 ## Project layout
 
-See [the source map](docs/source-map.md) for entry points by feature. The
-repository also has a short [working guide](AGENTS.md) for automated contributors.
+The repository also has a short [working guide](AGENTS.md) for automated contributors.
+
+### Source map
+
+All paths below are under `src/main/java/`:
+
+| Area | Start here |
+| --- | --- |
+| Startup, input and login | `client/Client.java`, `client/ClientWindow.java`, `client/GameShell.java`, `bootstrap/DefaultClientBootstrap.java` |
+| 443 networking and cache | `client/Js5Client.java`, `client/LocalCache.java`, `client/Cache.java`, `client/PacketFramer.java`, `client/IncomingPacketLengths.java` |
+| World scene and models | `client/RegionBuilder.java`, `client/SceneGraph.java`, `client/Model.java`, `client/SceneObjects.java` |
+| Rendering and UI | `client/Rasterizer2D.java`, `client/Rasterizer3D.java`, `client/Widget.java`, `client/Sprite.java` |
+| Audio | `client/PcmPlayer.java`, `client/MidiController.java`, `client/SoundEffect.java` |
+| World map | `worldmap/WorldMapViewer.java`, `worldmap/WorldMapTileExporter.java` |
+
+`client/Client.java` also contains packet dispatch, region loading, menus, chat,
+camera control, and the game loop. Search for the relevant method there before
+reading the entire file.
 
 ```text
 src/main/java/       Client, renderer, networking, audio, UI, and world-map source
@@ -120,6 +179,6 @@ runtime/cache/       Required game cache and assets
 runtime/userConfig.cfg
 build.bat            Compiles and packages the client
 run.bat              Launches the built client
-check.bat            Compiles source and runs smoke checks
+build.bat --smoke    Compiles source and runs smoke checks
 build/Client.jar     Generated executable JAR
 ```

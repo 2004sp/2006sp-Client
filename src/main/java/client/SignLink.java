@@ -69,15 +69,22 @@ public final class SignLink implements Runnable {
       String text;
       uid = loadUid(text = findcachedir());
 
-      try {
-         new File(text + "main_file_cache.dat");
-         cacheDataFile = new RandomAccessFile(text + "main_file_cache.dat", "rw");
+      if (!"443".equals(System.getProperty("prs.clientRevision"))) {
+         try {
+            new File(text + "main_file_cache.dat");
+            cacheDataFile = new RandomAccessFile(text + "main_file_cache.dat", "rw");
 
-         for (int cacheIndexFileIndex = 0; cacheIndexFileIndex < Client.cacheStoreCount; cacheIndexFileIndex++) {
-            cacheIndexFiles[cacheIndexFileIndex] = new RandomAccessFile(text + "main_file_cache.idx" + cacheIndexFileIndex, "rw");
+            for (int cacheIndexFileIndex = 0; cacheIndexFileIndex < Client.cacheStoreCount; cacheIndexFileIndex++) {
+               cacheIndexFiles[cacheIndexFileIndex] = new RandomAccessFile(text + "main_file_cache.idx" + cacheIndexFileIndex, "rw");
+            }
+         } catch (Exception exception) {
+            exception.printStackTrace();
          }
-      } catch (Exception exception) {
-         exception.printStackTrace();
+      } else {
+         cacheDataFile = null;
+         for (int cacheIndexFileIndex = 0; cacheIndexFileIndex < Client.cacheStoreCount; cacheIndexFileIndex++) {
+            cacheIndexFiles[cacheIndexFileIndex] = null;
+         }
       }
 
       int sourceThreadLiveId = threadLiveId;

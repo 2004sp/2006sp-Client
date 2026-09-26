@@ -1,9 +1,39 @@
 package client;
+import java.io.IOException;
+import java.util.Map;
 public final class VarpDefinition {
    public static VarpDefinition[] definitions;
    private static int trackedVarpCount;
    private static int[] trackedVarpIds;
    public int type;
+   public static void loadRevision443(Cache cache) throws IOException {
+      Map<Integer, byte[]> files = cache.readFiles(2, 16);
+      int maxId = -1;
+      for (Integer id : files.keySet()) maxId = Math.max(maxId, id.intValue());
+      VarpDefinition[] loaded = new VarpDefinition[maxId + 1];
+      for (Map.Entry<Integer, byte[]> entry : files.entrySet()) {
+         int id = entry.getKey().intValue();
+         Buffer buffer = new Buffer(entry.getValue());
+         VarpDefinition definition = new VarpDefinition();
+         try {
+            int opcode;
+            while ((opcode = buffer.readUnsignedByte()) != 0) {
+               if (opcode == 5) {
+                  definition.type = buffer.readUnsignedShort();
+               } else {
+                  throw new IOException("Unsupported 443 varp opcode " + opcode + " for " + id);
+               }
+            }
+         } catch (RuntimeException exception) {
+            throw new IOException("Truncated 443 varp " + id, exception);
+         }
+         if (buffer.currentPosition != buffer.buffer.length) {
+            throw new IOException("Trailing bytes in 443 varp " + id);
+         }
+         loaded[id] = definition;
+      }
+      definitions = loaded;
+   }
    public static void load(Archive archive) {
       Buffer buffer = new Buffer(archive.getFile("varp.dat"));
       if (Client.extendedRevisionEnabled) {

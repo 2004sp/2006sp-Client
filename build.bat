@@ -3,10 +3,14 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 set "CHECK_ONLY=0"
+set "RUN_SMOKE=0"
 if /i "%~1"=="--check" (
     set "CHECK_ONLY=1"
+) else if /i "%~1"=="--smoke" (
+    set "CHECK_ONLY=1"
+    set "RUN_SMOKE=1"
 ) else if not "%~1"=="" (
-    echo Usage: build.bat [--check]
+    echo Usage: build.bat [--check^|--smoke]
     exit /b 1
 )
 
@@ -261,6 +265,8 @@ if %TOTAL% EQU 0 (
 )
 if "%CHECK_ONLY%"=="1" (
     echo Source check passed.
+    if "%RUN_SMOKE%"=="1" call :smoke_checks
+    if errorlevel 1 exit /b 1
     exit /b 0
 )
 
@@ -305,6 +311,16 @@ echo Built %OUTPUT_JAR%.
 echo Every Java source under %SOURCE_DIR% was included in this build.
 if "%CHECK_ONLY%"=="0" pause
 exit /b 0
+
+:smoke_checks
+if exist "build\test-classes" rmdir /s /q "build\test-classes"
+mkdir "build\test-classes"
+javac -encoding UTF-8 -source 8 -target 8 -cp "build\classes;lib\theme.jar;lib\lwjgl-2.9.3.jar" -d "build\test-classes" "src\test\java\client\ClientSmokeChecks.java" "src\test\java\client\OutgoingPacketsSmokeChecks.java"
+if errorlevel 1 exit /b 1
+java -cp "build\test-classes;build\classes;lib\theme.jar;lib\lwjgl-2.9.3.jar" client.ClientSmokeChecks
+if errorlevel 1 exit /b 1
+java -cp "build\test-classes;build\classes;lib\theme.jar;lib\lwjgl-2.9.3.jar" client.OutgoingPacketsSmokeChecks
+exit /b %ERRORLEVEL%
 
 :download_file
 echo Downloading %~nx1...

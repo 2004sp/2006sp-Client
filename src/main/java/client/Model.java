@@ -1236,6 +1236,38 @@ public final class Model extends Renderable {
       modelHeaders = new ModelHeader[length];
       onDemandFetcher = onDemandFetcherBase;
    }
+   /**
+    * Reserves a collision-free range in the global header table for a second
+    * cache revision while preserving every already-loaded legacy model.
+    */
+   public static int reserveModelNamespace(int length) {
+      if (length < 0) {
+         throw new IllegalArgumentException("Negative model namespace length");
+      }
+      int base = modelHeaders == null ? 0 : modelHeaders.length;
+      ModelHeader[] expanded = new ModelHeader[base + length];
+      if (modelHeaders != null) {
+         System.arraycopy(modelHeaders, 0, expanded, 0, modelHeaders.length);
+      }
+      modelHeaders = expanded;
+      return base;
+   }
+   /** Registers model bytes without forcing the legacy 18-byte header decoder. */
+   public static void registerRevision443Model(byte[] data, int modelId) {
+      if (modelHeaders == null || modelId < 0 || modelId >= modelHeaders.length) {
+         throw new IllegalArgumentException("Invalid revision 443 model id " + modelId);
+      }
+      if (data == null || data.length < 2) {
+         throw new IllegalArgumentException("Invalid revision 443 model " + modelId);
+      }
+      if (data[data.length - 1] == -1 && data[data.length - 2] == -1) {
+         ModelHeader header = new ModelHeader();
+         header.data = data;
+         modelHeaders[modelId] = header;
+      } else {
+         decodeModelHeader(data, modelId);
+      }
+   }
    public static void decodeModelHeader(byte[] newCurrentPosition, int modelHeaderIndex) {
       if (newCurrentPosition == null) {
          ModelHeader modelHeader;
@@ -1312,11 +1344,15 @@ public final class Model extends Renderable {
       }
    }
    public static Model getModel(int modelHeaderIndex) {
-      if (modelHeaders == null) {
+      if (modelHeaders == null || modelHeaderIndex < 0 || modelHeaderIndex >= modelHeaders.length) {
          return null;
       } else {
          ModelHeader modelHeader;
          if ((modelHeader = modelHeaders[modelHeaderIndex]) == null) {
+            if (Models.registerIfNeeded(modelHeaderIndex)) {
+               modelHeader = modelHeaders[modelHeaderIndex];
+               if (modelHeader != null) return new Model(modelHeaderIndex);
+            }
             onDemandFetcher.provide(modelHeaderIndex);
             return null;
          } else {
@@ -1325,11 +1361,12 @@ public final class Model extends Renderable {
       }
    }
    public static boolean isCached(int modelHeaderIndex) {
-      if (modelHeaders == null) {
+      if (modelHeaders == null || modelHeaderIndex < 0 || modelHeaderIndex >= modelHeaders.length) {
          return false;
       } else {
          ModelHeader modelHeader;
          if ((modelHeader = modelHeaders[modelHeaderIndex]) == null) {
+            if (Models.registerIfNeeded(modelHeaderIndex)) return true;
             onDemandFetcher.provide(modelHeaderIndex);
             return false;
          } else {
@@ -1645,6 +1682,8 @@ public final class Model extends Renderable {
 
       this.vertexSkins = model.vertexSkins;
       this.triangleSkinValues = model.triangleSkinValues;
+      this.vectorSkin = model.vectorSkin;
+      this.triangleSkin = model.triangleSkin;
       this.triangleDrawType = model.triangleDrawType;
       this.trianglePointsX = model.trianglePointsX;
       this.trianglePointsY = model.trianglePointsY;
@@ -2178,6 +2217,18 @@ public final class Model extends Renderable {
       for (int triangleColorValueIndex = 0; triangleColorValueIndex < this.triangleCount; triangleColorValueIndex++) {
          if (this.triangleColorValues[triangleColorValueIndex] == recolorToFindEntry) {
             this.triangleColorValues[triangleColorValueIndex] = localTriangleColor;
+         }
+      }
+   }
+   /** Replaces a texture id on textured faces in newer model formats. */
+   public final void retexture(int textureToFind, int replacementTexture) {
+      if (this.triangleDrawType == null || this.triangleColorValues == null) {
+         return;
+      }
+      for (int triangleIndex = 0; triangleIndex < this.triangleCount; triangleIndex++) {
+         if ((this.triangleDrawType[triangleIndex] & 2) == 2
+            && this.triangleColorValues[triangleIndex] == textureToFind) {
+            this.triangleColorValues[triangleIndex] = replacementTexture;
          }
       }
    }

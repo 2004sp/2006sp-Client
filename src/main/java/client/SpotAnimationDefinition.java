@@ -1,4 +1,6 @@
 package client;
+import java.io.IOException;
+import java.util.Map;
 public final class SpotAnimationDefinition {
    public static SpotAnimationDefinition[] definitions;
    private int id;
@@ -13,6 +15,54 @@ public final class SpotAnimationDefinition {
    public int ambient;
    public int contrast;
    public static LruCache modelCache = new LruCache(30);
+   public static void loadRevision443(Cache cache) throws IOException {
+      Map<Integer, byte[]> files = cache.readFiles(2, 13);
+      int maxId = -1;
+      for (Integer id : files.keySet()) maxId = Math.max(maxId, id.intValue());
+      SpotAnimationDefinition[] loaded = new SpotAnimationDefinition[maxId + 1];
+      for (Map.Entry<Integer, byte[]> entry : files.entrySet()) {
+         int id = entry.getKey().intValue();
+         SpotAnimationDefinition definition = new SpotAnimationDefinition();
+         definition.id = id;
+         Buffer buffer = new Buffer(entry.getValue());
+         try {
+            int opcode;
+            while ((opcode = buffer.readUnsignedByte()) != 0) {
+               if (opcode == 1) definition.modelId = buffer.readUnsignedShort();
+               else if (opcode == 2) definition.animationId = buffer.readUnsignedShort();
+               else if (opcode == 4) definition.resizeX = buffer.readUnsignedShort();
+               else if (opcode == 5) definition.resizeY = buffer.readUnsignedShort();
+               else if (opcode == 6) definition.rotation = buffer.readUnsignedShort();
+               else if (opcode == 7) definition.ambient = buffer.readUnsignedByte();
+               else if (opcode == 8) definition.contrast = buffer.readUnsignedByte();
+               else if (opcode >= 40 && opcode < 46)
+                  definition.recolorToFind[opcode - 40] = buffer.readUnsignedShort();
+               else if (opcode >= 50 && opcode < 56)
+                  definition.recolorToReplace[opcode - 50] = buffer.readUnsignedShort();
+               else throw new IOException("Unsupported 443 spot animation opcode " + opcode + " for " + id);
+            }
+         } catch (RuntimeException exception) {
+            throw new IOException("Truncated 443 spot animation " + id, exception);
+         }
+         if (buffer.currentPosition != buffer.buffer.length) {
+            throw new IOException("Trailing bytes in 443 spot animation " + id);
+         }
+         loaded[id] = definition;
+      }
+      Models models = Models.load(cache);
+      models.initializeModelNamespace();
+      for (SpotAnimationDefinition definition : loaded) {
+         if (definition != null) {
+            definition.modelId = models.getRegisteredModelId(definition.modelId);
+            if (definition.animationId >= 0 && AnimationSequence.sequences != null
+                  && definition.animationId < AnimationSequence.sequences.length) {
+               definition.animationSequence = AnimationSequence.sequences[definition.animationId];
+            }
+         }
+      }
+      definitions = loaded;
+      modelCache = new LruCache(30);
+   }
    public static void unpackConfig(Archive archive) {
       boolean flag = false;
       if (Client.extendedRevisionEnabled && !Client.hdModels) {

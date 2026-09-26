@@ -22,12 +22,12 @@ final class Skills {
       "slayer",
       "farming",
       "runecraft",
-      "-unused-",
-      "-unused-",
+      "hunter",
+      "construction",
       "-unused-",
       "-unused-"
    };
    public static final boolean[] enabled = new boolean[]{
-      true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false, false
+      true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, true, false, false
    };
 }

@@ -1,4 +1,6 @@
 package client;
+import java.io.IOException;
+import java.util.Map;
 public final class IdentityKit {
    public static int length;
    public static IdentityKit[] kits;
@@ -10,6 +12,62 @@ public final class IdentityKit {
    private static int[] recolorToReplace = new int[6];
    private final int[] headModelIds = new int[]{-1, -1, -1, -1, -1};
    public boolean nonSelectable = false;
+   public static void loadRevision443(Cache cache) throws IOException {
+      Map<Integer, byte[]> files = cache.readFiles(2, 3);
+      int maxId = -1;
+      for (Integer id : files.keySet()) maxId = Math.max(maxId, id.intValue());
+      IdentityKit[] loaded = new IdentityKit[maxId + 1];
+      for (Map.Entry<Integer, byte[]> entry : files.entrySet()) {
+         int id = entry.getKey().intValue();
+         Buffer buffer = new Buffer(entry.getValue());
+         IdentityKit kit = new IdentityKit();
+         try {
+            int opcode;
+            while ((opcode = buffer.readUnsignedByte()) != 0) {
+               if (opcode == 1) {
+                  kit.bodyPartId = buffer.readUnsignedByte();
+               } else if (opcode == 2) {
+                  int count = buffer.readUnsignedByte();
+                  kit.bodyModelIds = new int[count];
+                  for (int i = 0; i < count; i++) kit.bodyModelIds[i] = buffer.readUnsignedShort();
+               } else if (opcode == 3) {
+                  kit.nonSelectable = true;
+               } else if (opcode >= 40 && opcode < 50) {
+                  recolorToFind[opcode - 40] = buffer.readUnsignedShort();
+               } else if (opcode >= 50 && opcode < 60) {
+                  recolorToReplace[opcode - 50] = buffer.readUnsignedShort();
+               } else if (opcode >= 60 && opcode < 65) {
+                  kit.headModelIds[opcode - 60] = buffer.readUnsignedShort();
+               } else {
+                  throw new IOException("Unsupported 443 identity kit opcode " + opcode + " for " + id);
+               }
+            }
+         } catch (RuntimeException exception) {
+            throw new IOException("Truncated 443 identity kit " + id, exception);
+         }
+         if (buffer.currentPosition != buffer.buffer.length) {
+            throw new IOException("Trailing bytes in 443 identity kit " + id);
+         }
+         loaded[id] = kit;
+      }
+      Models models = Models.load(cache);
+      models.initializeModelNamespace();
+      for (IdentityKit kit : loaded) {
+         if (kit == null) continue;
+         if (kit.bodyModelIds != null) {
+            for (int i = 0; i < kit.bodyModelIds.length; i++) {
+               kit.bodyModelIds[i] = models.getRegisteredModelId(kit.bodyModelIds[i]);
+            }
+         }
+         for (int i = 0; i < kit.headModelIds.length; i++) {
+            if (kit.headModelIds[i] >= 0) {
+               kit.headModelIds[i] = models.getRegisteredModelId(kit.headModelIds[i]);
+            }
+         }
+      }
+      kits = loaded;
+      length = loaded.length;
+   }
    public static void unpackConfig(Archive archive) {
       Buffer buffer;
       length = (buffer = new Buffer(archive.getFile("idk.dat"))).readUnsignedShort();

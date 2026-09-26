@@ -1,4 +1,6 @@
 package client;
+import java.io.IOException;
+import java.util.Map;
 final class Rasterizer3D extends Rasterizer2D {
    public static boolean smoothShading = false;
    public static boolean lowMemory = true;
@@ -14,16 +16,16 @@ final class Rasterizer3D extends Rasterizer2D {
    public static int[] COSINE = new int[2048];
    public static int[] scanOffsets;
    private static int textureCount;
-   public static IndexedSprite[] textures = new IndexedSprite[51];
-   private static boolean[] textureHasTransparency = new boolean[51];
-   private static int[] averageTextureColors = new int[51];
+   public static IndexedSprite[] textures = new IndexedSprite[53];
+   private static boolean[] textureHasTransparency = new boolean[53];
+   private static int[] averageTextureColors = new int[53];
    private static int texturePoolSize;
    private static int[][] texturePixelPool;
-   private static int[][] texturePixels = new int[51][];
-   public static int[] textureLastUsed = new int[51];
+   private static int[][] texturePixels = new int[53][];
+   public static int[] textureLastUsed = new int[53];
    public static int textureUsageCounter;
    public static int[] HSL_TO_RGB = new int[65536];
-   private static int[][] texturePalettes = new int[51][];
+   private static int[][] texturePalettes = new int[53][];
 
    static {
       for (int divisor = 1; divisor < 512; divisor++) {
@@ -2427,7 +2429,7 @@ final class Rasterizer3D extends Rasterizer2D {
    public static void clearTextureCache() {
       texturePixelPool = null;
 
-      for (int texturePixelIndex = 0; texturePixelIndex < 51; texturePixelIndex++) {
+      for (int texturePixelIndex = 0; texturePixelIndex < textures.length; texturePixelIndex++) {
          texturePixels[texturePixelIndex] = null;
       }
    }
@@ -2440,7 +2442,7 @@ final class Rasterizer3D extends Rasterizer2D {
             texturePixelPool = new int[texturePoolSize][65536];
          }
 
-         for (int texturePixelIndex = 0; texturePixelIndex < 51; texturePixelIndex++) {
+         for (int texturePixelIndex = 0; texturePixelIndex < textures.length; texturePixelIndex++) {
             texturePixels[texturePixelIndex] = null;
          }
       }
@@ -2448,7 +2450,7 @@ final class Rasterizer3D extends Rasterizer2D {
    public static void loadTextures(Archive archive) {
       textureCount = 0;
 
-      for (int textureIndex = 0; textureIndex < 51; textureIndex++) {
+      for (int textureIndex = 0; textureIndex < textures.length; textureIndex++) {
          try {
             textures[textureIndex] = new IndexedSprite(archive, String.valueOf(textureIndex), 0);
             if (lowMemory && textures[textureIndex].canvasWidth == 128) {
@@ -2461,6 +2463,36 @@ final class Rasterizer3D extends Rasterizer2D {
          } catch (Exception exception) {
          }
       }
+   }
+   public static void loadRevision443Textures(Cache cache) throws IOException {
+      Map<Integer, byte[]> files = cache.readFiles(9, 0);
+      clearTextureCache();
+      for (int id = 0; id < textures.length; id++) {
+         textures[id] = null;
+         texturePalettes[id] = null;
+         averageTextureColors[id] = 0;
+      }
+      for (Map.Entry<Integer, byte[]> entry : files.entrySet()) {
+         int id = entry.getKey().intValue();
+         byte[] data = entry.getValue();
+         if (id < 0 || id >= textures.length || data.length != 12
+               || data[3] != 1 || data[6] != 0 || data[7] != 0
+               || data[8] != 0 || data[9] != 0) {
+            throw new IOException("Unsupported 443 texture definition " + id);
+         }
+         int spriteGroup = (data[4] & 255) << 8 | data[5] & 255;
+         Sprites.DecodedSprite[] sprites = Sprites.load(cache, spriteGroup);
+         if (sprites.length != 1) {
+            throw new IOException("443 texture " + id + " has " + sprites.length + " sprites");
+         }
+         IndexedSprite texture = sprites[0].toIndexedSprite();
+         if (lowMemory && texture.canvasWidth == 128) texture.downscaleHalf();
+         else texture.resize();
+         textures[id] = texture;
+      }
+      textureCount = textures.length;
+      initializeTextureCache();
+      setBrightness(0.8);
    }
    public static int getAverageTextureColor(int averageTextureColorIndex) {
       if (averageTextureColors[averageTextureColorIndex] != 0) {
@@ -2644,7 +2676,7 @@ final class Rasterizer3D extends Rasterizer2D {
          }
       }
 
-      for (int textureIndex = 0; textureIndex < 51; textureIndex++) {
+      for (int textureIndex = 0; textureIndex < textures.length; textureIndex++) {
          if (textures[textureIndex] != null) {
             int[] palette = textures[textureIndex].palette;
             texturePalettes[textureIndex] = new int[palette.length];
@@ -2658,7 +2690,7 @@ final class Rasterizer3D extends Rasterizer2D {
          }
       }
 
-      for (int texturePixelIndex = 0; texturePixelIndex < 51; texturePixelIndex++) {
+      for (int texturePixelIndex = 0; texturePixelIndex < textures.length; texturePixelIndex++) {
          releaseTexture(texturePixelIndex);
       }
    }

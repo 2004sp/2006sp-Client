@@ -268,6 +268,7 @@ public final class AnimationSequence {
       return remapId(emoteAnimation, -1);
    }
    public static int remapId(int emoteAnimation, int id) {
+      if (Animations.isActive()) return emoteAnimation;
       if (!Client.hdModels && !Client.use2007Models) {
          return emoteAnimation == 7033 ? 69 : emoteAnimation;
       }

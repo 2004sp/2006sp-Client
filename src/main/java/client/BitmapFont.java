@@ -2,6 +2,7 @@ package client;
 
 import java.util.Arrays;
 import java.util.Random;
+import java.io.IOException;
 public final class BitmapFont extends Rasterizer2D {
    private final byte[][] glyphPixels = new byte[256][];
    private final int[] glyphWidths = new int[256];
@@ -11,6 +12,29 @@ public final class BitmapFont extends Rasterizer2D {
    private final int[] glyphAdvances = new int[256];
    public int lineHeight;
    private boolean strikethroughEnabled;
+
+   public BitmapFont(Cache cache, String name) throws IOException {
+      int metricsGroup = cache.readReferenceTable(13).getGroupId(name);
+      if (metricsGroup < 0) throw new IOException("Missing 443 font metrics " + name);
+      byte[] metrics = cache.readFile(13, metricsGroup, 0);
+      if (metrics.length != 256) {
+         throw new IOException("Unsupported 443 font metrics for " + name + ": " + metrics.length);
+      }
+      Sprites.DecodedSprite[] glyphs = Sprites.load(cache, name);
+      if (glyphs.length != 256) {
+         throw new IOException("Expected 256 glyphs in 443 font " + name);
+      }
+      for (int i = 0; i < glyphs.length; i++) {
+         Sprites.DecodedSprite glyph = glyphs[i];
+         glyphPixels[i] = glyph.toFontMask();
+         glyphWidths[i] = glyph.width;
+         glyphHeights[i] = glyph.height;
+         xOffsets[i] = glyph.xOffset;
+         yOffsets[i] = glyph.yOffset;
+         glyphAdvances[i] = metrics[i] & 255;
+         if (i < 128) lineHeight = Math.max(lineHeight, glyph.yOffset + glyph.height);
+      }
+   }
 
    public BitmapFont(boolean flag, String text, Archive archive) {
       new Random();

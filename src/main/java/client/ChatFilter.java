@@ -81,6 +81,9 @@ final class ChatFilter {
       }
    }
    public static String apply(String text) {
+      // Revision 443 uses its JS5 Huffman wordpack and server-side chat rules.
+      // The 377 wordenc tables do not describe this revision's filtering data.
+      if (badWords == null) return text;
       char[] characters2;
       char[] characters = characters2 = text.toCharArray();
       int characterIndex2 = 0;

@@ -1,10 +1,25 @@
 package client;
+import java.io.IOException;
 public final class VarbitDefinition {
    public static VarbitDefinition[] definitions;
    public int index;
    public int leastSignificantBit;
    public int mostSignificantBit;
    private boolean tracksVarp = false;
+   public static void loadRevision443(Cache cache) throws IOException {
+      Varbits source = Varbits.load(cache);
+      VarbitDefinition[] loaded = new VarbitDefinition[source.size()];
+      for (int id = 0; id < loaded.length; id++) {
+         Varbits.Definition entry = source.get(id);
+         if (entry == null) continue;
+         VarbitDefinition definition = new VarbitDefinition();
+         definition.index = entry.varpIndex;
+         definition.leastSignificantBit = entry.leastSignificantBit;
+         definition.mostSignificantBit = entry.mostSignificantBit;
+         loaded[id] = definition;
+      }
+      definitions = loaded;
+   }
    public static void load(Archive archive) {
       Buffer buffer = new Buffer(archive.getFile("varbit.dat"));
       if (Client.extendedRevisionEnabled) {

@@ -1,6 +1,10 @@
 package client;
+import java.io.IOException;
+import java.util.Map;
 public final class FloorDefinition {
    public static FloorDefinition[] definitions;
+   public static FloorDefinition[] underlayDefinitions;
+   public static FloorDefinition[] overlayDefinitions;
    public int rgbColor;
    public int textureId = -1;
    public boolean occlude = true;
@@ -92,6 +96,54 @@ public final class FloorDefinition {
             }
          }
       }
+      underlayDefinitions = definitions;
+      overlayDefinitions = definitions;
+   }
+   public static void loadRevision443(Cache cache) throws IOException {
+      underlayDefinitions = decodeRevision443Group(cache.readFiles(2, 1));
+      overlayDefinitions = decodeRevision443Group(cache.readFiles(2, 4));
+   }
+
+   private static FloorDefinition[] decodeRevision443Group(Map<Integer, byte[]> files)
+         throws IOException {
+      int maxId = -1;
+      for (Integer id : files.keySet()) {
+         if (id > maxId) maxId = id;
+      }
+      FloorDefinition[] decoded = new FloorDefinition[maxId + 1];
+      for (Map.Entry<Integer, byte[]> entry : files.entrySet()) {
+         FloorDefinition definition = new FloorDefinition();
+         Buffer buffer = new Buffer(entry.getValue());
+         while (true) {
+            int opcode = buffer.readUnsignedByte();
+            if (opcode == 0) break;
+            if (opcode == 1) {
+               definition.rgbColor = buffer.readUnsignedMedium();
+               definition.setHslFromRgb(definition.rgbColor);
+            } else if (opcode == 2) {
+               definition.textureId = buffer.readUnsignedByte();
+            } else if (opcode == 5) {
+               definition.occlude = false;
+            } else if (opcode == 7) {
+               int hue = definition.hue;
+               int saturation = definition.saturation;
+               int lightness = definition.lightness;
+               int weightedHue = definition.weightedHue;
+               int hueMultiplier = definition.hueMultiplier;
+               definition.secondaryRgbColor = buffer.readUnsignedMedium();
+               definition.setHslFromRgb(definition.secondaryRgbColor);
+               definition.hue = hue;
+               definition.saturation = saturation;
+               definition.lightness = lightness;
+               definition.weightedHue = weightedHue;
+               definition.hueMultiplier = hueMultiplier;
+            } else {
+               throw new IOException("Unsupported revision 443 floor opcode " + opcode);
+            }
+         }
+         decoded[entry.getKey()] = definition;
+      }
+      return decoded;
    }
    private void setHslFromRgb(int newHue) {
       double calculation = (newHue >> 16 & 0xFF) / 256.0;

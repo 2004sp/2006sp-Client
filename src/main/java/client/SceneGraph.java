@@ -658,7 +658,23 @@ final class SceneGraph {
 
       return -1;
    }
-   public final void buildModels(int contrast, int scalarArgument, int scalarArgument2) {
+   public final void buildModels(int contrast, int scalarArgument, int scalarArgument2,
+                                 byte[][][] tileSettings, CollisionMap[] collisionMaps) {
+      try {
+         SceneObjects.PlacementStats revision443Stats =
+            SceneObjects.placePending(tileSettings, this.tileHeights,
+               collisionMaps, this);
+         if (revision443Stats != null) {
+            System.out.println("443 static objects: " + revision443Stats.placed
+               + " placed (" + revision443Stats.morphedPlaced + " morphed), "
+               + revision443Stats.animatedSkipped
+               + " animated skipped, " + revision443Stats.noModel
+               + " without matching models, " + revision443Stats.outOfBounds
+               + " outside scene");
+         }
+      } catch (java.io.IOException exception) {
+         throw new IllegalStateException("Revision 443 object scene build failed", exception);
+      }
       contrast = (int)Math.ceil(1269.0) + 2750 >> 4;
 
       for (int tileHeightIndex = 0; tileHeightIndex < 4; tileHeightIndex++) {

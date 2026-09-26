@@ -12,6 +12,10 @@ public final class AnimationFrame {
    public int[] transformZ;
    private static boolean[] noAlphaTransform;
    static Hashtable frameCache = new Hashtable();
+   static void prepareRevision443() {
+      frameCache = new Hashtable();
+      frames = null;
+   }
    public static void initialize(int scalarArgument) {
       frames = new AnimationFrame[scalarArgument + 1];
       noAlphaTransform = new boolean[scalarArgument + 1];
@@ -19,6 +23,71 @@ public final class AnimationFrame {
       for (int noAlphaTransformIndex = 0; noAlphaTransformIndex < scalarArgument + 1; noAlphaTransformIndex++) {
          noAlphaTransform[noAlphaTransformIndex] = true;
       }
+   }
+   static AnimationFrame registerRevision443Frame(byte[] data, AnimationSkeleton skeleton, int packedFrameId) {
+      if (data == null || data.length < 3 || skeleton == null) {
+         throw new IllegalArgumentException("Invalid revision 443 animation frame");
+      }
+      if (frameCache == null) {
+         frameCache = new Hashtable();
+      }
+      AnimationFrame cached = (AnimationFrame)frameCache.get(new Integer(packedFrameId));
+      if (cached != null) {
+         return cached;
+      }
+      Buffer flags = new Buffer(data);
+      Buffer valuesBuffer = new Buffer(data);
+      flags.currentPosition = 2;
+      int slotCount = flags.readUnsignedByte();
+      if (slotCount > skeleton.transformCount || 3 + slotCount > data.length) {
+         throw new IllegalArgumentException("Invalid revision 443 animation transform count");
+      }
+      valuesBuffer.currentPosition = 3 + slotCount;
+      int[] indices = new int[500];
+      int[] x = new int[500];
+      int[] y = new int[500];
+      int[] z = new int[500];
+      int count = 0;
+      int previous = -1;
+      for (int slot = 0; slot < slotCount; slot++) {
+         int mask = flags.readUnsignedByte();
+         if (mask == 0) continue;
+         if (skeleton.transformTypes[slot] != 0) {
+            for (int inserted = slot - 1; inserted > previous; inserted--) {
+               if (skeleton.transformTypes[inserted] == 0) {
+                  indices[count] = inserted;
+                  x[count] = 0;
+                  y[count] = 0;
+                  z[count] = 0;
+                  count++;
+                  break;
+               }
+            }
+         }
+         indices[count] = slot;
+         int defaultValue = skeleton.transformTypes[slot] == 3 ? 128 : 0;
+         x[count] = (mask & 1) != 0 ? valuesBuffer.readSignedSmart() : defaultValue;
+         y[count] = (mask & 2) != 0 ? valuesBuffer.readSignedSmart() : defaultValue;
+         z[count] = (mask & 4) != 0 ? valuesBuffer.readSignedSmart() : defaultValue;
+         previous = slot;
+         count++;
+      }
+      if (valuesBuffer.currentPosition != data.length) {
+         throw new IllegalArgumentException("Trailing revision 443 animation frame data");
+      }
+      AnimationFrame frame = new AnimationFrame();
+      frame.skeleton = skeleton;
+      frame.transformCount = count;
+      frame.transformIndices = new int[count];
+      frame.transformX = new int[count];
+      frame.transformY = new int[count];
+      frame.transformZ = new int[count];
+      System.arraycopy(indices, 0, frame.transformIndices, 0, count);
+      System.arraycopy(x, 0, frame.transformX, 0, count);
+      System.arraycopy(y, 0, frame.transformY, 0, count);
+      System.arraycopy(z, 0, frame.transformZ, 0, count);
+      frameCache.put(new Integer(packedFrameId), frame);
+      return frame;
    }
    public static void load(byte[] byteBufferArgument, int id) {
       if (Client.hdModels) {
@@ -319,7 +388,8 @@ public final class AnimationFrame {
       frames = null;
    }
    public static AnimationFrame get(int frameIndex) {
-      if (Client.hdModels || frameIndex >= frames.length || Client.use2007Models) {
+      if (frameIndex < 0) return null;
+      if (Animations.isActive() || frames == null || Client.hdModels || frameIndex >= frames.length || Client.use2007Models) {
          return getCached(frameIndex);
       } else {
          return frames == null ? null : frames[frameIndex];
@@ -330,6 +400,9 @@ public final class AnimationFrame {
          int scalar = frameIndex >> 16;
          AnimationFrame animationFrame;
          if ((animationFrame = (AnimationFrame)frameCache.get(new Integer(frameIndex))) == null) {
+            if (Animations.ensureActiveFrame(frameIndex)) {
+               return (AnimationFrame)frameCache.get(new Integer(frameIndex));
+            }
             Client.getClient().onDemandFetcher.provide(1, scalar);
             return null;
          } else {

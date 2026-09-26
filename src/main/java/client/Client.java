@@ -40,6 +40,15 @@ import java.util.Locale;
 import java.util.TimeZone;
 
 public class Client extends GameShell {
+   private static final boolean REVISION_443_LOGIN = "443".equals(System.getProperty("prs.clientRevision"));
+   private final PacketFramer revision443PacketFramer = new PacketFramer();
+   private int revision443PacketsObserved;
+   private RegionPacket revision443Region;
+   private RegionAssets revision443RegionAssets;
+   private Js5Client revision443UpdateClient;
+   private LocalCache revision443LocalCache;
+   private Cache revision443Cache;
+   private boolean revision443RuntimeDefinitionsLoaded;
    public static boolean customPlayerModelModeEnabled = true;
    public boolean graphicsEnabled = true;
    private static boolean itemSearchSpawnMode = false;
@@ -3523,7 +3532,7 @@ public class Client extends GameShell {
 
       for (int sourcePixelsLength = 0; sourcePixelsLength < 104; sourcePixelsLength++) {
          for (int tileY = 0; tileY < 104; tileY++) {
-            if ((byteGroundArrayIndex = this.scene.getFloorDecorationHash(this.plane, sourcePixelsLength, tileY)) != 0 && (byteGroundArrayIndex = ObjectDefinition.lookup(byteGroundArrayIndex >> 14 & 32767).icon) >= 0) {
+            if ((byteGroundArrayIndex = this.scene.getFloorDecorationHash(this.plane, sourcePixelsLength, tileY)) != 0 && (byteGroundArrayIndex = objectMapIcon(byteGroundArrayIndex >> 14 & 32767)) >= 0 && byteGroundArrayIndex < this.mapFunctions.length) {
                pixelsLength = sourcePixelsLength;
                sourceTileY = tileY;
                if (byteGroundArrayIndex != 22 && byteGroundArrayIndex != 29 && byteGroundArrayIndex != 34 && byteGroundArrayIndex != 36 && byteGroundArrayIndex != 46 && byteGroundArrayIndex != 47 && byteGroundArrayIndex != 48) {
@@ -3596,6 +3605,169 @@ public class Client extends GameShell {
          this.scene.addGroundItemTile(scalarArgument, scalar3, groundItem2, this.getTileHeight(this.plane, (scalarArgument2 << 7) + 64, (scalarArgument << 7) + 64), groundItem3, groundItem, this.plane, scalarArgument2);
       }
    }
+   void applyRevision443GroundItemAdd(int x, int y, int itemId, int amount) {
+      if (x < 0 || y < 0 || x >= 104 || y >= 104) {
+         return;
+      }
+      GroundItem item = new GroundItem();
+      item.id = itemId;
+      item.quantity = amount;
+      if (this.groundItems[this.plane][x][y] == null) {
+         this.groundItems[this.plane][x][y] = new NodeDeque();
+      }
+      this.groundItems[this.plane][x][y].addLast(item);
+      this.spawnGroundItem(x, y);
+   }
+
+   void applyRevision443GroundItemAddUnlessLocal(int x, int y, int itemId,
+                                                int amount, int sourcePlayerIndex) {
+      if (sourcePlayerIndex != this.localPlayerIndex) {
+         this.applyRevision443GroundItemAdd(x, y, itemId, amount);
+      }
+   }
+
+   void applyRevision443GroundItemRemove(int x, int y, int itemId) {
+      if (x < 0 || y < 0 || x >= 104 || y >= 104) {
+         return;
+      }
+      NodeDeque items = this.groundItems[this.plane][x][y];
+      if (items == null) {
+         return;
+      }
+      for (GroundItem item = (GroundItem)items.first(); item != null;
+           item = (GroundItem)items.next()) {
+         if ((item.id & 32767) == (itemId & 32767)) {
+            item.unlink();
+            break;
+         }
+      }
+      if (items.first() == null) {
+         this.groundItems[this.plane][x][y] = null;
+      }
+      this.spawnGroundItem(x, y);
+   }
+
+   void applyRevision443GroundItemAmount(int x, int y, int itemId,
+                                         int oldAmount, int newAmount) {
+      if (x < 0 || y < 0 || x >= 104 || y >= 104) {
+         return;
+      }
+      NodeDeque items = this.groundItems[this.plane][x][y];
+      if (items == null) {
+         return;
+      }
+      for (GroundItem item = (GroundItem)items.first(); item != null;
+           item = (GroundItem)items.next()) {
+         if ((item.id & 32767) == (itemId & 32767) && item.quantity == oldAmount) {
+            item.quantity = newAmount;
+            break;
+         }
+      }
+      this.spawnGroundItem(x, y);
+   }
+
+   void applyRevision443Projectile(int startX, int startY, int endX, int endY,
+                                   int projectileId, int targetIndex,
+                                   int startHeight, int endHeight,
+                                   int startDelay, int endDelay,
+                                   int slope, int startDistance) {
+      if (projectileId == 65535 || startX < 0 || startY < 0 || startX >= 104
+            || startY >= 104 || endX < 0 || endY < 0 || endX >= 104 || endY >= 104) {
+         return;
+      }
+      int startWorldX = startX * 128 + 64;
+      int startWorldY = startY * 128 + 64;
+      int endWorldX = endX * 128 + 64;
+      int endWorldY = endY * 128 + 64;
+      Projectile projectile = new Projectile(slope, endHeight,
+            gameCycle + startDelay, gameCycle + endDelay, startDistance,
+            this.plane, this.getTileHeight(this.plane, startWorldY, startWorldX) - startHeight,
+            startWorldY, startWorldX, targetIndex, projectileId);
+      projectile.trackTarget(gameCycle + startDelay, endWorldY,
+            this.getTileHeight(this.plane, endWorldY, endWorldX) - endHeight,
+            endWorldX);
+      this.projectiles.addLast(projectile);
+   }
+
+   void applyRevision443SpotAnimation(int x, int y, int graphicId,
+                                      int heightOffset, int delay) {
+      if (x < 0 || y < 0 || x >= 104 || y >= 104) {
+         return;
+      }
+      int worldX = x * 128 + 64;
+      int worldY = y * 128 + 64;
+      SpotAnimation spotAnimation = new SpotAnimation(this.plane, gameCycle, delay,
+            graphicId, this.getTileHeight(this.plane, worldY, worldX) - heightOffset,
+            worldY, worldX);
+      this.incompleteAnimables.addLast(spotAnimation);
+   }
+
+   void applyRevision443AreaSound(int x, int y, int soundId,
+                                  int radius, int loops, int delay) {
+      if (localPlayer == null || loops <= 0 || soundEffectVolume == 0
+            || this.currentSound >= 50) {
+         return;
+      }
+      int range = radius + 1;
+      int playerX = localPlayer.pathX[0];
+      int playerY = localPlayer.pathY[0];
+      if (playerX < x - range || playerX > x + range
+            || playerY < y - range || playerY > y + range) {
+         return;
+      }
+      this.sound[this.currentSound] = soundId;
+      this.soundType[this.currentSound] = loops;
+      this.soundVolume[this.currentSound] = delay;
+      this.currentSound++;
+   }
+
+   void applyRevision443PlayerObjectAttachment(int x, int y, int objectId,
+                                               int type, int orientation,
+                                               int playerIndex, int startDelay,
+                                               int endDelay, int minXOffset,
+                                               int minYOffset, int maxXOffset,
+                                               int maxYOffset) throws IOException {
+      if (type < 0 || type >= this.objectTypeSceneGroups.length || playerIndex < 0
+            || playerIndex >= this.players.length) {
+         return;
+      }
+      Player player = playerIndex == this.localPlayerIndex
+            ? localPlayer : this.players[playerIndex];
+      if (player == null) {
+         return;
+      }
+      SceneObjects.RuntimeAttachment attachment =
+            SceneObjects.buildRuntimeAttachment(this.plane, x, y,
+                  objectId, type, orientation);
+      if (attachment == null) {
+         return;
+      }
+      SceneObjects.scheduleRuntimeAttachmentTransition(this.plane, x, y,
+            type, startDelay, endDelay);
+      player.attachedModelStartCycle = gameCycle + startDelay;
+      player.attachedModelEndCycle = gameCycle + endDelay;
+      player.attachedModel = attachment.model;
+      player.attachedModelX = x * 128 + attachment.sizeX * 64;
+      player.attachedModelY = y * 128 + attachment.sizeY * 64;
+      player.attachedModelHeight = this.getTileHeight(this.plane,
+            player.attachedModelY, player.attachedModelX);
+
+      if (maxXOffset < minXOffset) {
+         int swap = maxXOffset;
+         maxXOffset = minXOffset;
+         minXOffset = swap;
+      }
+      if (maxYOffset < minYOffset) {
+         int swap = maxYOffset;
+         maxYOffset = minYOffset;
+         minYOffset = swap;
+      }
+      player.attachedModelMinX = x + minXOffset;
+      player.attachedModelMaxX = x + maxXOffset;
+      player.attachedModelMinY = y + minYOffset;
+      player.attachedModelMaxY = y + maxYOffset;
+   }
+
    private void showNPCs(boolean flag) {
       for (int npcIndex = 0; npcIndex < this.npcCount; npcIndex++) {
          Npc npc = this.npcs[this.npcIndices[npcIndex]];
@@ -5816,6 +5988,7 @@ public class Client extends GameShell {
    public final void processGameLoop() {
       if (!this.loadingError) {
          gameCycle++;
+      SceneObjects.processRuntimeTransitions();
          if (isMidiPlayerAvailable()) {
             if (musicRequestPending) {
                byte[] sourceLoadedMusicData = loadedMusicData;
@@ -6330,7 +6503,7 @@ public class Client extends GameShell {
             if ((hdModels || !hdModels && extendedRevisionEnabled && (localRemapId > 1043 || use2007Models || extendedModelIds.contains(localRemapId))) && localRemapId != -1) {
                try {
                   if (AnimationFrame.frameCache.get(localRemapId) == null) {
-                     client.onDemandFetcher.provide(1, localRemapId);
+                     if (client.onDemandFetcher != null) client.onDemandFetcher.provide(1, localRemapId);
                   }
                } catch (Exception exception) {
                }
@@ -6473,6 +6646,38 @@ public class Client extends GameShell {
          }
       }
    }
+   private int objectMapIcon(int id) {
+      if (SceneObjects.hasActiveDefinitions()) {
+         ObjectDefinitions.Definition definition = SceneObjects.resolvedDefinition(id);
+         return definition == null ? -1 : definition.mapIconId;
+      }
+      return ObjectDefinition.lookup(id).icon;
+   }
+
+   private int objectMapScene(int id) {
+      if (SceneObjects.hasActiveDefinitions()) {
+         ObjectDefinitions.Definition definition = SceneObjects.resolvedDefinition(id);
+         return definition == null ? -1 : definition.mapSceneId;
+      }
+      return ObjectDefinition.lookup(id).mapSceneId;
+   }
+
+   private int objectMapSizeX(int id) {
+      if (SceneObjects.hasActiveDefinitions()) {
+         ObjectDefinitions.Definition definition = SceneObjects.resolvedDefinition(id);
+         return definition == null ? 1 : definition.sizeX;
+      }
+      return ObjectDefinition.lookup(id).sizeX;
+   }
+
+   private int objectMapSizeY(int id) {
+      if (SceneObjects.hasActiveDefinitions()) {
+         ObjectDefinitions.Definition definition = SceneObjects.resolvedDefinition(id);
+         return definition == null ? 1 : definition.sizeY;
+      }
+      return ObjectDefinition.lookup(id).sizeY;
+   }
+
    private void drawMapScenes(int tileY, int sourcePixelIndex, int clippingDataIndex, int pixelIndex, int tileIndex) {
       int localScene;
       if ((localScene = this.scene.getWallHash(tileIndex, clippingDataIndex, tileY)) != 0) {
@@ -6485,13 +6690,14 @@ public class Client extends GameShell {
 
          int[] pixels = this.minimapImage.pixels;
          pixelIndex = 24624 + (clippingDataIndex << 2) + (103 - tileY << 9 << 2);
-         ObjectDefinition objectDefinition;
-         if ((objectDefinition = ObjectDefinition.lookup(localScene >> 14 & 32767)).mapSceneId != -1) {
+         int objectId = localScene >> 14 & 32767;
+         int mapSceneId = objectMapScene(objectId);
+         if (mapSceneId >= 0 && mapSceneId < this.mapSceneSprites.length) {
             IndexedSprite indexedSprite;
-            if ((indexedSprite = this.mapSceneSprites[objectDefinition.mapSceneId]) != null) {
-               sourcePixelIndex = ((objectDefinition.sizeX << 2) - indexedSprite.width) / 2;
-               pixelIndex = ((objectDefinition.sizeY << 2) - indexedSprite.height) / 2;
-               indexedSprite.drawBackground(48 + (clippingDataIndex << 2) + sourcePixelIndex, 48 + (104 - tileY - objectDefinition.sizeY << 2) + pixelIndex);
+            if ((indexedSprite = this.mapSceneSprites[mapSceneId]) != null) {
+               sourcePixelIndex = ((objectMapSizeX(objectId) << 2) - indexedSprite.width) / 2;
+               pixelIndex = ((objectMapSizeY(objectId) << 2) - indexedSprite.height) / 2;
+               indexedSprite.drawBackground(48 + (clippingDataIndex << 2) + sourcePixelIndex, 48 + (104 - tileY - objectMapSizeY(objectId) << 2) + pixelIndex);
             }
          } else {
             if (scene2 == 0 || scene2 == 2) {
@@ -6560,13 +6766,14 @@ public class Client extends GameShell {
          int scene3;
          int scalar2 = (scene3 = this.scene.getArrangement(tileIndex, clippingDataIndex, tileY, localScene)) >> 6 & 3;
          scene3 &= 31;
-         ObjectDefinition objectDefinition3;
-         if ((objectDefinition3 = ObjectDefinition.lookup(localScene >> 14 & 32767)).mapSceneId != -1) {
+         int objectId3 = localScene >> 14 & 32767;
+         int mapSceneId3 = objectMapScene(objectId3);
+         if (mapSceneId3 >= 0 && mapSceneId3 < this.mapSceneSprites.length) {
             IndexedSprite indexedSprite3;
-            if ((indexedSprite3 = this.mapSceneSprites[objectDefinition3.mapSceneId]) != null) {
-               localScene = ((objectDefinition3.sizeX << 2) - indexedSprite3.width) / 2;
-               int scalar3 = ((objectDefinition3.sizeY << 2) - indexedSprite3.height) / 2;
-               indexedSprite3.drawBackground(48 + (clippingDataIndex << 2) + localScene, 48 + (104 - tileY - objectDefinition3.sizeY << 2) + scalar3);
+            if ((indexedSprite3 = this.mapSceneSprites[mapSceneId3]) != null) {
+               localScene = ((objectMapSizeX(objectId3) << 2) - indexedSprite3.width) / 2;
+               int scalar3 = ((objectMapSizeY(objectId3) << 2) - indexedSprite3.height) / 2;
+               indexedSprite3.drawBackground(48 + (clippingDataIndex << 2) + localScene, 48 + (104 - tileY - objectMapSizeY(objectId3) << 2) + scalar3);
             }
          } else if (scene3 == 9) {
             pixelIndex = 15658734;
@@ -6590,14 +6797,14 @@ public class Client extends GameShell {
          }
       }
 
-      ObjectDefinition objectDefinition2;
       IndexedSprite indexedSprite2;
-      if ((localScene = this.scene.getFloorDecorationHash(tileIndex, clippingDataIndex, tileY)) != 0
-         && (objectDefinition2 = ObjectDefinition.lookup(localScene >> 14 & 32767)).mapSceneId != -1
-         && (indexedSprite2 = this.mapSceneSprites[objectDefinition2.mapSceneId]) != null) {
-         sourcePixelIndex = ((objectDefinition2.sizeX << 2) - indexedSprite2.width) / 2;
-         int scalar4 = ((objectDefinition2.sizeY << 2) - indexedSprite2.height) / 2;
-         indexedSprite2.drawBackground(48 + (clippingDataIndex << 2) + sourcePixelIndex, 48 + (104 - tileY - objectDefinition2.sizeY << 2) + scalar4);
+      int floorObjectId = (localScene = this.scene.getFloorDecorationHash(tileIndex, clippingDataIndex, tileY)) >> 14 & 32767;
+      int floorMapSceneId = localScene == 0 ? -1 : objectMapScene(floorObjectId);
+      if (floorMapSceneId >= 0 && floorMapSceneId < this.mapSceneSprites.length
+         && (indexedSprite2 = this.mapSceneSprites[floorMapSceneId]) != null) {
+         sourcePixelIndex = ((objectMapSizeX(floorObjectId) << 2) - indexedSprite2.width) / 2;
+         int scalar4 = ((objectMapSizeY(floorObjectId) << 2) - indexedSprite2.height) / 2;
+         indexedSprite2.drawBackground(48 + (clippingDataIndex << 2) + sourcePixelIndex, 48 + (104 - tileY - objectMapSizeY(floorObjectId) << 2) + scalar4);
       }
    }
    private static void stopMidi(boolean flag) {
@@ -6607,24 +6814,36 @@ public class Client extends GameShell {
          musicRequestPending = false;
       }
    }
+   private boolean hasTitleAssets() {
+      return REVISION_443_LOGIN
+         ? this.revision443Cache != null && this.boldFont != null
+         : this.titleArchive != null;
+   }
+
    private void loadTitleScreen() {
-      this.titleBox = new IndexedSprite(this.titleArchive, "titlebox", 0);
-      this.titleButton = new IndexedSprite(this.titleArchive, "titlebutton", 0);
       this.titleRuneSprites = new IndexedSprite[12];
-      int localParseInt = 0;
-
-      try {
-         localParseInt = Integer.parseInt(this.getParameter("fl_icon"));
-      } catch (Exception exception) {
-      }
-
-      if (localParseInt == 0) {
-         for (int titleRuneSpriteIndex2 = 0; titleRuneSpriteIndex2 < 12; titleRuneSpriteIndex2++) {
-            this.titleRuneSprites[titleRuneSpriteIndex2] = new IndexedSprite(this.titleArchive, "runes", titleRuneSpriteIndex2);
+      if (REVISION_443_LOGIN) {
+         this.titleBox = this.revision443IndexedSprite("titlebox", 0);
+         this.titleButton = this.revision443IndexedSprite("titlebutton", 0);
+         for (int i = 0; i < this.titleRuneSprites.length; i++) {
+            this.titleRuneSprites[i] = this.revision443IndexedSprite("runes", i);
          }
       } else {
-         for (int titleRuneSpriteIndex = 0; titleRuneSpriteIndex < 12; titleRuneSpriteIndex++) {
-            this.titleRuneSprites[titleRuneSpriteIndex] = new IndexedSprite(this.titleArchive, "runes", 12 + (titleRuneSpriteIndex & 3));
+         this.titleBox = new IndexedSprite(this.titleArchive, "titlebox", 0);
+         this.titleButton = new IndexedSprite(this.titleArchive, "titlebutton", 0);
+         int localParseInt = 0;
+         try {
+            localParseInt = Integer.parseInt(this.getParameter("fl_icon"));
+         } catch (Exception exception) {
+         }
+         if (localParseInt == 0) {
+            for (int i = 0; i < this.titleRuneSprites.length; i++) {
+               this.titleRuneSprites[i] = new IndexedSprite(this.titleArchive, "runes", i);
+            }
+         } else {
+            for (int i = 0; i < this.titleRuneSprites.length; i++) {
+               this.titleRuneSprites[i] = new IndexedSprite(this.titleArchive, "runes", 12 + (i & 3));
+            }
          }
       }
 
@@ -6814,7 +7033,9 @@ public class Client extends GameShell {
          text = "title" + this.setChannel + ".dat";
       }
 
-      byte[] file = this.titleArchive.getFile(text);
+      byte[] file = REVISION_443_LOGIN
+         ? this.revision443File(10, "title.jpg", "")
+         : this.titleArchive.getFile(text);
       Sprite sprite = new Sprite(file, this);
       this.flameRightBackground.initDrawingArea();
       sprite.drawOpaqueSprite(0, 0);
@@ -6862,19 +7083,27 @@ public class Client extends GameShell {
       sprite.drawOpaqueSprite(254, -171);
       this.middleRightBackgroundBuffer.initDrawingArea();
       sprite.drawOpaqueSprite(-180, -171);
-      byte customSpriteIndex = 100;
-      if (logoStyle == 1) {
-         customSpriteIndex = 101;
+      Sprite logoSprite;
+      if (REVISION_443_LOGIN) {
+         logoSprite = this.revision443Sprite("logo", 0);
+      } else {
+         byte customSpriteIndex = 100;
+         if (logoStyle == 1) {
+            customSpriteIndex = 101;
+         }
+         logoSprite = customSprites[customSpriteIndex];
       }
-
-      Sprite customSprite = customSprites[customSpriteIndex];
       this.topLeft1BackgroundTile.initDrawingArea();
-      customSprite.drawSprite(382 - customSprite.spriteWidth / 2 - 128, 18);
+      logoSprite.drawSprite(382 - logoSprite.spriteWidth / 2 - 128, 18);
       this.loginMusicImageProducer.initDrawingArea();
-      customSprites[musicVolumeSetting > 0 ? 43 : 44].drawSprite(163, 198);
+      int musicIcon = musicVolumeSetting > 0 ? 43 : 44;
+      if (customSprites != null && musicIcon < customSprites.length && customSprites[musicIcon] != null) {
+         customSprites[musicIcon].drawSprite(163, 198);
+      }
       System.gc();
    }
    private void processOnDemandQueue() {
+      if (this.onDemandFetcher == null) return;
       OnDemandRequest onDemandRequest;
       while ((onDemandRequest = this.onDemandFetcher.getNextCompletedRequest()) != null) {
          if (onDemandRequest.dataType == 6) {
@@ -7070,7 +7299,684 @@ public class Client extends GameShell {
       return -1;
    }
 
+   private void rebuildRevision443TerrainRegion() {
+      this.loadingStage = 1;
+      try {
+         this.lastRenderedPlane = -1;
+         this.incompleteAnimables.removeAll();
+         this.projectiles.removeAll();
+         Rasterizer3D.clearTextureCache();
+         this.scene.initToNull();
+         for (int planeIndex = 0; planeIndex < 4; planeIndex++) {
+            this.collisionMaps[planeIndex].reset();
+            for (int x = 0; x < 104; x++) {
+               for (int y = 0; y < 104; y++) {
+                  this.byteGroundArray[planeIndex][x][y] = 0;
+               }
+            }
+         }
+
+         RegionBuilder.buildPlane = this.plane;
+         RegionBuilder regionBuilder = new RegionBuilder(
+            this.byteGroundArray, this.intGroundArray);
+         if (this.constructedViewport) {
+            for (int p = 0; p < 4; p++) {
+               for (int x = 0; x < 13; x++) {
+                  for (int y = 0; y < 13; y++) {
+                     int template = this.instanceChunkTemplates[p][x][y];
+                     if (template == -1) continue;
+                     int sourceX = template >> 14 & 1023;
+                     int sourceY = template >> 3 & 2047;
+                     int id = (sourceX / 8 << 8) | sourceY / 8;
+                     for (int i = 0; i < this.regionIds.length; i++) {
+                        if (this.regionIds[i] == id && this.terrainRegionData[i] != null) {
+                           regionBuilder.loadTerrainChunk(template >> 24 & 3,
+                              template >> 1 & 3, this.collisionMaps, x << 3,
+                              (sourceX & 7) << 3, this.terrainRegionData[i],
+                              (sourceY & 7) << 3, p, y << 3);
+                           break;
+                        }
+                     }
+                  }
+               }
+            }
+            for (int x = 0; x < 13; x++) {
+               for (int y = 0; y < 13; y++) {
+                  if (this.instanceChunkTemplates[0][x][y] == -1) {
+                     regionBuilder.clearChunk(y << 3, 8, 8, x << 3);
+                  }
+               }
+            }
+            SceneObjects.setPendingTileSettings(this.byteGroundArray);
+         } else {
+            for (int i = 0; i < this.terrainRegionData.length; i++) {
+               int regionX = (this.regionIds[i] >> 8 << 6) - this.baseX;
+               int regionY = ((this.regionIds[i] & 255) << 6) - this.baseY;
+               if (this.terrainRegionData[i] != null) {
+                  regionBuilder.loadTerrainRegion(this.terrainRegionData[i], regionY,
+                     regionX, (this.mapRegionX - 6) << 3,
+                     (this.mapRegionY - 6) << 3, this.collisionMaps);
+               } else if (this.mapRegionY < 800) {
+                  regionBuilder.clearChunk(regionY, 64, 64, regionX);
+               }
+            }
+         }
+
+         regionBuilder.buildScene(this.collisionMaps, this.scene);
+         this.scene.setPlane(0);
+         if (this.gameScreenImageProducer != null) {
+            this.gameScreenImageProducer.initDrawingArea();
+         }
+         Rasterizer3D.initializeTextureCache();
+         this.loadingStage = 2;
+         System.out.println("443 terrain and static object scene built");
+      } catch (Exception exception) {
+         System.err.println("Revision 443 terrain scene build failed:");
+         exception.printStackTrace();
+      }
+   }
+   private void applyRevision443StaticRegion() {
+      RegionPacket region = this.revision443Region;
+      RegionAssets assets = this.revision443RegionAssets;
+      this.mapRegionX = region.centerX;
+      this.mapRegionY = region.centerY;
+      this.baseX = (region.centerX - 6) << 3;
+      this.baseY = (region.centerY - 6) << 3;
+      this.previousBaseX = this.baseX;
+      this.previousBaseY = this.baseY;
+      this.plane = region.plane;
+      this.constructedViewport = false;
+      this.applyRevision443RegionAssets();
+   }
+   private void applyRevision443ConstructedRegion() {
+      RegionPacket region = this.revision443Region;
+      this.mapRegionX = region.centerX;
+      this.mapRegionY = region.centerY;
+      this.baseX = (region.centerX - 6) << 3;
+      this.baseY = (region.centerY - 6) << 3;
+      this.previousBaseX = this.baseX;
+      this.previousBaseY = this.baseY;
+      this.plane = region.plane;
+      this.constructedViewport = true;
+      this.inPlayerOwnedHouse = false;
+      this.instanceChunkTemplates = region.templates;
+      this.applyRevision443RegionAssets();
+   }
+   private void applyRevision443RegionAssets() {
+      RegionPacket region = this.revision443Region;
+      RegionAssets assets = this.revision443RegionAssets;
+      if (!this.constructedViewport) this.inPlayerOwnedHouse =
+         RegionPacket.isSpecialRegion(region.centerX, region.centerY);
+
+      int count = assets.mapSquares.length;
+      this.regionIds = new int[count];
+      this.terrainArchiveIds = new int[count];
+      this.objectArchiveIds = new int[count];
+      this.terrainRegionData = new byte[count][];
+      this.objectRegionData = new byte[count][];
+      for (int i = 0; i < count; i++) {
+         RegionAssets.MapSquare square = assets.mapSquares[i];
+         this.regionIds[i] = square.x << 8 | square.y;
+         this.terrainArchiveIds[i] = -1;
+         this.objectArchiveIds[i] = -1;
+         this.terrainRegionData[i] = square.terrain;
+         this.objectRegionData[i] = square.locations;
+      }
+      if (localPlayer != null) {
+         localPlayer.setPosition(region.localX, region.localY, true);
+      }
+      this.rebuildRevision443TerrainRegion();
+   }
+   private void updateRevision443Players(byte[] payload) throws IOException {
+      Buffer buffer = new Buffer(payload);
+      this.removedEntityCount = 0;
+      this.entityUpdateCount = 0;
+      buffer.startBitAccess();
+      if (buffer.readBits(1) != 0) {
+         int movementType = buffer.readBits(2);
+         if (movementType == 0) {
+            this.entityUpdateIndices[this.entityUpdateCount++] = 2047;
+         } else if (movementType == 1) {
+            localPlayer.moveInDirection(false, buffer.readBits(3));
+            if (buffer.readBits(1) == 1) {
+               this.entityUpdateIndices[this.entityUpdateCount++] = 2047;
+            }
+         } else if (movementType == 2) {
+            localPlayer.moveInDirection(true, buffer.readBits(3));
+            localPlayer.moveInDirection(true, buffer.readBits(3));
+            if (buffer.readBits(1) == 1) {
+               this.entityUpdateIndices[this.entityUpdateCount++] = 2047;
+            }
+         } else {
+            int localX = buffer.readBits(7);
+            if (buffer.readBits(1) == 1) {
+               this.entityUpdateIndices[this.entityUpdateCount++] = 2047;
+            }
+            this.plane = buffer.readBits(2);
+            int localY = buffer.readBits(7);
+            boolean teleport = buffer.readBits(1) == 1;
+            localPlayer.setPosition(localX, localY, teleport);
+         }
+      }
+
+      int nearbyCount = buffer.readBits(8);
+      if (nearbyCount < this.playerCount) {
+         for (int i = nearbyCount; i < this.playerCount; i++) {
+            this.removedEntityIndices[this.removedEntityCount++] = this.playerIndices[i];
+         }
+      }
+      if (nearbyCount > this.playerCount) {
+         throw new IOException("443 nearby player count grew without additions: "
+            + nearbyCount + "/" + this.playerCount);
+      }
+      this.playerCount = 0;
+      for (int i = 0; i < nearbyCount; i++) {
+         int playerIndex = this.playerIndices[i];
+         Player player = this.players[playerIndex];
+         if (player == null) {
+            throw new IOException("Missing 443 nearby player " + playerIndex);
+         }
+         player.index = playerIndex;
+         if (buffer.readBits(1) == 0) {
+            this.playerIndices[this.playerCount++] = playerIndex;
+            player.lastUpdateCycle = gameCycle;
+            continue;
+         }
+         int movementType = buffer.readBits(2);
+         if (movementType == 3) {
+            this.removedEntityIndices[this.removedEntityCount++] = playerIndex;
+            continue;
+         }
+         this.playerIndices[this.playerCount++] = playerIndex;
+         player.lastUpdateCycle = gameCycle;
+         if (movementType == 0) {
+            this.entityUpdateIndices[this.entityUpdateCount++] = playerIndex;
+         } else if (movementType == 1) {
+            player.moveInDirection(false, buffer.readBits(3));
+            if (buffer.readBits(1) == 1) {
+               this.entityUpdateIndices[this.entityUpdateCount++] = playerIndex;
+            }
+         } else {
+            player.moveInDirection(true, buffer.readBits(3));
+            player.moveInDirection(true, buffer.readBits(3));
+            if (buffer.readBits(1) == 1) {
+               this.entityUpdateIndices[this.entityUpdateCount++] = playerIndex;
+            }
+         }
+      }
+
+      int[] orientations = new int[]{768, 1024, 1280, 512, 1536, 256, 0, 1792};
+      while (buffer.bitPosition + 10 < payload.length << 3) {
+         int playerIndex = buffer.readBits(11);
+         if (playerIndex == 2047) {
+            break;
+         }
+         boolean created = this.players[playerIndex] == null;
+         Player player = this.players[playerIndex];
+         if (created) {
+            player = this.players[playerIndex] = new Player();
+            if (this.playerAppearanceBuffers[playerIndex] != null) {
+               player.updatePlayer(this.playerAppearanceBuffers[playerIndex]);
+            }
+         }
+         this.playerIndices[this.playerCount++] = playerIndex;
+         player.index = playerIndex;
+         player.lastUpdateCycle = gameCycle;
+         if (buffer.readBits(1) == 1) {
+            this.entityUpdateIndices[this.entityUpdateCount++] = playerIndex;
+         }
+         int deltaY = buffer.readBits(5);
+         if (deltaY > 15) deltaY -= 32;
+         boolean teleport = buffer.readBits(1) == 1;
+         int orientationIndex = buffer.readBits(3);
+         if (created) {
+            player.orientation = orientations[orientationIndex];
+         }
+         int deltaX = buffer.readBits(5);
+         if (deltaX > 15) deltaX -= 32;
+         player.setPosition(localPlayer.pathX[0] + deltaX,
+            localPlayer.pathY[0] + deltaY, teleport);
+      }
+      buffer.finishBitAccess();
+      parseRevision443PlayerMasks(buffer, payload.length);
+
+      for (int i = 0; i < this.removedEntityCount; i++) {
+         int playerIndex = this.removedEntityIndices[i];
+         Player player = this.players[playerIndex];
+         if (player != null && player.lastUpdateCycle != gameCycle) {
+            this.players[playerIndex] = null;
+         }
+      }
+      if (buffer.currentPosition != payload.length) {
+         throw new IOException("443 player update size mismatch: "
+            + buffer.currentPosition + "/" + payload.length);
+      }
+   }
+   private void parseRevision443PlayerMasks(Buffer buffer, int packetSize)
+         throws IOException {
+      for (int i = 0; i < this.entityUpdateCount; i++) {
+         int playerIndex = this.entityUpdateIndices[i];
+         if (buffer.currentPosition >= packetSize) {
+            throw new IOException("Missing 443 player mask for " + playerIndex);
+         }
+         int firstMask = buffer.readUnsignedByte();
+         int mask = firstMask & 0x7F;
+         if ((firstMask & 0x80) != 0) {
+            mask |= buffer.readUnsignedByte() << 8;
+         }
+         if ((mask & ~0x77F) != 0) {
+            throw new IOException("Unsupported 443 player mask 0x"
+               + Integer.toHexString(mask));
+         }
+         Player player = this.players[playerIndex];
+         if (player == null) {
+            player = this.players[playerIndex] = new Player();
+         }
+         player.index = playerIndex;
+
+         if ((mask & 0x40) != 0) {
+            readRevision443Appearance(buffer, packetSize, playerIndex, player);
+         }
+         if ((mask & 0x100) != 0) {
+            player.forceMoveStartX = buffer.readUnsignedByteSubtracted();
+            player.forceMoveStartY = buffer.readUnsignedByteNegated();
+            player.forceMoveEndX = buffer.readUnsignedByteSubtracted();
+            player.forceMoveEndY = buffer.readUnsignedByteSubtracted();
+            player.forceMoveStartCycle = buffer.readUnsignedShortLittleEndianAdded() + gameCycle;
+            player.forceMoveEndCycle = buffer.readUnsignedShortLittleEndianAdded() + gameCycle;
+            player.forceMoveFaceDirection = buffer.readUnsignedByteNegated();
+            player.resetPath();
+         }
+         if ((mask & 0x200) != 0) {
+            player.graphicId = buffer.readUnsignedShort();
+            int packedGraphic = buffer.readIntInverseMiddleEndian();
+            player.graphicHeight = packedGraphic >> 16;
+            player.graphicDelay = gameCycle + (packedGraphic & 0xFFFF);
+            player.graphicFrame = 0;
+            player.graphicFrameCycle = 0;
+            if (player.graphicDelay > gameCycle) player.graphicFrame = -1;
+            if (player.graphicId == 65535) player.graphicId = -1;
+         }
+         if ((mask & 0x1) != 0) {
+            player.spokenText = buffer.readString();
+            if (player.spokenText.length() > 0 && player.spokenText.charAt(0) == '~') {
+               player.spokenText = player.spokenText.substring(1);
+               this.pushMessage(player.spokenText, 2, player.name, 0, 0, 0);
+            } else if (player == localPlayer) {
+               this.pushMessage(player.spokenText, 2, player.name, 0, 0, 0);
+            }
+            player.textColor = 0;
+            player.textEffect = 0;
+            player.textCycle = 150;
+         }
+         if ((mask & 0x10) != 0) {
+            player.interactingEntity = buffer.readUnsignedShortLittleEndianAdded();
+            if (player.interactingEntity == 65535) player.interactingEntity = -1;
+         }
+         if ((mask & 0x2) != 0) {
+            player.faceX = buffer.readUnsignedShortLittleEndianAdded();
+            player.faceY = buffer.readUnsignedShortLittleEndian();
+         }
+         if ((mask & 0x8) != 0) {
+            applyRevision443Animation(player,
+               buffer.readUnsignedShortLittleEndianAdded(), buffer.readUnsignedByteNegated());
+         }
+         if ((mask & 0x4) != 0) {
+            readRevision443PublicChat(buffer, player);
+         }
+         if ((mask & 0x400) != 0) {
+            int damage = buffer.readUnsignedByte();
+            int hitType = buffer.readUnsignedByteSubtracted();
+            player.addHit(hitType, damage, 0, gameCycle);
+            player.healthBarEndCycle = gameCycle + 300;
+            player.currentHealth = buffer.readUnsignedByteAdded();
+            player.maxHealth = buffer.readUnsignedByte();
+         }
+         if ((mask & 0x20) != 0) {
+            int damage = buffer.readUnsignedByteNegated();
+            int hitType = buffer.readUnsignedByte();
+            player.addHit(hitType, damage, 0, gameCycle);
+            player.healthBarEndCycle = gameCycle + 300;
+            player.currentHealth = buffer.readUnsignedByteNegated();
+            player.maxHealth = buffer.readUnsignedByteNegated();
+         }
+      }
+   }
+
+   private void readRevision443Appearance(Buffer buffer, int packetSize,
+         int playerIndex, Player player) throws IOException {
+      int length = buffer.readUnsignedByteAdded();
+      if (length < 3 || buffer.currentPosition + length > packetSize) {
+         throw new IOException("Invalid 443 appearance length " + length);
+      }
+      byte[] appearance443 = new byte[length];
+      for (int offset = 0; offset < length; offset++) {
+         appearance443[offset] = (byte)buffer.readUnsignedByteAdded();
+      }
+      int metadataOffset = length - 2;
+      byte[] compatible = new byte[length + 4];
+      System.arraycopy(appearance443, 0, compatible, 0, metadataOffset);
+      System.arraycopy(appearance443, metadataOffset, compatible, metadataOffset + 4, 2);
+      Buffer appearance = new Buffer(compatible);
+      this.playerAppearanceBuffers[playerIndex] = appearance;
+      player.updatePlayer(appearance);
+   }
+
+   private void applyRevision443Animation(Player player, int animationId, int delay) {
+      if (animationId == 65535) animationId = -1;
+      if (animationId == player.emoteAnimation && animationId != -1) {
+         int replyMode = AnimationSequence.sequences[AnimationSequence.remapId(animationId)].replyMode;
+         if (replyMode == 1) {
+            player.emoteFrame = 0;
+            player.emoteFrameCycle = 0;
+            player.animationDelay = delay;
+            player.animationLoopCount = 0;
+         } else if (replyMode == 2) {
+            player.animationLoopCount = 0;
+         }
+      } else if (animationId == -1 || player.emoteAnimation == -1
+            || AnimationSequence.sequences[AnimationSequence.remapId(animationId)].forcedPriority
+               >= AnimationSequence.sequences[AnimationSequence.remapId(player.emoteAnimation)].forcedPriority) {
+         player.emoteAnimation = animationId;
+         player.emoteFrame = 0;
+         player.emoteFrameCycle = 0;
+         player.animationDelay = delay;
+         player.animationLoopCount = 0;
+         player.emotePathLength = player.pathLength;
+      }
+   }
+
+   private void readRevision443PublicChat(Buffer buffer, Player player) {
+      int colorEffects = buffer.readUnsignedShort();
+      int privilege = buffer.readUnsignedByte();
+      int length = buffer.readUnsignedByteAdded();
+      int end = buffer.currentPosition + length;
+      player.privelage = privilege;
+      if (player.name != null && player.visible && length <= this.chatBuffer.buffer.length) {
+         for (int index = length - 1; index >= 0; index--) {
+            this.chatBuffer.buffer[index] = buffer.buffer[buffer.currentPosition++];
+         }
+         this.chatBuffer.currentPosition = 0;
+         String text = ChatFilter.apply(ChatCodec.decode(length, this.chatBuffer));
+         player.spokenText = text;
+         player.textColor = colorEffects >> 8;
+         player.textEffect = colorEffects & 0xFF;
+         player.textCycle = 150;
+         this.pushMessage(text, privilege > 1 ? 1 : 2, player.name,
+            privilege, 0, 0);
+      }
+      buffer.currentPosition = end;
+   }
+   private boolean parseRevision443Packets() {
+      try {
+            for (int i = 0; i < 5; i++) {
+               PacketFramer.Packet packet = this.revision443PacketFramer.poll(
+                  this.connection, this.incomingIsaacCipher);
+               if (packet == null) {
+                  break;
+               }
+               this.timeoutCounter = 0;
+               if (packet.opcode == 121 || packet.opcode == 193) {
+                  this.revision443Region = packet.opcode == 121
+                     ? RegionPacket.decodeStatic(packet.payload)
+                     : RegionPacket.decodeConstructed(packet.payload);
+                  {
+                     Cache cache = this.revision443Cache;
+                     this.revision443RegionAssets = RegionAssets.load(
+                        cache, this.revision443Region);
+                  }
+                  int terrainGroups = 0;
+                  int locationGroups = 0;
+                  for (RegionAssets.MapSquare square
+                        : this.revision443RegionAssets.mapSquares) {
+                     if (square.terrain != null) terrainGroups++;
+                     if (square.locations != null) locationGroups++;
+                  }
+                  if (packet.opcode == 121) this.applyRevision443StaticRegion();
+                  else this.applyRevision443ConstructedRegion();
+                  System.out.println("443 region: " + this.revision443Region.centerX
+                     + "," + this.revision443Region.centerY + " plane="
+                     + this.revision443Region.plane + " keys="
+                     + this.revision443Region.xteaKeys.length + " terrain="
+                     + terrainGroups + " locations=" + locationGroups);
+               } else if (ZonePacket.handles(packet.opcode)) {
+                  ZonePacket.apply(this, packet.opcode, packet.payload);
+               } else if (ObjectPacket.handles(packet.opcode)) {
+                  ObjectPacket.apply(packet.opcode, packet.payload, this.plane);
+               } else if (VarpPacket.handles(packet.opcode)) {
+                  VarpPacket.Update update = VarpPacket.apply(packet.opcode, packet.payload);
+                  if (this.serverVarps != null && update.id >= 0
+                          && update.id < this.serverVarps.length) {
+                     this.serverVarps[update.id] = update.value;
+                     if (update.id < this.varps.length
+                             && this.varps[update.id] != update.value) {
+                        this.varps[update.id] = update.value;
+                        this.applyVarpSetting(update.id);
+                     }
+                     this.needDrawTabArea = true;
+                  }
+               } else if (packet.opcode == 29) {
+                  this.updateRevision443Players(packet.payload);
+               } else if (packet.opcode == 238) {
+                  this.updateRevision443Npcs(packet.payload);
+               } else if (this.applyRevision443PostLoginPacket(packet.opcode, packet.payload)) {
+               }
+               if (this.revision443PacketsObserved++ < 20) {
+                  System.out.println("443 game packet: opcode=" + packet.opcode
+                     + " length=" + packet.payload.length);
+               }
+            }
+      } catch (IOException exception) {
+         System.err.println("Revision 443 game packet framing failed: " + exception.getMessage());
+         this.connection.close();
+         this.connection = null;
+         loggedIn = false;
+         this.loginMessage1 = "443 connection closed";
+         this.loginMessage2 = "Game packet framing failed; see the console.";
+         return false;
+      }
+      return true;
+   }
+   private void openRevision443Cache() throws IOException {
+      if (this.revision443Cache != null) {
+         return;
+      }
+      String configured = System.getProperty("prs.cache443", "").trim();
+      File localDirectory = configured.length() == 0 ? null : new File(configured);
+      if (localDirectory == null) {
+         File[] candidates = new File[]{
+            new File("../2006sp-Server/cache-443/cache"),
+            new File("../../2006sp-Server/cache-443/cache")
+         };
+         for (File candidate : candidates) {
+            if (new File(candidate, "main_file_cache.dat2").isFile()) {
+               localDirectory = candidate;
+               break;
+            }
+         }
+      }
+      if (localDirectory != null) {
+         File dat2 = new File(localDirectory, "main_file_cache.dat2");
+         if (!dat2.isFile()) {
+            throw new IOException("Revision 443 cache not found: " + localDirectory.getAbsolutePath());
+         }
+         this.drawLoadingText(22, "Opening local revision 443 cache");
+         this.revision443LocalCache = new LocalCache(localDirectory);
+         this.revision443Cache = new Cache(this.revision443LocalCache);
+         System.out.println("Revision 443 cache: " + localDirectory.getAbsolutePath());
+         return;
+      }
+      this.drawLoadingText(22, "Connecting to revision 443 JS5");
+      this.revision443UpdateClient = new Js5Client(
+         this.openSocket(transparentTabArea ? 5555 : 43594));
+      this.revision443Cache = new Cache(this.revision443UpdateClient);
+      System.out.println("Revision 443 cache: live JS5 fallback");
+   }
+
+   private byte[] revision443File(int archive, String group, String file) {
+      try {
+         return this.revision443Cache.readFile(archive, group, file);
+      } catch (IOException exception) {
+         throw new IllegalStateException("Missing revision 443 asset " + archive + ":" + group + ":" + file, exception);
+      }
+   }
+
+   private Sprites.DecodedSprite[] revision443SpriteGroup(String name) {
+      try {
+         return Sprites.load(this.revision443Cache, name);
+      } catch (IOException exception) {
+         throw new IllegalStateException("Missing revision 443 sprite group " + name, exception);
+      }
+   }
+
+   private Sprite revision443Sprite(String name, int index) {
+      Sprites.DecodedSprite[] sprites = this.revision443SpriteGroup(name);
+      if (index < 0 || index >= sprites.length) {
+         throw new IllegalStateException("Revision 443 sprite index out of range: " + name + "[" + index + "] / " + sprites.length);
+      }
+      return sprites[index].toSprite();
+   }
+
+   private IndexedSprite revision443IndexedSprite(String name, int index) {
+      Sprites.DecodedSprite[] sprites = this.revision443SpriteGroup(name);
+      if (index < 0 || index >= sprites.length) {
+         throw new IllegalStateException("Revision 443 indexed sprite out of range: " + name + "[" + index + "] / " + sprites.length);
+      }
+      return sprites[index].toIndexedSprite();
+   }
+
+   private static Sprite emptyRevision443Sprite() {
+      return new Sprite(1, 1);
+   }
+
+   private static IndexedSprite emptyRevision443IndexedSprite() {
+      return new IndexedSprite(1, 1, 0, 0, 1, 1, new byte[]{0}, new int[]{0});
+   }
+
+   private void loadRevision443Media() {
+      this.invBack = this.revision443IndexedSprite("invback", 0);
+      this.chatBack = this.revision443IndexedSprite("chatback", 0);
+      Sprites.DecodedSprite[] mapBackGroup = this.revision443SpriteGroup("mapback");
+      for (int i = 0; i < mapBackSprites.length && i < mapBackGroup.length; i++) mapBackSprites[i] = mapBackGroup[i].toIndexedSprite();
+      for (int i = 0; i < mapBackSprites.length; i++) {
+         if (mapBackSprites[i] == null) mapBackSprites[i] = mapBackGroup[0].toIndexedSprite();
+      }
+      mapBack = mapBackSprites[0];
+      this.backBase1 = this.revision443IndexedSprite("backbase1", 0);
+      this.backBase2 = this.revision443IndexedSprite("backbase2", 0);
+      this.backHmid1 = this.revision443IndexedSprite("backhmid1", 0);
+
+      Sprites.DecodedSprite[] sideIconGroup = this.revision443SpriteGroup("sideicons");
+      for (int i = 0; i < this.sideIcons.length && i < sideIconGroup.length; i++) this.sideIcons[i] = sideIconGroup[i].toIndexedSprite();
+      defaultCompassSprite = compassSprite = this.revision443Sprite("compass", 0);
+      this.mapEdge = this.revision443Sprite("mapedge", 0);
+      this.mapEdge.expandToCanvas();
+      this.multiOverlay = this.revision443Sprite("overlay_multiway", 0);
+
+      Sprites.DecodedSprite[] mapScenes = this.revision443SpriteGroup("mapscene");
+      for (int i = 0; i < this.mapSceneSprites.length && i < mapScenes.length; i++) this.mapSceneSprites[i] = mapScenes[i].toIndexedSprite();
+      Sprites.DecodedSprite[] mapFunctions = this.revision443SpriteGroup("mapfunction");
+      for (int i = 0; i < this.mapFunctions.length && i < mapFunctions.length; i++) this.mapFunctions[i] = mapFunctions[i].toSprite();
+      Sprites.DecodedSprite[] hitmarks = this.revision443SpriteGroup("hitmarks");
+      for (int i = 0; i < this.hitMarks.length && i < hitmarks.length; i++) this.hitMarks[i] = hitmarks[i].toSprite();
+      Sprites.DecodedSprite[] hints = this.revision443SpriteGroup("headicons_hint");
+      for (int i = 0; i < this.headIconsHint.length && i < hints.length; i++) this.headIconsHint[i] = hints[i].toSprite();
+      Sprites.DecodedSprite[] prayers = this.revision443SpriteGroup("headicons_prayer");
+      for (int i = 0; i < this.headIcons.length && i < prayers.length; i++) this.headIcons[i] = prayers[i].toSprite();
+      Sprites.DecodedSprite[] skulls = this.revision443SpriteGroup("headicons_pk");
+      for (int i = 0; i < this.skullIcons.length && i < skulls.length; i++) this.skullIcons[i] = skulls[i].toSprite();
+
+      for (int i = 0; i < miscInterfaceSprites.length; i++) miscInterfaceSprites[i] = emptyRevision443Sprite();
+      miscInterfaceSprites[0] = this.revision443Sprite("tradebacking", 0);
+      this.mapFlag = this.revision443Sprite("mapmarker", 0);
+      this.mapMarker = this.revision443Sprite("mapmarker", 1);
+      Sprites.DecodedSprite[] crosses443 = this.revision443SpriteGroup("cross");
+      for (int i = 0; i < this.crosses.length && i < crosses443.length; i++) this.crosses[i] = crosses443[i].toSprite();
+
+      for (int i = 0; i < this.skillIconSprites.length; i++) this.skillIconSprites[i] = emptyRevision443Sprite();
+      Sprites.DecodedSprite[] mapDots = this.revision443SpriteGroup("mapdots");
+      this.mapDotItem = mapDots[0].toSprite();
+      this.mapDotNpc = mapDots[1].toSprite();
+      this.mapDotNPC = mapDots[2].toSprite();
+      this.mapDotPlayer = mapDots[3].toSprite();
+      this.mapDotFriend = mapDots[4].toSprite();
+      this.mapDotTeam = this.revision443Sprite("mod_icons", 1);
+      this.scrollBar1 = this.revision443IndexedSprite("scrollbar", 0);
+      this.scrollBar2 = this.revision443IndexedSprite("scrollbar", 1);
+      this.redStone1 = this.revision443IndexedSprite("redstone1", 0);
+      this.redStone2 = this.revision443IndexedSprite("redstone2", 0);
+      this.redStone3 = this.revision443IndexedSprite("redstone3", 0);
+      this.redStone1_2 = this.revision443IndexedSprite("redstone1", 0); this.redStone1_2.flipHorizontal();
+      this.redStone2_2 = this.revision443IndexedSprite("redstone2", 0); this.redStone2_2.flipHorizontal();
+      this.redStone1_3 = this.revision443IndexedSprite("redstone1", 0); this.redStone1_3.flipVertical();
+      this.redStone2_3 = this.revision443IndexedSprite("redstone2", 0); this.redStone2_3.flipVertical();
+      this.redStone3_2 = this.revision443IndexedSprite("redstone3", 0); this.redStone3_2.flipVertical();
+      this.redStone1_4 = this.revision443IndexedSprite("redstone1", 0); this.redStone1_4.flipHorizontal(); this.redStone1_4.flipVertical();
+      this.redStone2_4 = this.revision443IndexedSprite("redstone2", 0); this.redStone2_4.flipHorizontal(); this.redStone2_4.flipVertical();
+
+      Sprites.DecodedSprite[] modIcons = this.revision443SpriteGroup("mod_icons");
+      for (int i = 0; i < this.moderatorIcons.length; i++) this.moderatorIcons[i] = i < modIcons.length ? modIcons[i].toIndexedSprite() : emptyRevision443IndexedSprite();
+      for (int i = 0; i < this.gameModeIcons.length; i++) this.gameModeIcons[i] = emptyRevision443IndexedSprite();
+      for (int i = 0; i < this.chatIconSprites.length; i++) this.chatIconSprites[i] = i < modIcons.length ? modIcons[i].toSprite() : emptyRevision443Sprite();
+      this.richSmallFont.icons = this.chatIconSprites;
+      this.richPlainFont.icons = this.chatIconSprites;
+      this.richBoldFont.icons = this.chatIconSprites;
+      this.richQuillFont.icons = this.chatIconSprites;
+
+      Sprite frame = this.revision443Sprite("backleft1", 0);
+      this.backVmidIP2_2 = new BufferedImageGraphicsBuffer(frame.spriteWidth, frame.spriteHeight);
+      if (screenMode == 0) frame.drawOpaqueSprite(0, 0);
+      backLeft2Sprite = this.revision443Sprite("backleft2", 0);
+      backRight1Sprite = this.revision443Sprite("backright1", 0);
+      backRight2Sprite = this.revision443Sprite("backright2", 0);
+      backTop1Sprite = this.revision443Sprite("backtop1", 0);
+      backVmid1Sprite = this.revision443Sprite("backvmid1", 0);
+      backVmid2Sprite = this.revision443Sprite("backvmid2", 0);
+      backVmid3Sprite = this.revision443Sprite("backvmid3", 0);
+      backHmid2Sprite = this.revision443Sprite("backhmid2", 0);
+
+      int redShift = (int)(Math.random() * 21.0) - 10;
+      int greenShift = (int)(Math.random() * 21.0) - 10;
+      int blueShift = (int)(Math.random() * 21.0) - 10;
+      int globalShift = (int)(Math.random() * 41.0) - 20;
+      for (int i = 0; i < this.mapFunctions.length; i++) {
+         if (this.mapFunctions[i] != null) this.mapFunctions[i].adjustRgb(redShift + globalShift, greenShift + globalShift, blueShift + globalShift);
+         if (this.mapSceneSprites[i] != null) this.mapSceneSprites[i].adjustPalette(redShift + globalShift, greenShift + globalShift, blueShift + globalShift);
+      }
+      System.out.println("Revision 443 media: archive 8 title/gameframe sprites loaded");
+   }
+
+   private void loadRevision443Runtime() throws IOException {
+      Cache cache = this.revision443Cache;
+      HuffmanChatCodec.initialize(cache.readFile(10, "huffman", ""));
+      FloorDefinition.loadRevision443(cache);
+      VarpDefinition.loadRevision443(cache);
+      VarbitDefinition.loadRevision443(cache);
+      Animations.loadRuntime(cache);
+      IdentityKit.loadRevision443(cache);
+      SpotAnimationDefinition.loadRevision443(cache);
+      ItemDefinition.loadRevision443(cache);
+      NpcDefinition.loadRevision443(cache);
+      Rasterizer3D.loadRevision443Textures(cache);
+      SoundEffect.loadRevision443(cache);
+      this.smallFont = new BitmapFont(cache, "p11_full");
+      this.plainFont = new BitmapFont(cache, "p12_full");
+      this.boldFont = new BitmapFont(cache, "b12_full");
+      this.richSmallFont = new RichTextFont(cache, "p11_full");
+      this.richPlainFont = new RichTextFont(cache, "p12_full");
+      this.richBoldFont = new RichTextFont(cache, "b12_full");
+      this.richQuillFont = new RichTextFont(cache, "q8_full");
+      this.richSmallFont.icons = this.chatIconSprites;
+      this.richPlainFont.icons = this.chatIconSprites;
+      this.richBoldFont.icons = this.chatIconSprites;
+      this.richQuillFont.icons = this.chatIconSprites;
+      this.revision443RuntimeDefinitionsLoaded = true;
+   }
+
    private void mainGameProcessor() {
+      if (REVISION_443_LOGIN && !this.parseRevision443Packets()) {
+         return;
+      }
       if (screenMode != 0) {
          int physicalWidth = Math.max(minimumWindowWidth, (int)super.getSize().getWidth());
          int physicalHeight = Math.max(minimumWindowHeight, (int)super.getSize().getHeight());
@@ -7092,7 +7998,7 @@ public class Client extends GameShell {
 
       int inventoryIdIndex = 0;
 
-      while (inventoryIdIndex < 5 && this.parsePacket()) {
+      while (!REVISION_443_LOGIN && inventoryIdIndex < 5 && this.parsePacket()) {
          inventoryIdIndex++;
       }
 
@@ -7298,7 +8204,7 @@ public class Client extends GameShell {
                      + ","
                      + client.cacheStores[0]
                      + ","
-                     + client.onDemandFetcher.getNodeCount()
+                     + (client.onDemandFetcher == null ? 0 : client.onDemandFetcher.getNodeCount())
                      + ","
                      + client.plane
                      + ","
@@ -7979,7 +8885,13 @@ public class Client extends GameShell {
 
          try {
             if (this.connection != null && this.outgoingBuffer.currentPosition > 0) {
-               this.connection.queueBytes(this.outgoingBuffer.currentPosition, this.outgoingBuffer.buffer);
+               if (REVISION_443_LOGIN) {
+                  byte[] packets = OutgoingPackets.translate(this.outgoingBuffer,
+                     this.selectedItemId, this.selectedItemWidgetId);
+                  if (packets.length > 0) this.connection.queueBytes(packets.length, packets);
+               } else {
+                  this.connection.queueBytes(this.outgoingBuffer.currentPosition, this.outgoingBuffer.buffer);
+               }
                this.outgoingBuffer.currentPosition = 0;
                this.outboundFlushCounter = 0;
                return;
@@ -8037,7 +8949,7 @@ public class Client extends GameShell {
          this.getGameComponent();
          this.middleRightBackgroundBuffer = new BufferedImageGraphicsBuffer(75, 94);
          Rasterizer2D.clear();
-         if (this.titleArchive != null) {
+         if (this.hasTitleAssets()) {
             this.drawLogo();
             this.loadTitleScreen();
          }
@@ -8051,7 +8963,7 @@ public class Client extends GameShell {
       this.loadingErrorCode = newLoadingErrorCode;
       this.loadingStatusText = text;
       this.setupLoginScreenBuffers();
-      if (this.titleArchive == null) {
+      if (!this.hasTitleAssets()) {
          super.drawLoadingText(newLoadingErrorCode, text);
       } else {
          this.flameLeftBackground.initDrawingArea();
@@ -8117,11 +9029,31 @@ public class Client extends GameShell {
    private void requestMusicTrackWithFade(int scalarArgument, int newRequestedMusicVolume, int newNextSong) {
       if (isMidiPlayerAvailable()) {
          this.nextSong = newNextSong;
-         this.onDemandFetcher.provide(2, this.nextSong);
          requestedMusicVolume = newRequestedMusicVolume;
          musicTransitionDelay = -1;
          requestedMusicLoop = true;
          musicFadeDuration = 18;
+         this.requestMusicData(newNextSong, false);
+      }
+   }
+   private void requestMusicData(int track, boolean jingle) {
+      if (REVISION_443_LOGIN) {
+         musicRequestPending = false;
+         loadedMusicData = null;
+         if (track < 0 || this.revision443Cache == null) return;
+         try {
+            int archive = jingle ? 11 : 6;
+            int[] files = this.revision443Cache.readReferenceTable(archive).getFileIds(track);
+            if (files == null || files.length != 1) {
+               throw new IOException("Missing or invalid 443 music group " + archive + ":" + track);
+            }
+            loadedMusicData = this.revision443Cache.readFile(archive, track, files[0]);
+            musicRequestPending = true;
+         } catch (IOException exception) {
+            System.err.println("Unable to load 443 music track " + track + ": " + exception);
+         }
+      } else if (this.onDemandFetcher != null) {
+         this.onDemandFetcher.provide(2, track);
       }
    }
    private boolean clickObject(int newScene, int tileY, int clippingDataIndex) {
@@ -8135,17 +9067,19 @@ public class Client extends GameShell {
       if (scalar != 10 && scalar != 11 && scalar != 22) {
          this.doWalkTo(2, newScene, 0, scalar + 1, localPlayer.pathY[0], 0, 0, tileY, localPlayer.pathX[0], false, clippingDataIndex);
       } else {
-         ObjectDefinition objectDefinition = ObjectDefinition.lookup(blockingMask);
+         ObjectDefinitions.Definition definition443 = SceneObjects.resolvedDefinition(blockingMask);
+         ObjectDefinition objectDefinition = SceneObjects.hasActiveDefinitions() ? null : ObjectDefinition.lookup(blockingMask);
+         if (definition443 == null && objectDefinition == null) return false;
          int localSizeX;
          if (newScene != 0 && newScene != 2) {
-            scalar = objectDefinition.sizeY;
-            localSizeX = objectDefinition.sizeX;
+            scalar = definition443 != null ? definition443.sizeY : objectDefinition.sizeY;
+            localSizeX = definition443 != null ? definition443.sizeX : objectDefinition.sizeX;
          } else {
-            scalar = objectDefinition.sizeX;
-            localSizeX = objectDefinition.sizeY;
+            scalar = definition443 != null ? definition443.sizeX : objectDefinition.sizeX;
+            localSizeX = definition443 != null ? definition443.sizeY : objectDefinition.sizeY;
          }
 
-         blockingMask = objectDefinition.blockingMask;
+         blockingMask = definition443 != null ? definition443.blockingMask : objectDefinition.blockingMask;
          if (newScene != 0) {
             blockingMask = (blockingMask << newScene & 15) + (blockingMask >> 4 - newScene);
          }
@@ -8418,7 +9352,20 @@ public class Client extends GameShell {
          if (menuActionId == 222) {
             this.outgoingBuffer.writeOpcode(222);
             this.outgoingBuffer.writeShort(menuParam1Entry);
-            this.outgoingBuffer.writeUnsignedByte(this.hoveredMenuActionIndex);
+            int actionIndex = this.hoveredMenuActionIndex;
+            if (REVISION_443_LOGIN && menuParam1Entry >= 0
+               && menuParam1Entry < Widget.widgets.length
+               && Widget.widgets[menuParam1Entry] != null
+               && Widget.widgets[menuParam1Entry].actions != null) {
+               String[] actions = Widget.widgets[menuParam1Entry].actions;
+               for (int i = 0; i < actions.length; i++) {
+                  if (this.menuActionNames[menuActionIdIndex].equals(actions[i])) {
+                     actionIndex = i;
+                     break;
+                  }
+               }
+            }
+            this.outgoingBuffer.writeUnsignedByte(actionIndex);
          }
 
          if (menuActionId == 315) {
@@ -9029,16 +9976,16 @@ public class Client extends GameShell {
             if (menuActionId == 646) {
                this.outgoingBuffer.writeOpcode(185);
                this.outgoingBuffer.writeShort(menuParam1Entry);
+
                Widget widget2;
-               if ((widget2 = Widget.widgets[menuParam1Entry]).valueIndexArray != null && widget2.valueIndexArray[0][0] == 5) {
+               if ((widget2 = Widget.widgets[menuParam1Entry]).valueIndexArray != null
+                       && widget2.valueIndexArray[0][0] == 5) {
                   int varpIndex = widget2.valueIndexArray[0][1];
-                  if (this.varps[varpIndex] != widget2.scriptCompareValues[0]) {
-                     this.varps[varpIndex] = widget2.scriptCompareValues[0];
-                      if (varpIndex == 43) {
-                         this.pendingCombatStyleValue = widget2.scriptCompareValues[0];
-                         this.pendingCombatStyleUntilMillis = System.currentTimeMillis() + 2000L;
-                         this.serverVarps[varpIndex] = this.pendingCombatStyleValue;
-                      }
+                  int value = widget2.scriptCompareValues[0];
+
+                  if (this.varps[varpIndex] != value) {
+                     this.varps[varpIndex] = value;
+                     Varps.set(varpIndex, value);
                      this.applyVarpSetting(varpIndex);
                      this.needDrawTabArea = true;
                   }
@@ -9429,14 +10376,18 @@ public class Client extends GameShell {
 
             if (menuActionId == 1226) {
                String text16;
-               ObjectDefinition objectDefinition;
-               if ((objectDefinition = ObjectDefinition.lookup(menuParam2Entry >> 14 & 32767)).description != null) {
-                  text16 = new String(objectDefinition.description);
+               int examinedObjectId = menuParam2Entry >> 14 & 32767;
+               ObjectDefinitions.Definition definition443 = SceneObjects.resolvedDefinition(examinedObjectId);
+               ObjectDefinition objectDefinition = SceneObjects.hasActiveDefinitions() ? null : ObjectDefinition.lookup(examinedObjectId);
+               if (definition443 == null && objectDefinition == null) return;
+               String description = definition443 != null ? definition443.description : objectDefinition.description == null ? null : new String(objectDefinition.description);
+               String name = definition443 != null ? definition443.name : objectDefinition.name;
+               if (description != null) {
+                  text16 = description;
                } else {
-                  text16 = "It's a " + objectDefinition.name + ".";
+                  text16 = "It's a " + name + ".";
                }
 
-               int examinedObjectId = menuParam2Entry >> 14 & 32767;
             text16 = text16 + " (id=" + examinedObjectId + ")";
             this.pushMessage(text16, 0, "", 0, 0, 0);
             }
@@ -9658,8 +10609,9 @@ public class Client extends GameShell {
          if (pickedId != previousPickedId) {
             previousPickedId = pickedId;
             if (entityType == 2 && this.scene.getArrangement(this.plane, tileX, tileY, pickedId) >= 0) {
-               ObjectDefinition objectDefinition;
-               if ((objectDefinition = ObjectDefinition.lookup(entityId)).childIds != null) {
+               ObjectDefinitions.Definition definition443 = SceneObjects.resolvedDefinition(entityId);
+               ObjectDefinition objectDefinition = SceneObjects.hasActiveDefinitions() ? null : ObjectDefinition.lookup(entityId);
+               if (objectDefinition != null && objectDefinition.childIds != null) {
                   ObjectDefinition sourceObjectDefinition = objectDefinition;
                   int childIdIndex = -1;
                   if (sourceObjectDefinition.varbitId != -1) {
@@ -9676,12 +10628,15 @@ public class Client extends GameShell {
                   objectDefinition = childIdIndex >= 0 && childIdIndex < sourceObjectDefinition.childIds.length && sourceObjectDefinition.childIds[childIdIndex] != -1 ? ObjectDefinition.lookup(sourceObjectDefinition.childIds[childIdIndex]) : null;
                }
 
-               if (objectDefinition == null) {
+               if (objectDefinition == null && definition443 == null) {
                   continue;
                }
 
+               String objectName = definition443 != null ? definition443.name : objectDefinition.name;
+               String[] objectActions = definition443 != null ? definition443.actions : objectDefinition.actions;
+
                if (this.itemSelected == 1) {
-                  this.menuActionNames[this.menuActionCount] = "Use " + this.selectedItemName + " with @cya@" + objectDefinition.name;
+                  this.menuActionNames[this.menuActionCount] = "Use " + this.selectedItemName + " with @cya@" + objectName;
                   this.menuActionIds[this.menuActionCount] = 62;
                   this.menuParam2[this.menuActionCount] = pickedId;
                   this.menuParam0[this.menuActionCount] = tileX;
@@ -9689,7 +10644,7 @@ public class Client extends GameShell {
                   this.menuActionCount++;
                } else if (this.spellSelected == 1) {
                   if ((this.spellUsableOn & 4) == 4) {
-                     this.menuActionNames[this.menuActionCount] = this.spellTooltip + " @cya@" + objectDefinition.name;
+                     this.menuActionNames[this.menuActionCount] = this.spellTooltip + " @cya@" + objectName;
                      this.menuActionIds[this.menuActionCount] = 956;
                      this.menuParam2[this.menuActionCount] = pickedId;
                      this.menuParam0[this.menuActionCount] = tileX;
@@ -9697,10 +10652,10 @@ public class Client extends GameShell {
                      this.menuActionCount++;
                   }
                } else {
-                  if (objectDefinition.actions != null) {
+                  if (objectActions != null) {
                      for (int actionIndex = 4; actionIndex >= 0; actionIndex--) {
-                        if (objectDefinition.actions[actionIndex] != null) {
-                           this.menuActionNames[this.menuActionCount] = objectDefinition.actions[actionIndex] + " @cya@" + objectDefinition.name;
+                        if (objectActions[actionIndex] != null) {
+                           this.menuActionNames[this.menuActionCount] = objectActions[actionIndex] + " @cya@" + objectName;
                            if (actionIndex == 0) {
                               this.menuActionIds[this.menuActionCount] = 502;
                            }
@@ -9729,9 +10684,9 @@ public class Client extends GameShell {
                      }
                   }
 
-                  this.menuActionNames[this.menuActionCount] = "Examine @cya@" + objectDefinition.name;
+                  this.menuActionNames[this.menuActionCount] = "Examine @cya@" + objectName;
                   this.menuActionIds[this.menuActionCount] = 1226;
-                  this.menuParam2[this.menuActionCount] = objectDefinition.type << 14;
+                  this.menuParam2[this.menuActionCount] = (definition443 != null ? definition443.id : objectDefinition.type) << 14;
                   this.menuParam0[this.menuActionCount] = tileX;
                   this.menuParam1[this.menuActionCount] = tileY;
                   this.menuActionCount++;
@@ -9890,6 +10845,25 @@ public class Client extends GameShell {
    public final void cleanUpForQuit() {
       SignLink.unusedPublicFlag = false;
 
+      if (this.revision443UpdateClient != null) {
+         try {
+            this.revision443UpdateClient.close();
+         } catch (IOException exception) {
+         }
+         this.revision443UpdateClient = null;
+      }
+      if (this.revision443LocalCache != null) {
+         try {
+            this.revision443LocalCache.close();
+         } catch (IOException exception) {
+         }
+         this.revision443LocalCache = null;
+      }
+      if (this.revision443Cache != null) {
+         this.revision443Cache = null;
+         Animations.deactivate();
+      }
+
       try {
          if (this.connection != null) {
             this.connection.close();
@@ -9904,7 +10878,7 @@ public class Client extends GameShell {
       }
 
       this.mouseRecorder = null;
-      this.onDemandFetcher.disable();
+      if (this.onDemandFetcher != null) this.onDemandFetcher.disable();
       this.onDemandFetcher = null;
       this.chatBuffer = null;
       this.outgoingBuffer = null;
@@ -10015,6 +10989,8 @@ public class Client extends GameShell {
       NpcDefinition.nullLoader();
       ItemDefinition.clearCache();
       FloorDefinition.definitions = null;
+      FloorDefinition.underlayDefinitions = null;
+      FloorDefinition.overlayDefinitions = null;
       IdentityKit.kits = null;
       Widget.widgets = null;
       AnimationSequence.sequences = null;
@@ -11520,13 +12496,13 @@ public class Client extends GameShell {
       }
    }
    private void requestMusicTrackImmediate(int newRequestedMusicVolume, int newNextSong) {
-      if (isMidiPlayerAvailable() && newNextSong != this.nextSong) {
+      if (isMidiPlayerAvailable() && (REVISION_443_LOGIN || newNextSong != this.nextSong)) {
          this.nextSong = newNextSong;
-         this.onDemandFetcher.provide(2, this.nextSong);
          requestedMusicVolume = newRequestedMusicVolume;
          musicTransitionDelay = -1;
-         requestedMusicLoop = true;
+         requestedMusicLoop = !REVISION_443_LOGIN;
          musicFadeDuration = -1;
+         this.requestMusicData(newNextSong, true);
       }
    }
    private static int blendColors(int warmFlamePaletteEntry, int warmFlamePaletteEntry2, int scalarArgument) {
@@ -11543,15 +12519,23 @@ public class Client extends GameShell {
             this.drawLoginScreen(true);
          }
 
-         this.connection = new BufferedConnection(this, this.openSocket(transparentTabArea ? 5555 : 43594));
+         int serverPort = transparentTabArea ? 5555 : 43594;
+         int[] revision443Crcs = null;
+         if (REVISION_443_LOGIN) {
+            if (this.revision443Cache == null) this.openRevision443Cache();
+            revision443Crcs = this.revision443Cache.getArchiveCrcs();
+         }
+         this.connection = new BufferedConnection(this, this.openSocket(serverPort));
          int sourceYCameraCurve = (int)(NameUtils.encodeBase37(text) >> 16 & 31L);
          this.outgoingBuffer.currentPosition = 0;
          this.outgoingBuffer.writeByte(14);
          this.outgoingBuffer.writeByte(sourceYCameraCurve);
          this.connection.queueBytes(2, this.outgoingBuffer.buffer);
 
-         for (int loopIndex = 0; loopIndex < 8; loopIndex++) {
-            this.connection.read();
+         if (!REVISION_443_LOGIN) {
+            for (int loopIndex = 0; loopIndex < 8; loopIndex++) {
+               this.connection.read();
+            }
          }
 
          int scalar = sourceYCameraCurve = this.connection.read();
@@ -11560,55 +12544,61 @@ public class Client extends GameShell {
             this.inStream.currentPosition = 0;
             this.serverSeed = this.inStream.readLong();
             int[] values = new int[]{(int)(Math.random() * 9.9999999E7), (int)(Math.random() * 9.9999999E7), (int)(this.serverSeed >> 32), (int)this.serverSeed};
-            this.outgoingBuffer.currentPosition = 0;
-            this.outgoingBuffer.writeByte(10);
-            this.outgoingBuffer.writeInt(values[0]);
-            this.outgoingBuffer.writeInt(values[1]);
-            this.outgoingBuffer.writeInt(values[2]);
-            this.outgoingBuffer.writeInt(values[3]);
-            this.outgoingBuffer.writeInt(SignLink.uid);
-            this.outgoingBuffer.writeString(text);
-            this.outgoingBuffer.writeString(newText);
-            this.outgoingBuffer.encryptRsa();
-            this.loginBuffer.currentPosition = 0;
-            if (flag) {
-               this.loginBuffer.writeByte(18);
+            if (REVISION_443_LOGIN) {
+               LoginPacket.write(this.loginBuffer, this.outgoingBuffer, text,
+                  newText, flag, SignLink.uid, values, revision443Crcs);
             } else {
-               this.loginBuffer.writeByte(16);
-            }
+               this.outgoingBuffer.currentPosition = 0;
+               this.outgoingBuffer.writeByte(10);
+               this.outgoingBuffer.writeInt(values[0]);
+               this.outgoingBuffer.writeInt(values[1]);
+               this.outgoingBuffer.writeInt(values[2]);
+               this.outgoingBuffer.writeInt(values[3]);
+               this.outgoingBuffer.writeInt(SignLink.uid);
+               this.outgoingBuffer.writeString(text);
+               this.outgoingBuffer.writeString(newText);
+               this.outgoingBuffer.encryptRsa();
+               this.loginBuffer.currentPosition = 0;
+               if (flag) {
+                  this.loginBuffer.writeByte(18);
+               } else {
+                  this.loginBuffer.writeByte(16);
+               }
+               this.loginBuffer.writeByte(this.outgoingBuffer.currentPosition + 36 + 1 + 1 + 2 + 6);
+               this.loginBuffer.writeByte(255);
+               this.loginBuffer.writeShort(21);
+               this.loginBuffer.writeByte(0);
 
-            this.loginBuffer.writeByte(this.outgoingBuffer.currentPosition + 36 + 1 + 1 + 2 + 6);
-            this.loginBuffer.writeByte(255);
-            this.loginBuffer.writeShort(21);
-            this.loginBuffer.writeByte(0);
+               for (int loopIndex2 = 0; loopIndex2 < 6; loopIndex2++) {
+                  String localText = null;
+                  HashMap hashMap = new HashMap();
+                  Enumeration enumeration = NetworkInterface.getNetworkInterfaces();
 
-            for (int loopIndex2 = 0; loopIndex2 < 6; loopIndex2++) {
-               String localText = null;
-               HashMap hashMap = new HashMap();
-               Enumeration enumeration = NetworkInterface.getNetworkInterfaces();
-
-               while (enumeration.hasMoreElements()) {
-                  NetworkInterface networkInterface;
-                  byte[] hardwareAddress;
-                  if ((hardwareAddress = (networkInterface = (NetworkInterface)enumeration.nextElement()).getHardwareAddress()) != null) {
-                     hashMap.put(networkInterface.getName(), hardwareAddress);
-                     if (localText == null) {
-                        localText = networkInterface.getName();
+                  while (enumeration.hasMoreElements()) {
+                     NetworkInterface networkInterface;
+                     byte[] hardwareAddress;
+                     if ((hardwareAddress = (networkInterface = (NetworkInterface)enumeration.nextElement()).getHardwareAddress()) != null) {
+                        hashMap.put(networkInterface.getName(), hardwareAddress);
+                        if (localText == null) {
+                           localText = networkInterface.getName();
+                        }
                      }
                   }
+
+                  byte[] byteBuffer = localText != null ? (byte[])hashMap.get(localText) : null;
+                  byte byteCode = byteBuffer[loopIndex2];
+                  Buffer loginBuffer = this.loginBuffer;
+                  this.loginBuffer.buffer[loginBuffer.currentPosition++] = (byte)byteCode;
                }
 
-               byte[] byteBuffer = localText != null ? (byte[])hashMap.get(localText) : null;
-               byte byteCode = byteBuffer[loopIndex2];
-               Buffer loginBuffer = this.loginBuffer;
-               this.loginBuffer.buffer[loginBuffer.currentPosition++] = (byte)byteCode;
+               for (int archiveCrcIndex = 0; archiveCrcIndex < 9; archiveCrcIndex++) {
+                  this.loginBuffer.writeInt(this.archiveCrcs[archiveCrcIndex]);
+               }
             }
 
-            for (int archiveCrcIndex = 0; archiveCrcIndex < 9; archiveCrcIndex++) {
-               this.loginBuffer.writeInt(this.archiveCrcs[archiveCrcIndex]);
+            if (!REVISION_443_LOGIN) {
+               this.loginBuffer.writeBytes(this.outgoingBuffer.buffer, this.outgoingBuffer.currentPosition, 0);
             }
-
-            this.loginBuffer.writeBytes(this.outgoingBuffer.buffer, this.outgoingBuffer.currentPosition, 0);
             this.outgoingBuffer.isaacCipher = new IsaacCipher(values);
 
             for (int loopIndex3 = 0; loopIndex3 < 4; loopIndex3++) {
@@ -11631,8 +12621,25 @@ public class Client extends GameShell {
             loggedIn = true;
             this.updateClientWindowSize(false);
             this.currentStats[3] = 1;
-            sourceYCameraCurve = this.connection.read();
-            this.myPrivilege = this.connection.read();
+            if (REVISION_443_LOGIN) {
+               // Hunter exists in revision 443 even though the legacy server
+               // does not implement Hunter training. Seed its normal starting
+               // state so the native skill tab never displays 0/0 or -1 XP.
+               this.currentExp[21] = 0;
+               this.currentStats[21] = 1;
+               this.maxStats[21] = 1;
+               this.revision443PacketsObserved = 0;
+               this.revision443Region = null;
+               this.revision443RegionAssets = null;
+               this.myPrivilege = this.connection.read();
+               flagged = this.connection.read() == 1;
+               this.localPlayerIndex = (this.connection.read() << 8) | this.connection.read();
+               this.connection.read(); // members-world flag
+               sourceYCameraCurve = 0;
+            } else {
+               sourceYCameraCurve = this.connection.read();
+               this.myPrivilege = this.connection.read();
+            }
             this.yCameraCurve = sourceYCameraCurve;
             Widget.updateSkillLevelActions(sourceYCameraCurve);
             boolean localMyPrivilege;
@@ -11656,8 +12663,12 @@ public class Client extends GameShell {
             }
 
             this.rebuildViewportBuffers();
-            flagged = this.connection.read() == 1;
-            this.xCameraCurve = this.connection.read();
+            if (!REVISION_443_LOGIN) {
+               flagged = this.connection.read() == 1;
+               this.xCameraCurve = this.connection.read();
+            } else {
+               this.xCameraCurve = 0;
+            }
             this.lastClickTime = 0L;
             this.duplicateClickCount = 0;
             this.mouseRecorder.sampleCount = 0;
@@ -12515,7 +13526,7 @@ public class Client extends GameShell {
             if ((hdModels || !hdModels && extendedRevisionEnabled && (npcIdOrSequences > 1043 || use2007Models || extendedModelIds.contains(npcIdOrSequences))) && npcIdOrSequences != -1) {
                try {
                   if (AnimationFrame.frameCache.get(npcIdOrSequences) == null) {
-                     this.onDemandFetcher.provide(1, npcIdOrSequences);
+                     if (this.onDemandFetcher != null) this.onDemandFetcher.provide(1, npcIdOrSequences);
                   }
                } catch (Exception exception) {
                }
@@ -12829,7 +13840,19 @@ public class Client extends GameShell {
          if (this.soundVolume[soundVolumeIndex] >= -10) {
             SoundEffect soundEffect;
             if ((soundEffect = queuedSoundEffects[soundVolumeIndex]) == null) {
-               if ((soundEffect = SoundEffect.effects[this.sound[soundVolumeIndex]]) == null) {
+               if (REVISION_443_LOGIN) {
+                  try {
+                     soundEffect = SoundEffect.get(this.sound[soundVolumeIndex]);
+                  } catch (IOException exception) {
+                     System.err.println("Unable to load 443 sound " + this.sound[soundVolumeIndex]
+                        + ": " + exception.getMessage());
+                     this.soundVolume[soundVolumeIndex] = -11;
+                     continue;
+                  }
+               } else {
+                  soundEffect = SoundEffect.effects[this.sound[soundVolumeIndex]];
+               }
+               if (soundEffect == null) {
                   continue;
                }
 
@@ -12887,33 +13910,55 @@ public class Client extends GameShell {
    final void startUp() {
       this.drawLoadingText(20, "Starting up");
       startupInitialized = true;
-      if (SignLink.cacheDataFile != null) {
+      if (!REVISION_443_LOGIN && SignLink.cacheDataFile != null) {
          for (int cacheStoreIndex = 0; cacheStoreIndex < cacheStoreCount; cacheStoreIndex++) {
             this.cacheStores[cacheStoreIndex] = new CacheStore(SignLink.cacheDataFile, SignLink.cacheIndexFiles[cacheStoreIndex], cacheStoreIndex + 1);
          }
       }
 
       try {
-         this.titleArchive = this.loadArchive(1, "title screen", "title", this.archiveCrcs[1], 25);
-         this.smallFont = new BitmapFont(false, "p11_full", this.titleArchive);
-         this.plainFont = new BitmapFont(false, "p12_full", this.titleArchive);
-         this.boldFont = new BitmapFont(false, "b12_full", this.titleArchive);
-         new BitmapFont(true, "q8_full", this.titleArchive);
-         this.richSmallFont = new RichTextFont(false, "p11_full", this.titleArchive);
-         this.richPlainFont = new RichTextFont(false, "p12_full", this.titleArchive);
-         this.richBoldFont = new RichTextFont(false, "b12_full", this.titleArchive);
-         this.richQuillFont = new RichTextFont(true, "q8_full", this.titleArchive);
+         if (REVISION_443_LOGIN) {
+            this.openRevision443Cache();
+         }
+         this.titleArchive = REVISION_443_LOGIN ? null : this.loadArchive(1, "title screen", "title", this.archiveCrcs[1], 25);
+         if (REVISION_443_LOGIN) {
+            this.smallFont = new BitmapFont(this.revision443Cache, "p11_full");
+            this.plainFont = new BitmapFont(this.revision443Cache, "p12_full");
+            this.boldFont = new BitmapFont(this.revision443Cache, "b12_full");
+            new BitmapFont(this.revision443Cache, "q8_full");
+            this.richSmallFont = new RichTextFont(this.revision443Cache, "p11_full");
+            this.richPlainFont = new RichTextFont(this.revision443Cache, "p12_full");
+            this.richBoldFont = new RichTextFont(this.revision443Cache, "b12_full");
+            this.richQuillFont = new RichTextFont(this.revision443Cache, "q8_full");
+         } else {
+            this.smallFont = new BitmapFont(false, "p11_full", this.titleArchive);
+            this.plainFont = new BitmapFont(false, "p12_full", this.titleArchive);
+            this.boldFont = new BitmapFont(false, "b12_full", this.titleArchive);
+            new BitmapFont(true, "q8_full", this.titleArchive);
+            this.richSmallFont = new RichTextFont(false, "p11_full", this.titleArchive);
+            this.richPlainFont = new RichTextFont(false, "p12_full", this.titleArchive);
+            this.richBoldFont = new RichTextFont(false, "b12_full", this.titleArchive);
+            this.richQuillFont = new RichTextFont(true, "q8_full", this.titleArchive);
+         }
          this.drawLogo();
          this.loadTitleScreen();
          initializeMidiPlayer();
          pcmStreamMixer = createPcmStreamMixer(clientInstance);
          audioResampler = new AudioResampler(22050, audioSampleRate);
-         Archive archive = this.loadArchive(2, "config", "config", this.archiveCrcs[2], 30);
-         Archive loadArchiveResult = this.loadArchive(3, "interface", "interface", this.archiveCrcs[3], 35);
-         Archive archive2 = this.loadArchive(4, "2d graphics", "media", this.archiveCrcs[4], 40);
-         Archive archive3 = this.loadArchive(6, "textures", "textures", this.archiveCrcs[6], 45);
-         Archive archive4 = this.loadArchive(7, "chat system", "wordenc", this.archiveCrcs[7], 50);
-         Archive archive5 = this.loadArchive(8, "sound effects", "sounds", this.archiveCrcs[8], 55);
+         // Revision 443 startup is JS5-only: title/media come from archives 8/10 and interfaces from archive 3.
+         // Legacy cache archives are opened only by the 377 path.
+         Archive archive = REVISION_443_LOGIN ? null
+            : this.loadArchive(2, "config", "config", this.archiveCrcs[2], 30);
+         Archive loadArchiveResult = REVISION_443_LOGIN ? null
+            : this.loadArchive(3, "interface", "interface", this.archiveCrcs[3], 35);
+         Archive archive2 = REVISION_443_LOGIN ? null
+            : this.loadArchive(4, "2d graphics", "media", this.archiveCrcs[4], 40);
+         Archive archive3 = REVISION_443_LOGIN ? null
+            : this.loadArchive(6, "textures", "textures", this.archiveCrcs[6], 45);
+         Archive archive4 = REVISION_443_LOGIN ? null
+            : this.loadArchive(7, "chat system", "wordenc", this.archiveCrcs[7], 50);
+         Archive archive5 = REVISION_443_LOGIN ? null
+            : this.loadArchive(8, "sound effects", "sounds", this.archiveCrcs[8], 55);
          this.byteGroundArray = new byte[4][104][104];
          this.intGroundArray = new int[4][105][105];
          this.scene = new SceneGraph(this.intGroundArray);
@@ -12923,6 +13968,11 @@ public class Client extends GameShell {
          }
 
          this.minimapImage = new Sprite(512, 512);
+         int onDemandFetcher2;
+         if (REVISION_443_LOGIN) {
+            this.drawLoadingText(60, "Preparing revision 443 models");
+            Models.load(this.revision443Cache).initializeModelCache();
+         } else {
          Archive archive6 = this.loadArchive(5, "update list", "versionlist", this.archiveCrcs[5], 60);
          this.drawLoadingText(60, "Connecting to update server");
          this.onDemandFetcher = new OnDemandFetcher();
@@ -12978,7 +14028,7 @@ public class Client extends GameShell {
          }
 
          this.drawLoadingText(70, "Requesting models");
-         int onDemandFetcher2 = this.onDemandFetcher.getVersionCount(0);
+         onDemandFetcher2 = this.onDemandFetcher.getVersionCount(0);
 
          for (int modelIndex = 0; modelIndex < onDemandFetcher2; modelIndex++) {
             if ((this.onDemandFetcher.getModelIndex(modelIndex) & 1) != 0) {
@@ -13071,7 +14121,12 @@ public class Client extends GameShell {
                this.onDemandFetcher.readCacheFile(2, midiIndex);
             }
          }
+         }
 
+         if (REVISION_443_LOGIN) {
+            this.drawLoadingText(80, "Unpacking revision 443 media");
+            this.loadRevision443Media();
+         } else {
          this.drawLoadingText(80, "Unpacking media");
          this.invBack = new IndexedSprite(archive2, "invback", 0);
          this.chatBack = new IndexedSprite(archive2, "chatback", 0);
@@ -13265,27 +14320,42 @@ public class Client extends GameShell {
             }
          }
 
+         }
+
          this.drawLoadingText(83, "Unpacking textures");
-         Rasterizer3D.loadTextures(archive3);
+         if (!REVISION_443_LOGIN) Rasterizer3D.loadTextures(archive3);
          Rasterizer3D.setBrightness(0.8);
          Rasterizer3D.initializeTextureCache();
          this.drawLoadingText(86, "Unpacking config");
-         AnimationSequence.load(archive);
-         ObjectDefinition.unpackConfig(archive);
-         FloorDefinition.unpackConfig(archive);
-         ItemDefinition.unpackConfig(archive);
-         NpcDefinition.unpackConfig(archive);
-         IdentityKit.unpackConfig(archive);
-         SpotAnimationDefinition.unpackConfig(archive);
-         VarpDefinition.load(archive);
-         VarbitDefinition.load(archive);
+         if (!REVISION_443_LOGIN) {
+            AnimationSequence.load(archive);
+            ObjectDefinition.unpackConfig(archive);
+            FloorDefinition.unpackConfig(archive);
+            ItemDefinition.unpackConfig(archive);
+            NpcDefinition.unpackConfig(archive);
+            IdentityKit.unpackConfig(archive);
+            SpotAnimationDefinition.unpackConfig(archive);
+            VarpDefinition.load(archive);
+            VarbitDefinition.load(archive);
+         }
          ItemDefinition.membersServer = isMembers;
          this.drawLoadingText(90, "Unpacking sounds");
-         byte[] file = archive5.getFile("sounds.dat");
-         SoundEffect.load(new Buffer(file));
+         if (!REVISION_443_LOGIN) {
+            byte[] file = archive5.getFile("sounds.dat");
+            SoundEffect.load(new Buffer(file));
+         } else {
+            this.drawLoadingText(92, "Loading revision 443 JS5 data");
+            this.loadRevision443Runtime();
+         }
          this.drawLoadingText(95, "Unpacking interfaces");
          RichTextFont[] values = new RichTextFont[]{this.richSmallFont, this.richPlainFont, this.richBoldFont, this.richQuillFont};
-         Widget.load(loadArchiveResult, values, archive2);
+         if (REVISION_443_LOGIN) {
+            // Keep the legacy id range empty so native render slots never collide with hard-coded 377 ids.
+            Widget.widgets = new Widget[20000];
+            Interfaces.initialize(this.revision443Cache, values);
+         } else {
+            Widget.load(loadArchiveResult, values, archive2);
+         }
          this.drawLoadingText(100, "Preparing game engine");
          calculateMinimapMasks();
          updateRasterizerBounds();
@@ -13299,7 +14369,7 @@ public class Client extends GameShell {
          }
 
          SceneGraph.precalculateTileVisibility(500, 800, 512, 334, integerBuffer);
-         ChatFilter.load(archive4);
+         if (!REVISION_443_LOGIN) ChatFilter.load(archive4);
          this.mouseRecorder = new MouseRecorder(this);
          this.startRunnable(this.mouseRecorder, 10);
          DynamicObject.clientInstance = this;
@@ -15571,7 +16641,10 @@ public class Client extends GameShell {
 
                               int indexOf2;
                               String text4;
-                              if ((indexOf2 = text3.indexOf("\\n")) != -1) {
+                              if ((indexOf2 = text3.indexOf('\n')) != -1) {
+                                 text4 = text3.substring(0, indexOf2);
+                                 text3 = text3.substring(indexOf2 + 1);
+                              } else if ((indexOf2 = text3.indexOf("\\n")) != -1) {
                                  text4 = text3.substring(0, indexOf2);
                                  text3 = text3.substring(indexOf2 + 2);
                               } else {
@@ -16133,6 +17206,587 @@ public class Client extends GameShell {
       } else {
          return clientWidth >= 900 && clientHeight >= 650 ? true : widget != null && (widget.spriteXOffset != -1 || widget.spriteYOffset != -1);
       }
+   }
+
+   private void updateRevision443Npcs(byte[] payload) throws IOException {
+      Buffer buffer = new Buffer(payload);
+      this.removedEntityCount = 0;
+      this.entityUpdateCount = 0;
+      buffer.startBitAccess();
+      int nearbyCount = buffer.readBits(8);
+      if (nearbyCount > this.npcCount) throw new IOException("443 NPC count grew without additions");
+      for (int i = nearbyCount; i < this.npcCount; i++)
+         this.removedEntityIndices[this.removedEntityCount++] = this.npcIndices[i];
+      this.npcCount = 0;
+      for (int i = 0; i < nearbyCount; i++) {
+         int index = this.npcIndices[i];
+         Npc npc = this.npcs[index];
+         if (npc == null) throw new IOException("Missing 443 NPC " + index);
+         if (buffer.readBits(1) == 0) {
+            this.npcIndices[this.npcCount++] = index;
+            npc.lastUpdateCycle = gameCycle;
+            continue;
+         }
+         int movement = buffer.readBits(2);
+         if (movement == 3) {
+            this.removedEntityIndices[this.removedEntityCount++] = index;
+            continue;
+         }
+         this.npcIndices[this.npcCount++] = index;
+         npc.lastUpdateCycle = gameCycle;
+         if (movement == 0) this.entityUpdateIndices[this.entityUpdateCount++] = index;
+         else {
+            npc.moveInDirection(movement == 2, buffer.readBits(3));
+            if (movement == 2) npc.moveInDirection(true, buffer.readBits(3));
+            if (buffer.readBits(1) == 1) this.entityUpdateIndices[this.entityUpdateCount++] = index;
+         }
+      }
+      int[] orientations = {768, 1024, 1280, 512, 1536, 256, 0, 1792};
+      while (buffer.bitPosition + 15 <= payload.length * 8) {
+         int index = buffer.readBits(15);
+         if (index == 32767) break;
+         if (index >= this.npcs.length || this.npcCount >= this.npcIndices.length)
+            throw new IOException("Invalid 443 NPC index " + index);
+         boolean created = this.npcs[index] == null;
+         Npc npc = this.npcs[index];
+         if (created) npc = this.npcs[index] = new Npc();
+         this.npcIndices[this.npcCount++] = index;
+         npc.index = index;
+         npc.lastUpdateCycle = gameCycle;
+         if (buffer.readBits(1) == 1) this.entityUpdateIndices[this.entityUpdateCount++] = index;
+         int definition = buffer.readBits(13);
+         int dx = buffer.readBits(5);
+         if (dx > 15) dx -= 32;
+         int orientation = buffer.readBits(3);
+         int dy = buffer.readBits(5);
+         if (dy > 15) dy -= 32;
+         boolean teleport = buffer.readBits(1) == 1;
+         npc.definition = NpcDefinition.lookup(definition);
+         if (npc.definition == null) throw new IOException("Unknown 443 NPC definition " + definition);
+         applyRevision443NpcDefinition(npc);
+         if (created) npc.orientation = orientations[orientation];
+         npc.setPosition(localPlayer.pathX[0] + dx, localPlayer.pathY[0] + dy, teleport);
+      }
+      buffer.finishBitAccess();
+      for (int i = 0; i < this.entityUpdateCount; i++) {
+         Npc npc = this.npcs[this.entityUpdateIndices[i]];
+         int mask = buffer.readUnsignedByte();
+         if ((mask & 2) != 0) {
+            npc.faceX = buffer.readUnsignedShort();
+            npc.faceY = buffer.readUnsignedShortLittleEndian();
+         }
+         if ((mask & 32) != 0) {
+            int animation = buffer.readUnsignedShortLittleEndianAdded();
+            int delay = buffer.readUnsignedByteAdded();
+            if (animation == 65535) animation = -1;
+            npc.emoteAnimation = animation;
+            npc.emoteFrame = 0;
+            npc.emoteFrameCycle = 0;
+            npc.animationDelay = delay;
+            npc.animationLoopCount = 0;
+         }
+         if ((mask & 64) != 0) {
+            int damage = buffer.readUnsignedByteAdded();
+            int type = buffer.readUnsignedByteAdded();
+            npc.addHit(type, damage, 0, gameCycle);
+            npc.healthBarEndCycle = gameCycle + 300;
+            npc.currentHealth = buffer.readUnsignedByte();
+            npc.maxHealth = buffer.readUnsignedByteNegated();
+         }
+         if ((mask & 4) != 0) {
+            npc.graphicId = buffer.readUnsignedShortLittleEndianAdded();
+            int packed = buffer.readIntInverseMiddleEndian();
+            npc.graphicHeight = packed >> 16;
+            npc.graphicDelay = gameCycle + (packed & 65535);
+            npc.graphicFrame = npc.graphicDelay > gameCycle ? -1 : 0;
+            npc.graphicFrameCycle = 0;
+            if (npc.graphicId == 65535) npc.graphicId = -1;
+         }
+         if ((mask & 16) != 0) {
+            npc.interactingEntity = buffer.readUnsignedShortLittleEndian();
+            if (npc.interactingEntity == 65535) npc.interactingEntity = -1;
+         }
+         if ((mask & 128) != 0) {
+            int damage = buffer.readUnsignedByteSubtracted();
+            int type = buffer.readUnsignedByteSubtracted();
+            npc.addHit(type, damage, 0, gameCycle);
+            npc.healthBarEndCycle = gameCycle + 300;
+            npc.currentHealth = buffer.readUnsignedByte();
+            npc.maxHealth = buffer.readUnsignedByteSubtracted();
+         }
+         if ((mask & 1) != 0) {
+            npc.definition = NpcDefinition.lookup(buffer.readUnsignedShortLittleEndian());
+            if (npc.definition == null) throw new IOException("Unknown 443 NPC transform");
+            applyRevision443NpcDefinition(npc);
+         }
+         if ((mask & 8) != 0) {
+            npc.spokenText = buffer.readString();
+            npc.textCycle = 100;
+         }
+      }
+      for (int i = 0; i < this.removedEntityCount; i++) {
+         int index = this.removedEntityIndices[i];
+         if (this.npcs[index] != null && this.npcs[index].lastUpdateCycle != gameCycle)
+            this.npcs[index] = null;
+      }
+      if (buffer.currentPosition != payload.length)
+         throw new IOException("443 NPC update size mismatch: " + buffer.currentPosition + "/" + payload.length);
+   }
+
+   private static void applyRevision443NpcDefinition(Npc npc) {
+      npc.size = npc.definition.size;
+      npc.turnSpeed = npc.definition.turnSpeed;
+      npc.walkAnimationId = npc.definition.walkAnimationId;
+      npc.turnAroundAnimationId = npc.definition.turnAroundAnimationId;
+      npc.turnRightAnimationId = npc.definition.turnRightAnimationId;
+      npc.turnLeftAnimationId = npc.definition.turnLeftAnimationId;
+      npc.idleAnimationId = npc.definition.idleAnimationId;
+   }
+
+   /** Applies the revision-443 state packets used by the legacy gameframe bridge. */
+   private boolean applyRevision443PostLoginPacket(int opcode, byte[] payload) throws IOException {
+      Buffer buffer = new Buffer(payload);
+      if (opcode == 18) { // paired-server custom Grand Exchange progress
+         InterfaceProgress.apply(payload);
+         this.needDrawTabArea = true;
+         return true;
+      }
+      if (opcode == 41) { // logout
+         this.resetLogout();
+         return true;
+      }
+      if (opcode == 178) { // close interfaces
+         this.invOverlayInterfaceID = -1;
+         this.backDialogID = -1;
+         this.openInterfaceId = -1;
+         this.inputDialogState = 0;
+         this.inputTaken = true;
+         this.needDrawTabArea = true;
+         this.tabAreaAltered = true;
+         return true;
+      }
+      if (opcode == 160) { // chatbox interface
+         int id = buffer.readUnsignedShortAdded();
+         this.backDialogID = id == 65535 ? -1 : WidgetIds.legacyInterface(id);
+         if (this.backDialogID >= 0) this.resetWidgetAnimation(this.backDialogID);
+         this.inputTaken = true;
+         return true;
+      }
+      if (opcode == 146) { // main interface and inventory overlay
+         int main = buffer.readUnsignedShortLittleEndianAdded();
+         int inventory = buffer.readUnsignedShort();
+         this.openInterfaceId = main == 65535 ? -1 : WidgetIds.legacyInterface(main);
+         this.invOverlayInterfaceID = inventory == 65535 ? -1 : WidgetIds.legacyInterface(inventory);
+         this.needDrawTabArea = true;
+         this.tabAreaAltered = true;
+         return true;
+      }
+      if (opcode == 95 || opcode == 234) { // interface animation or visibility
+         int id;
+         if (opcode == 95) {
+            id = buffer.readUnsignedByte() | buffer.readUnsignedByte() << 8
+               | buffer.readUnsignedByte() << 16 | buffer.readUnsignedByte() << 24;
+            int animation = buffer.readUnsignedShortLittleEndianAdded();
+            if (animation == 65535) animation = -1;
+            if (WidgetIds.widget(id) != null) {
+               Widget widget = WidgetIds.widget(id);
+               widget.defaultAnimationId = animation;
+               widget.animationFrame = 0;
+               widget.animationFrameCycle = 0;
+            }
+         } else {
+            boolean hidden = buffer.readUnsignedByteAdded() == 1;
+            id = buffer.readIntInverseMiddleEndian();
+            if (WidgetIds.widget(id) != null)
+               WidgetIds.widget(id).hoverOnly = hidden;
+         }
+         this.needDrawTabArea = true;
+         return true;
+      }
+      if (opcode == 147) { // model rotation and zoom
+         int id = buffer.readIntMiddleEndian();
+         int zoom = buffer.readUnsignedShortLittleEndian();
+         int rotationX = buffer.readUnsignedShort();
+         int rotationY = buffer.readUnsignedShortLittleEndianAdded();
+         if (WidgetIds.widget(id) != null) {
+            Widget widget = WidgetIds.widget(id);
+            widget.modelZoom = zoom;
+            widget.modelRotation1 = rotationX;
+            widget.modelRotation2 = rotationY;
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 137) { // typed interface model
+         int type = buffer.readInt();
+         int id = buffer.readInt();
+         int model = buffer.readUnsignedShort();
+         if (WidgetIds.widget(id) != null) {
+            WidgetIds.widget(id).defaultMediaType = type;
+            WidgetIds.widget(id).defaultMediaId = model;
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 87) { // minimap state
+         this.minimapState = buffer.readUnsignedByte();
+         return true;
+      }
+      if (opcode == 226) { // run energy
+         this.energy = buffer.readUnsignedByte();
+         if (this.currentTab == 12) this.needDrawTabArea = true;
+         return true;
+      }
+      if (opcode == 117) { // system update timer
+         this.systemUpdateTime = buffer.readUnsignedShortAdded();
+         return true;
+      }
+      if (opcode == 10) { // selected sidebar tab
+         this.currentTab = buffer.readUnsignedByte();
+         this.needDrawTabArea = true;
+         return true;
+      }
+      if (opcode == 148) { // flashing sidebar tab
+         this.flashingSidebarId = buffer.readUnsignedByteNegated();
+         if (this.flashingSidebarId == this.currentTab) {
+            this.currentTab = this.currentTab == 3 ? 1 : 3;
+         }
+         this.needDrawTabArea = true;
+         return true;
+      }
+      if (opcode == 236) { // multiway combat indicator
+         this.multicombat = buffer.readUnsignedByte();
+         return true;
+      }
+      if (opcode == 32) { // enter amount prompt
+         this.messagePromptRaised = false;
+         this.inputDialogState = 1;
+         this.amountOrNameInput = "";
+         this.inputTaken = true;
+         return true;
+      }
+      if (opcode == 96) { // hint icon
+         this.hintIconDrawType = buffer.readUnsignedByte();
+         if (this.hintIconDrawType == 1) this.hintIconNpcId = buffer.readUnsignedShort();
+         else if (this.hintIconDrawType == 10) this.hintIconPlayerId = buffer.readUnsignedShort();
+         else if (this.hintIconDrawType >= 2 && this.hintIconDrawType <= 6) {
+            int type = this.hintIconDrawType;
+            this.hintIconOffsetX = type == 3 ? 0 : type == 4 ? 128 : 64;
+            this.hintIconOffsetY = type == 5 ? 0 : type == 6 ? 128 : 64;
+            this.hintIconDrawType = 2;
+            this.hintIconX = buffer.readUnsignedShort();
+            this.hintIconY = buffer.readUnsignedShort();
+            this.hintIconHeight = buffer.readUnsignedByte();
+         }
+         return true;
+      }
+      if (opcode == 242) { // reset camera
+         this.oriented = false;
+         for (int i = 0; i < this.cameraShakeActive.length; i++) this.cameraShakeActive[i] = false;
+         return true;
+      }
+      if (opcode == 241) { // move camera
+         this.oriented = true;
+         this.x = buffer.readUnsignedByte();
+         this.y = buffer.readUnsignedByte();
+         this.height = buffer.readUnsignedShort();
+         this.speed = buffer.readUnsignedByte();
+         this.angle = buffer.readUnsignedByte();
+         if (this.angle >= 100) {
+            this.cameraPositionX = (this.x << 7) + 64;
+            this.xCameraPos = (this.y << 7) + 64;
+            this.cameraPositionZ = this.getTileHeight(this.plane, this.xCameraPos, this.cameraPositionX) - this.height;
+         }
+         return true;
+      }
+      if (opcode == 111) { // look camera
+         this.oriented = true;
+         this.cameraTargetTileX = buffer.readUnsignedByte();
+         this.cameraTargetTileY = buffer.readUnsignedByte();
+         this.cameraTargetHeightOffset = buffer.readUnsignedShort();
+         this.cameraTargetMoveSpeed = buffer.readUnsignedByte();
+         this.cameraTargetMoveAcceleration = buffer.readUnsignedByte();
+         if (this.cameraTargetMoveAcceleration >= 100) {
+            int targetX = (this.cameraTargetTileX << 7) + 64;
+            int targetY = (this.cameraTargetTileY << 7) + 64;
+            int targetZ = this.getTileHeight(this.plane, targetY, targetX) - this.cameraTargetHeightOffset;
+            int deltaX = targetX - this.cameraPositionX;
+            int deltaZ = targetZ - this.cameraPositionZ;
+            int deltaY = targetY - this.xCameraPos;
+            int horizontal = (int)Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+            this.zCameraPos = (int)(Math.atan2(deltaZ, horizontal) * 325.949) & 2047;
+            this.yCameraPos = (int)(Math.atan2(deltaX, deltaY) * -325.949) & 2047;
+            if (this.zCameraPos < 128) this.zCameraPos = 128;
+            if (this.zCameraPos > 383) this.zCameraPos = 383;
+         }
+         return true;
+      }
+      if (opcode == 6) { // music track
+         int track = buffer.readUnsignedShortLittleEndian();
+         if (track == 65535) track = -1;
+         if (track == -1 && this.previousSong == 0) stopMidi(false);
+         else if (track != -1 && track != this.currentSong && musicVolumeSetting != 0 && this.previousSong == 0)
+            this.requestMusicTrackWithFade(18, musicVolumeSetting, track);
+         this.currentSong = track;
+         return true;
+      }
+      if (opcode == 205) { // music jingle
+         int track = buffer.readUnsignedShortLittleEndian();
+         if (musicVolumeSetting != 0 && track != 65535)
+            this.requestMusicTrackImmediate(musicVolumeSetting, track);
+         return true;
+      }
+      if (opcode == 81) { // sound effect
+         int soundId = buffer.readUnsignedShort();
+         int loops = buffer.readUnsignedByte();
+         int delay = buffer.readUnsignedShort();
+         if (soundEffectVolume != 0 && loops > 0 && this.currentSound < 50) {
+            this.sound[this.currentSound] = soundId;
+            this.soundType[this.currentSound] = loops;
+            this.soundVolume[this.currentSound] = delay;
+            queuedSoundEffects[this.currentSound] = null;
+            this.currentSound++;
+         }
+         return true;
+      }
+      if (opcode == 72) { // carried weight
+         this.weight = buffer.readShort();
+         if (this.currentTab == 12) this.needDrawTabArea = true;
+         return true;
+      }
+      if (opcode == 88) { // interface scroll
+         int id = buffer.readIntMiddleEndian();
+         int position = buffer.readUnsignedShortAdded();
+         if (WidgetIds.widget(id) != null) {
+            Widget widget = WidgetIds.widget(id);
+            widget.scrollPosition = Math.max(0, Math.min(position, widget.scrollMax - widget.height));
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 232) { // interface offset
+         int x = buffer.readUnsignedShortAdded();
+         if (x > 32767) x -= 65536;
+         int y = buffer.readShortLittleEndianAdded();
+         int id = buffer.readIntInverseMiddleEndian();
+         if (WidgetIds.widget(id) != null) {
+            WidgetIds.widget(id).runtimeXOffset = x;
+            WidgetIds.widget(id).runtimeYOffset = y;
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 24 || opcode == 227 || opcode == 31) { // interface models
+         int modelId = opcode == 31 ? -1 : opcode == 24
+            ? buffer.readUnsignedShortLittleEndian() : buffer.readUnsignedShort();
+         int id = opcode == 31 ? (buffer.readUnsignedByte() | buffer.readUnsignedByte() << 8
+            | buffer.readUnsignedByte() << 16 | buffer.readUnsignedByte() << 24)
+            : opcode == 24 ? buffer.readIntMiddleEndian() : buffer.readInt();
+         if (WidgetIds.widget(id) != null) {
+            Widget widget = WidgetIds.widget(id);
+            widget.defaultMediaType = opcode == 31 ? 3 : opcode == 227 ? 2 : 1;
+            widget.defaultMediaId = modelId;
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 58) { // skill update
+         int skill = buffer.readUnsignedByte();
+         int level = buffer.readUnsignedByteAdded();
+         int experience = buffer.readIntInverseMiddleEndian();
+         if (skill < 0 || skill >= this.currentExp.length) throw new IOException("Invalid 443 skill " + skill);
+         this.needDrawTabArea = true;
+         if (this.customSettingVisualFixes) addExperienceDrop(skill, experience - this.currentExp[skill]);
+         this.currentExp[skill] = experience;
+         this.currentStats[skill] = level;
+         this.maxStats[skill] = 1;
+         for (int index = 0; index < 98; index++) {
+            if (experience >= experienceTable[index]) this.maxStats[skill] = index + 2;
+         }
+         return true;
+      }
+      if (opcode == 90) { // sidebar interface
+         int tab = buffer.readUnsignedByte();
+         int interfaceId = buffer.readUnsignedShortAdded();
+         if (interfaceId == 65535) interfaceId = -1;
+         if (tab < 0 || tab >= this.tabInterfaceIds.length) throw new IOException("Invalid 443 tab " + tab);
+         this.tabInterfaceIds[tab] = interfaceId < 0 ? -1 : WidgetIds.legacyInterface(interfaceId);
+         this.needDrawTabArea = true;
+         this.tabAreaAltered = true;
+         return true;
+      }
+      if (opcode == 130) { // player option
+         int option = buffer.readUnsignedByte();
+         String text = buffer.readString();
+         boolean lowPriority = buffer.readUnsignedByteAdded() == 0;
+         if (option > 0 && option <= this.atPlayerActions.length) {
+            this.atPlayerActions[option - 1] = "null".equalsIgnoreCase(text) ? null : text;
+            this.atPlayerArray[option - 1] = lowPriority;
+         }
+         return true;
+      }
+      if (opcode == 157) { // game message
+         this.pushMessage(buffer.readString(), 0, "", 0, 0, 0);
+         return true;
+      }
+      if (opcode == 57) { // friend list connection status
+         this.friendServerStatus = buffer.readUnsignedByte();
+         this.needDrawTabArea = true;
+         return true;
+      }
+      if (opcode == 179) { // friend world update
+         long name = buffer.readLong();
+         int world = buffer.readUnsignedShort();
+         String displayName = NameUtils.formatDisplayName(NameUtils.decodeBase37(name));
+         boolean found = false;
+         for (int i = 0; i < this.friendCount; i++) {
+            if (this.friendEncodedNames[i] == name) {
+               found = true;
+               if (this.friendWorlds[i] != world) {
+                  this.friendWorlds[i] = world;
+                  this.needDrawTabArea = true;
+                  this.pushMessage(displayName + (world > 0 ? " has logged in." : " has logged out."), 5, "", 0, 0, 0);
+               }
+               break;
+            }
+         }
+         if (!found && this.friendCount < this.friendEncodedNames.length) {
+            int i = this.friendCount++;
+            this.friendEncodedNames[i] = name;
+            this.friendNames[i] = displayName;
+            this.friendWorlds[i] = world;
+            this.needDrawTabArea = true;
+         }
+         for (int i = 0; i < this.friendCount - 1; i++) {
+            for (int j = 0; j < this.friendCount - i - 1; j++) {
+               if (this.friendWorlds[j] != nodeID && this.friendWorlds[j + 1] == nodeID
+                     || this.friendWorlds[j] == 0 && this.friendWorlds[j + 1] != 0) {
+                  int oldWorld = this.friendWorlds[j];
+                  this.friendWorlds[j] = this.friendWorlds[j + 1];
+                  this.friendWorlds[j + 1] = oldWorld;
+                  String oldName = this.friendNames[j];
+                  this.friendNames[j] = this.friendNames[j + 1];
+                  this.friendNames[j + 1] = oldName;
+                  long oldEncodedName = this.friendEncodedNames[j];
+                  this.friendEncodedNames[j] = this.friendEncodedNames[j + 1];
+                  this.friendEncodedNames[j + 1] = oldEncodedName;
+               }
+            }
+         }
+         return true;
+      }
+      if (opcode == 25) { // private message
+         if (payload.length < 15) throw new IOException("Truncated 443 private message");
+         long sender = buffer.readLong();
+         buffer.currentPosition += 5; // message identifier
+         int privilege = buffer.readUnsignedByte();
+         boolean ignored = false;
+         if (privilege <= 1) {
+            for (int i = 0; i < this.ignoreCount; i++) {
+               if (this.ignoreListAsLongs[i] == sender) ignored = true;
+            }
+         }
+         if (!ignored && this.onTutorialIsland == 0) {
+            byte[] body = new byte[payload.length - buffer.currentPosition];
+            System.arraycopy(payload, buffer.currentPosition, body, 0, body.length);
+            try {
+               String message = HuffmanChatCodec.get().decode(body);
+               this.pushMessage(message, 7, NameUtils.formatDisplayName(NameUtils.decodeBase37(sender)),
+                     privilege, 0, 0);
+            } catch (IllegalArgumentException e) {
+               throw new IOException("Invalid 443 private message", e);
+            }
+         }
+         return true;
+      }
+      if (opcode == 91) { // public/private/trade chat modes
+         this.publicChatMode = buffer.readUnsignedByte();
+         this.privateChatMode = buffer.readUnsignedByte();
+         this.tradeMode = buffer.readUnsignedByte();
+         this.chatSettingsRedraw = true;
+         this.inputTaken = true;
+         return true;
+      }
+      if (opcode == 219) { // walkable overlay interface
+         int interfaceId = buffer.readShort();
+         if (interfaceId >= 0) interfaceId = WidgetIds.legacyInterface(interfaceId);
+         if (interfaceId >= 0) this.resetWidgetAnimation(interfaceId);
+         this.openWalkableInterface = interfaceId;
+         return true;
+      }
+      if (opcode == 97) { // main interface
+         int interfaceId = buffer.readUnsignedShortLittleEndianAdded();
+         if (interfaceId == 65535) interfaceId = -1;
+         else interfaceId = WidgetIds.legacyInterface(interfaceId);
+         this.openInterfaceId = interfaceId;
+         this.continuedDialogue = false;
+         this.inputTaken = true;
+         return true;
+      }
+      if (opcode == 180) { // interface text
+         int interfaceId = buffer.readInt();
+         String text = buffer.readString();
+         if (WidgetIds.widget(interfaceId) != null) {
+            WidgetIds.widget(interfaceId).message = text;
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 3) { // interface text colour
+         int interfaceId = buffer.readIntMiddleEndian();
+         int rgb555 = buffer.readUnsignedShortLittleEndian();
+         int red = rgb555 >> 10 & 31;
+         int green = rgb555 >> 5 & 31;
+         int blue = rgb555 & 31;
+         if (WidgetIds.widget(interfaceId) != null) {
+            WidgetIds.widget(interfaceId).textColor = (red << 19) + (green << 11) + (blue << 3);
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 228) { // full item container
+         int interfaceId = buffer.readInt();
+         buffer.readUnsignedShort(); // native 443 container key; mirrored by the bridge writer
+         int count = buffer.readUnsignedShort();
+         Widget widget = WidgetIds.widget(interfaceId);
+         for (int slot = 0; slot < count; slot++) {
+            int amount = buffer.readUnsignedByte();
+            if (amount == 255) amount = buffer.readInt();
+            int itemId = buffer.readUnsignedShort();
+            if (widget != null && slot < widget.inventoryIds.length) {
+               widget.inventoryIds[slot] = itemId;
+               widget.inventoryAmounts[slot] = amount;
+            }
+         }
+         if (widget != null) {
+            for (int slot = count; slot < widget.inventoryIds.length; slot++) {
+               widget.inventoryIds[slot] = 0;
+               widget.inventoryAmounts[slot] = 0;
+            }
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      if (opcode == 213) { // single container slot
+         int interfaceId = buffer.readInt();
+         buffer.readUnsignedShort(); // native container key
+         int slot = buffer.readUnsignedByte();
+         if (slot >= 128) slot = ((slot << 8) | buffer.readUnsignedByte()) - 32768;
+         int itemId = buffer.readUnsignedShort();
+         int amount = 0;
+         if (itemId != 0) {
+            amount = buffer.readUnsignedByte();
+            if (amount == 255) amount = buffer.readInt();
+         }
+         Widget widget = WidgetIds.widget(interfaceId);
+         if (widget != null && slot >= 0 && slot < widget.inventoryIds.length) {
+            widget.inventoryIds[slot] = itemId;
+            widget.inventoryAmounts[slot] = amount;
+            this.needDrawTabArea = true;
+         }
+         return true;
+      }
+      return false;
    }
 
    // CastleWarsOverlay reuses the cache-authored objective icons.
@@ -16874,6 +18528,7 @@ public class Client extends GameShell {
    private int executeInterfaceScript(Widget widget, int scriptCompareValueIndex) {
       if (widget.valueIndexArray != null && scriptCompareValueIndex < widget.valueIndexArray.length) {
          try {
+            boolean native443 = Interfaces.packedForRenderId(widget.id) != -1;
             int[] valueIndexArrayEntry = widget.valueIndexArray[scriptCompareValueIndex];
             scriptCompareValueIndex = 0;
             int position = 0;
@@ -16912,7 +18567,8 @@ public class Client extends GameShell {
                }
 
                if (scalar == 5) {
-                  localCurrentStats = this.varps[valueIndexArrayEntry[position++]];
+                  int id = valueIndexArrayEntry[position++];
+                  localCurrentStats = native443 ? Varps.get(id) : this.varps[id];
                }
 
                if (scalar == 6) {
@@ -16920,7 +18576,8 @@ public class Client extends GameShell {
                }
 
                if (scalar == 7) {
-                  localCurrentStats = this.varps[valueIndexArrayEntry[position++]] * 100 / 46875;
+                  int id = valueIndexArrayEntry[position++];
+                  localCurrentStats = (native443 ? Varps.get(id) : this.varps[id]) * 100 / 46875;
                }
 
                if (scalar == 8) {
@@ -16961,19 +18618,24 @@ public class Client extends GameShell {
                }
 
                if (scalar == 13) {
-                  int varp = this.varps[valueIndexArrayEntry[position++]];
+                  int id = valueIndexArrayEntry[position++];
+                  int varp = native443 ? Varps.get(id) : this.varps[id];
                   int scalar4 = valueIndexArrayEntry[position++];
                   localCurrentStats = (varp & 1 << scalar4) == 0 ? 0 : 1;
                }
 
                if (scalar == 14) {
                   int definitionIndex = valueIndexArrayEntry[position++];
-                  VarbitDefinition varbitDefinition;
-                  int varpIndex = (varbitDefinition = VarbitDefinition.definitions[definitionIndex]).index;
-                  definitionIndex = varbitDefinition.leastSignificantBit;
-                  int mostSignificantBit = varbitDefinition.mostSignificantBit;
-                  int bitMask = bitMasks[mostSignificantBit - definitionIndex];
-                  localCurrentStats = this.varps[varpIndex] >> definitionIndex & bitMask;
+                  if (native443) {
+                     localCurrentStats = Interfaces.varbitValue(definitionIndex);
+                  } else {
+                     VarbitDefinition varbitDefinition;
+                     int varpIndex = (varbitDefinition = VarbitDefinition.definitions[definitionIndex]).index;
+                     definitionIndex = varbitDefinition.leastSignificantBit;
+                     int mostSignificantBit = varbitDefinition.mostSignificantBit;
+                     int bitMask = bitMasks[mostSignificantBit - definitionIndex];
+                     localCurrentStats = this.varps[varpIndex] >> definitionIndex & bitMask;
+                  }
                }
 
                if (scalar == 15) {
@@ -17426,7 +19088,8 @@ public class Client extends GameShell {
       this.flameLeftBackground.initDrawingArea();
       this.titleBox.drawBackground(0, 0);
       if (this.loginScreenState == 0) {
-         this.smallFont.textCenterShadow(7711145, 180, this.onDemandFetcher.statusString, 180, true);
+         this.smallFont.textCenterShadow(7711145, 180,
+            this.onDemandFetcher == null ? "" : this.onDemandFetcher.statusString, 180, true);
          this.boldFont.textCenterShadow(16776960, 180, "Welcome to RuneScape", 80, true);
          this.titleButton.drawBackground(27, 100);
          this.boldFont.textCenterShadow(16777215, 100, "New User", 125, true);
@@ -17703,7 +19366,7 @@ public class Client extends GameShell {
                   if ((hdModels || !hdModels && extendedRevisionEnabled && (readUnsignedByteAdded2 > 1043 || use2007Models || extendedModelIds.contains(readUnsignedByteAdded2))) && readUnsignedByteAdded2 != -1) {
                      try {
                         if (AnimationFrame.frameCache.get(readUnsignedByteAdded2) == null) {
-                           this.onDemandFetcher.provide(1, readUnsignedByteAdded2);
+                           if (this.onDemandFetcher != null) this.onDemandFetcher.provide(1, readUnsignedByteAdded2);
                         }
                      } catch (Exception exception) {
                      }
@@ -18669,7 +20332,7 @@ public class Client extends GameShell {
             int soundTypeOrInStream = this.inStream.readUnsignedByte();
             widgetIndex2 = this.inStream.readUnsignedShort();
             if (soundOrInStream >= 2726 && SoundEffect.effects[soundOrInStream] == null) {
-               this.onDemandFetcher.provide(6, soundOrInStream);
+               if (this.onDemandFetcher != null) this.onDemandFetcher.provide(6, soundOrInStream);
             }
 
             if (soundEffectVolume != 0 && soundTypeOrInStream != 0 && this.currentSound < 50) {
@@ -19338,7 +21001,7 @@ public class Client extends GameShell {
 
                   try {
                      if (AnimationFrame.frameCache.get(animationFrameArchiveId) == null) {
-                        this.onDemandFetcher.provide(1, animationFrameArchiveId);
+                        if (this.onDemandFetcher != null) this.onDemandFetcher.provide(1, animationFrameArchiveId);
                      }
                   } catch (Exception exception5) {
                   }
@@ -19647,7 +21310,7 @@ public class Client extends GameShell {
 
                   try {
                      if (AnimationFrame.frameCache.get(getAnimationFrameArchiveId2) == null) {
-                        this.onDemandFetcher.provide(1, getAnimationFrameArchiveId2);
+                        if (this.onDemandFetcher != null) this.onDemandFetcher.provide(1, getAnimationFrameArchiveId2);
                      }
                   } catch (Exception exception2) {
                   }

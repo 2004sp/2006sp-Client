@@ -1,6 +1,7 @@
 package client;
 
 import java.awt.Color;
+import java.io.IOException;
 public final class RichTextFont extends Rasterizer2D {
    public int lineHeight = 0;
    private int[] glyphYOffsets;
@@ -44,6 +45,43 @@ public final class RichTextFont extends Rasterizer2D {
    private static int transparency = 256;
    private static int currentTextColor = 0;
    private boolean oldSyntaxStrikethroughActive = false;
+
+   public RichTextFont(Cache cache, String name) throws IOException {
+      this(cache,
+         cache.readReferenceTable(8).getGroupId(name),
+         cache.readReferenceTable(13).getGroupId(name),
+         name);
+   }
+
+   RichTextFont(Cache cache, int spriteGroup, int metricsGroup) throws IOException {
+      this(cache, spriteGroup, metricsGroup,
+         "sprite " + spriteGroup + "/metrics " + metricsGroup);
+   }
+
+   private RichTextFont(Cache cache, int spriteGroup, int metricsGroup, String name) throws IOException {
+      if (spriteGroup < 0 || metricsGroup < 0) throw new IOException("Missing 443 font " + name);
+      byte[] metrics = cache.readFile(13, metricsGroup, 0);
+      Sprites.DecodedSprite[] glyphs = Sprites.load(cache, spriteGroup);
+      if (metrics.length != 256 || glyphs.length != 256) {
+         throw new IOException("Unsupported 443 font " + name);
+      }
+      this.glyphPixels = new byte[256][];
+      this.glyphWidths = new int[256];
+      this.glyphHeights = new int[256];
+      this.glyphXOffsets = new int[256];
+      this.glyphYOffsets = new int[256];
+      this.glyphAdvances = new int[256];
+      for (int i = 0; i < 256; i++) {
+         Sprites.DecodedSprite glyph = glyphs[i];
+         glyphPixels[i] = glyph.toFontMask();
+         glyphWidths[i] = glyph.width;
+         glyphHeights[i] = glyph.height;
+         glyphXOffsets[i] = glyph.xOffset;
+         glyphYOffsets[i] = glyph.yOffset;
+         glyphAdvances[i] = metrics[i] & 255;
+         if (i < 128) lineHeight = Math.max(lineHeight, glyph.yOffset + glyph.height);
+      }
+   }
 
    public RichTextFont(boolean flag, String text, Archive archive) {
       this.glyphPixels = new byte[256][];

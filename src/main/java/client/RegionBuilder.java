@@ -120,7 +120,7 @@ final class RegionBuilder {
                int localUnderlayIds;
                int scalar7;
                if ((scalar7 = tileLightingIndex2 + 5) >= 0 && scalar7 < 104 && (localUnderlayIds = this.underlayIds[tileShadowIndex][scalar7][hueSumIndex2] & 255) > 0) {
-                  FloorDefinition floorDefinition = FloorDefinition.definitions[localUnderlayIds - 1];
+                  FloorDefinition floorDefinition = FloorDefinition.underlayDefinitions[localUnderlayIds - 1];
                   this.hueSums[hueSumIndex2] = this.hueSums[hueSumIndex2] + floorDefinition.weightedHue;
                   this.saturationSums[hueSumIndex2] = this.saturationSums[hueSumIndex2] + floorDefinition.saturation;
                   this.lightnessSums[hueSumIndex2] = this.lightnessSums[hueSumIndex2] + floorDefinition.lightness;
@@ -131,7 +131,7 @@ final class RegionBuilder {
                int scalar8;
                int underlayIds2;
                if ((scalar8 = tileLightingIndex2 - 5) >= 0 && scalar8 < 104 && (underlayIds2 = this.underlayIds[tileShadowIndex][scalar8][hueSumIndex2] & 255) > 0) {
-                  FloorDefinition definition = FloorDefinition.definitions[underlayIds2 - 1];
+                  FloorDefinition definition = FloorDefinition.underlayDefinitions[underlayIds2 - 1];
                   this.hueSums[hueSumIndex2] = this.hueSums[hueSumIndex2] - definition.weightedHue;
                   this.saturationSums[hueSumIndex2] = this.saturationSums[hueSumIndex2] - definition.saturation;
                   this.lightnessSums[hueSumIndex2] = this.lightnessSums[hueSumIndex2] - definition.lightness;
@@ -211,7 +211,7 @@ final class RegionBuilder {
                               flag = false;
                            }
 
-                           if (averageTextureColorIndex > 0 && !FloorDefinition.definitions[averageTextureColorIndex - 1].occlude) {
+                           if (averageTextureColorIndex > 0 && !FloorDefinition.overlayDefinitions[averageTextureColorIndex - 1].occlude) {
                               flag = false;
                            }
 
@@ -253,7 +253,7 @@ final class RegionBuilder {
                            byte byteCode = this.overlayOrientations[tileShadowIndex][tileLightingIndex2][loopIndex3];
                            int overlayTextureColor;
                            FloorDefinition floorDefinition2;
-                           if ((averageTextureColorIndex = (floorDefinition2 = FloorDefinition.definitions[averageTextureColorIndex - 1]).textureId) >= 0) {
+                           if ((averageTextureColorIndex = (floorDefinition2 = FloorDefinition.overlayDefinitions[averageTextureColorIndex - 1]).textureId) >= 0) {
                               overlayTextureColor = Rasterizer3D.getAverageTextureColor(averageTextureColorIndex);
                               underlayIds3 = -1;
                            } else if (floorDefinition2.rgbColor == 16711935) {
@@ -305,7 +305,7 @@ final class RegionBuilder {
          }
       }
 
-      sceneGraph.buildModels(-10, -50, -50);
+      sceneGraph.buildModels(-10, -50, -50, this.tileSettings, values);
 
       for (int loopIndex5 = 0; loopIndex5 < 104; loopIndex5++) {
          for (int loopIndex6 = 0; loopIndex6 < 104; loopIndex6++) {
@@ -537,7 +537,9 @@ final class RegionBuilder {
             && animationFrameArchiveId != -1) {
             try {
                if (AnimationFrame.frameCache.get(animationFrameArchiveId) == null) {
-                  Client.getClient().onDemandFetcher.provide(1, animationFrameArchiveId);
+                  if (Client.getClient().onDemandFetcher != null) {
+                     Client.getClient().onDemandFetcher.provide(1, animationFrameArchiveId);
+                  }
                }
             } catch (Exception exception) {
             }

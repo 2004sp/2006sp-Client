@@ -107,7 +107,10 @@ public final class Widget {
 
       for (int loopIndex = 0; loopIndex < 21; loopIndex++) {
          int widgetIndex = values[loopIndex];
-         Widget widget = widgets[widgetIndex];
+         Widget widget = getWidget(widgetIndex);
+         if (widget == null) {
+            continue;
+         }
          if (yCameraCurve > 1) {
             widget.actions = new String[5];
             widget.actions[0] = "Set level";
@@ -121,8 +124,11 @@ public final class Widget {
 
       for (int localWidgetIdIndex = 0; localWidgetIdIndex < 21; localWidgetIdIndex++) {
          int widgetId = localWidgetId[localWidgetIdIndex];
-         Widget widget;
-         (widget = widgets[widgetId]).actions = new String[5];
+         Widget widget = getWidget(widgetId);
+         if (widget == null) {
+            continue;
+         }
+         widget.actions = new String[5];
          widget.actions[0] = "Set level";
       }
    }

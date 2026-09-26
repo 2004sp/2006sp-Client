@@ -1,9 +1,38 @@
 package client;
+import java.io.IOException;
 final class SoundEffect {
    private int loopEnd;
    private int loopStart;
    private SoundTone[] tones = new SoundTone[10];
    public static SoundEffect[] effects = new SoundEffect[5000];
+   private static Cache revision443Cache;
+   static void loadRevision443(Cache cache) throws IOException {
+      revision443Cache = cache;
+      int[] groups = cache.readReferenceTable(4).getGroupIds();
+      int maxId = -1;
+      for (int group : groups) maxId = Math.max(maxId, group);
+      effects = new SoundEffect[Math.max(5000, maxId + 1)];
+   }
+   static SoundEffect get(int id) throws IOException {
+      if (id < 0 || id >= effects.length) return null;
+      SoundEffect effect = effects[id];
+      if (effect != null || revision443Cache == null) return effect;
+      int[] files = revision443Cache.readReferenceTable(4).getFileIds(id);
+      if (files == null) return null;
+      if (files.length != 1) throw new IOException("Unexpected 443 sound group " + id);
+      byte[] bytes = revision443Cache.readFile(4, id, files[0]);
+      Buffer buffer = new Buffer(bytes);
+      try {
+         effect = new SoundEffect(buffer);
+      } catch (RuntimeException exception) {
+         throw new IOException("Invalid 443 sound effect " + id, exception);
+      }
+      if (buffer.currentPosition != bytes.length) {
+         throw new IOException("Trailing bytes in 443 sound effect " + id);
+      }
+      effects[id] = effect;
+      return effect;
+   }
    private byte[] data;
    public static void load(Buffer buffer) {
       int effectIndex;

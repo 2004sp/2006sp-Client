@@ -34,7 +34,7 @@ final class GpuRasterizer3D {
    private static final int GL_CLAMP_TO_EDGE = 33071;
    private static final int GL_BGRA = 32993;
    private static final int GL_DEPTH_COMPONENT24 = 33190;
-   private static final int TEXTURE_COUNT = 51;
+   private static final int TEXTURE_COUNT = 53;
    private static final int TEXTURE_GRID_SIZE = 8;
    private static final int WHITE_TEXTURE_CELL = 63;
    private static final int BATCH_NONE = 0;

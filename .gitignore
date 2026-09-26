@@ -7,3 +7,4 @@ runtime/userConfig.cfg.bak
 lib/lwjgl-2.9.3.jar
 lib/lwjgl-platform-2.9.3-natives-windows.jar
 runtime/natives/
+/.idea

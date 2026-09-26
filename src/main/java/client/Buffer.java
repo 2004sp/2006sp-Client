@@ -45,6 +45,10 @@ public final class Buffer extends CacheableNode {
       -1
    };
    public IsaacCipher isaacCipher;
+   // Outbound packet boundaries are needed when the 377 writers are adapted to 443.
+   int[] outgoingPacketStarts = new int[256];
+   int[] outgoingPacketOpcodes = new int[256];
+   int outgoingPacketCount;
    private static int pooledBufferCount;
    private static final NodeDeque bufferPool = new NodeDeque();
    public static Buffer acquire() {
@@ -75,6 +79,21 @@ public final class Buffer extends CacheableNode {
       this.currentPosition = 0;
    }
    public final void writeOpcode(int scalarArgument) {
+      if ("443".equals(System.getProperty("prs.clientRevision")) && this.isaacCipher != null) {
+         if (this.currentPosition == 0) this.outgoingPacketCount = 0;
+         if (this.outgoingPacketCount == this.outgoingPacketStarts.length) {
+            int[] starts = new int[this.outgoingPacketCount * 2];
+            int[] opcodes = new int[this.outgoingPacketCount * 2];
+            System.arraycopy(this.outgoingPacketStarts, 0, starts, 0, this.outgoingPacketCount);
+            System.arraycopy(this.outgoingPacketOpcodes, 0, opcodes, 0, this.outgoingPacketCount);
+            this.outgoingPacketStarts = starts;
+            this.outgoingPacketOpcodes = opcodes;
+         }
+         this.outgoingPacketStarts[this.outgoingPacketCount] = this.currentPosition;
+         this.outgoingPacketOpcodes[this.outgoingPacketCount++] = scalarArgument;
+         this.buffer[this.currentPosition++] = (byte)scalarArgument;
+         return;
+      }
       this.buffer[this.currentPosition++] = (byte)(scalarArgument + this.isaacCipher.nextInt());
    }
    public final void writeByte(int scalarArgument) {
@@ -178,10 +197,11 @@ public final class Buffer extends CacheableNode {
       return (decodedInt << 32) + readInt2;
    }
 
+   public byte stringTerminator = 10;
    public final String readString() {
       int currentPosition = this.currentPosition;
 
-      while (this.buffer[this.currentPosition++] != 10) {
+      while (this.buffer[this.currentPosition++] != this.stringTerminator) {
       }
 
       return new String(this.buffer, currentPosition, this.currentPosition - currentPosition - 1);
@@ -190,7 +210,7 @@ public final class Buffer extends CacheableNode {
    public final byte[] readBytes() {
       int currentPosition = this.currentPosition;
 
-      while (this.buffer[this.currentPosition++] != 10) {
+      while (this.buffer[this.currentPosition++] != this.stringTerminator) {
       }
 
       byte[] byteBuffer = new byte[this.currentPosition - currentPosition - 1];
@@ -237,11 +257,14 @@ public final class Buffer extends CacheableNode {
       return (this.buffer[this.currentPosition] & 0xFF) < 128 ? this.readUnsignedByte() : this.readUnsignedShort() - 32768;
    }
    public final void encryptRsa() {
+      encryptRsa(rsaModulus);
+   }
+   public final void encryptRsa(BigInteger modulus) {
       int currentPositionOrLength = this.currentPosition;
       this.currentPosition = 0;
       byte[] byteBuffer = new byte[currentPositionOrLength];
       this.readBytes(currentPositionOrLength, 0, byteBuffer);
-      byte[] bytes = new BigInteger(byteBuffer).modPow(rsaExponent, rsaModulus).toByteArray();
+      byte[] bytes = new BigInteger(byteBuffer).modPow(rsaExponent, modulus).toByteArray();
       this.currentPosition = 0;
       this.writeByte(bytes.length);
       this.writeBytes(bytes, bytes.length, 0);

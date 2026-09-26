@@ -9,6 +9,18 @@ public final class IndexedSprite extends Rasterizer2D {
    public int canvasWidth;
    private int canvasHeight;
 
+   IndexedSprite(int canvasWidth, int canvasHeight, int xOffset, int yOffset,
+                 int width, int height, byte[] pixelIndices, int[] palette) {
+      this.canvasWidth = canvasWidth;
+      this.canvasHeight = canvasHeight;
+      this.xOffset = xOffset;
+      this.yOffset = yOffset;
+      this.width = width;
+      this.height = height;
+      this.pixelIndices = pixelIndices;
+      this.palette = palette;
+   }
+
    public IndexedSprite(Archive archive, String text, int loopIndex) {
       Buffer buffer = new Buffer(archive.getFile(text + ".dat"));
       Buffer buffer2;

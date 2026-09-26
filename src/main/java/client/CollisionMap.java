@@ -15,6 +15,7 @@ final class CollisionMap {
             }
          }
       }
+      SceneObjects.noteCollisionMapReset(this);
    }
    public final void addWall(int scalarArgument, int wallFlagIndex, int clippingDataIndex, int objectType, boolean flag) {
       if (objectType == 0) {
@@ -183,6 +184,9 @@ final class CollisionMap {
    }
    public final void setBlocked(int scalarArgument, int clippingDataIndex) {
       this.clippingData[clippingDataIndex][scalarArgument] = this.clippingData[clippingDataIndex][scalarArgument] | 2097152;
+   }
+   public final void removeBlocked(int scalarArgument, int clippingDataIndex) {
+      this.removeFlag(2097152, clippingDataIndex, scalarArgument);
    }
    private void addFlag(int clippingDataIndex, int scalarArgument, int scalarArgument2) {
       this.clippingData[clippingDataIndex][scalarArgument] = this.clippingData[clippingDataIndex][scalarArgument] | scalarArgument2;

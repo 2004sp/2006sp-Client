@@ -1,4 +1,7 @@
 package client;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.util.Map;
 public final class ItemDefinition {
    private byte femaleYOffset;
    public int value;
@@ -32,6 +35,8 @@ public final class ItemDefinition {
    private static Buffer definitionData;
    private static Buffer hdDefinitionData;
    private static Buffer revisionDefinitionData;
+   private static boolean revision443Definitions;
+   private static Models revision443Models;
    private int contrast;
    private int maleModel2;
    private int maleModel1;
@@ -98,9 +103,12 @@ public final class ItemDefinition {
       return flag;
    }
    public static int getDefinitionCount() {
-      return Client.extendedRevisionEnabled ? revisionDefinitionCount : definitionCount;
+      return revision443Definitions ? definitionCount
+         : Client.extendedRevisionEnabled ? revisionDefinitionCount : definitionCount;
    }
    public static void unpackConfig(Archive archive) {
+      revision443Definitions = false;
+      revision443Models = null;
       definitionData = new Buffer(archive.getFile("obj.dat"));
       Buffer buffer = new Buffer(archive.getFile("obj.idx"));
       if (Client.hdModels) {
@@ -140,6 +148,46 @@ public final class ItemDefinition {
       for (int recentDefinitionIndex = 0; recentDefinitionIndex < 10; recentDefinitionIndex++) {
          recentDefinitions[recentDefinitionIndex] = new ItemDefinition();
       }
+   }
+   public static void loadRevision443(Cache cache) throws IOException {
+      Map<Integer, byte[]> files = cache.readFiles(2, 10);
+      int maxId = -1;
+      for (Integer id : files.keySet()) maxId = Math.max(maxId, id.intValue());
+      int[] offsets = new int[maxId + 1];
+      ByteArrayOutputStream data = new ByteArrayOutputStream();
+      data.write(0);
+      data.write(0);
+      for (int id = 0; id <= maxId; id++) {
+         offsets[id] = data.size();
+         byte[] file = files.get(Integer.valueOf(id));
+         if (file == null) {
+            data.write(0);
+            continue;
+         }
+         Buffer audit = new Buffer(file);
+         audit.stringTerminator = 0;
+         try {
+            new ItemDefinition().readValues(audit);
+         } catch (RuntimeException exception) {
+            throw new IOException("Invalid 443 item " + id, exception);
+         }
+         if (audit.currentPosition != file.length) {
+            throw new IOException("443 item parser did not consume item " + id);
+         }
+         data.write(file, 0, file.length);
+      }
+      definitionData = new Buffer(data.toByteArray());
+      definitionData.stringTerminator = 0;
+      definitionOffsets = offsets;
+      definitionCount = offsets.length;
+      recentDefinitions = new ItemDefinition[10];
+      for (int i = 0; i < recentDefinitions.length; i++) recentDefinitions[i] = new ItemDefinition();
+      cacheIndex = 0;
+      spriteCache = new LruCache(100);
+      modelCache = new LruCache(50);
+      revision443Models = Models.load(cache);
+      revision443Models.initializeModelNamespace();
+      revision443Definitions = true;
    }
    public final Model getChatEquipModel(int gender) {
       int primaryMaleHeadPiece = this.primaryMaleHeadPiece;
@@ -310,7 +358,11 @@ public final class ItemDefinition {
       sourceItemDefinition.recolorTo = null;
       sourceItemDefinition.recolorFrom = null;
       sourceItemDefinition.temporaryDefinition = false;
-      if (Client.hdModels && (sourceId <= 7955 || sourceId > 8118) && sourceId != 552 && sourceId != 553) {
+      if (revision443Definitions) {
+         definitionData.currentPosition = definitionOffsets[sourceId];
+         itemDefinition.readValues(definitionData);
+         itemDefinition.namespaceRevision443Models();
+      } else if (Client.hdModels && (sourceId <= 7955 || sourceId > 8118) && sourceId != 552 && sourceId != 553) {
          hdDefinitionData.currentPosition = hdDefinitionOffsets[sourceId];
          itemDefinition.readValues(hdDefinitionData);
       } else if (Client.extendedRevisionEnabled && (sourceId > 8118 || Client.use2007Models && !Client.hdModels && sourceId <= 7955) && sourceId != 552 && sourceId != 553) {
@@ -357,12 +409,25 @@ public final class ItemDefinition {
          itemDefinition.teamIndex = 0;
       }
 
-      if (sourceId == 7999) {
+      if (!revision443Definitions && sourceId == 7999) {
          itemDefinition.name = "Membership scroll";
          itemDefinition.description = "Can be claimed for membership.".getBytes();
       }
 
       return itemDefinition;
+   }
+   private void namespaceRevision443Models() {
+      inventoryModelId = revision443Models.getRegisteredModelId(inventoryModelId);
+      if (maleModel0 >= 0) maleModel0 = revision443Models.getRegisteredModelId(maleModel0);
+      if (maleModel1 >= 0) maleModel1 = revision443Models.getRegisteredModelId(maleModel1);
+      if (maleModel2 >= 0) maleModel2 = revision443Models.getRegisteredModelId(maleModel2);
+      if (femaleModel0 >= 0) femaleModel0 = revision443Models.getRegisteredModelId(femaleModel0);
+      if (femaleModel1 >= 0) femaleModel1 = revision443Models.getRegisteredModelId(femaleModel1);
+      if (femaleModel2 >= 0) femaleModel2 = revision443Models.getRegisteredModelId(femaleModel2);
+      if (primaryMaleHeadPiece >= 0) primaryMaleHeadPiece = revision443Models.getRegisteredModelId(primaryMaleHeadPiece);
+      if (secondaryMaleHeadPiece >= 0) secondaryMaleHeadPiece = revision443Models.getRegisteredModelId(secondaryMaleHeadPiece);
+      if (primaryFemaleHeadPiece >= 0) primaryFemaleHeadPiece = revision443Models.getRegisteredModelId(primaryFemaleHeadPiece);
+      if (secondaryFemaleHeadPiece >= 0) secondaryFemaleHeadPiece = revision443Models.getRegisteredModelId(secondaryFemaleHeadPiece);
    }
    public static Sprite getSprite(int key, int newCanvasHeight, int pixel) {
       if (pixel == 0) {
